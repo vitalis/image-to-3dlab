@@ -16,7 +16,7 @@ const roomEnvironment = new RoomEnvironment();
  * component owns the Three.js scene, camera, renderer, controls, model normalization, and
  * resource lifecycle.
  */
-export function createModelViewport({ pane, spec, slotIndex = null, onChange, onLoaded, onError }) {
+export function createModelViewport({ pane, spec, slotIndex = null, onChange, onLoaded, onError, isCurrent }) {
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -41,75 +41,146 @@ export function createModelViewport({ pane, spec, slotIndex = null, onChange, on
   const view = {
     kind: 'model', spec, slotIndex, pane, renderer, scene, camera, controls,
     root: null, modelRoot: null, stats: pane.querySelector('.stats'), materials: [],
-    overlay: null, rig: inspectRig(null),
+    overlay: null, rig: inspectRig(null), disposed: false, loader: null,
   };
   view.resetPose = () => resetRigPose(view.rig);
-  loadModel(view, onLoaded, onError);
+  loadModel(view, onLoaded, onError, isCurrent);
   return view;
 }
 
+/** True while this view is still the one on screen. */
+export function loadIsCurrent(view, isCurrent) {
+  if (!view || view.disposed) return false;
+  if (typeof isCurrent === 'function' && !isCurrent()) return false;
+  return true;
+}
+
+/** Drop one object's geometry and materials. A stale load uses this and does not join the scene. */
+export function releaseObject(root) {
+  root?.traverse?.((object) => {
+    object.geometry?.dispose?.();
+    const list = Array.isArray(object.material) ? object.material : (object.material ? [object.material] : []);
+    for (const material of list) material.dispose?.();
+  });
+}
+
+/** Mark the view dead, cancel a loader that can cancel, and free its geometry,
+ *  materials, and lighting texture. The vendored GLTF loader has no cancel.
+ *  Callers still ignore its late callbacks. */
+export function releaseViewResources(view) {
+  if (!view) return;
+  view.disposed = true;
+  if (typeof view.loader?.abort === 'function') {
+    try { view.loader.abort(); } catch { /* the fetch already ended */ }
+  }
+  releaseObject(view.root);
+  view.root = null;
+  view.modelRoot = null;
+  const env = view.scene?.environment;
+  if (env?.dispose) env.dispose();
+  if (view.scene) view.scene.environment = null;
+}
+
 export function disposeModelViewport(view) {
+  releaseViewResources(view);
   view.controls.dispose();
   view.renderer.dispose();
   view.renderer.forceContextLoss();
 }
 
-function loadModel(view, onLoaded, onError) {
+/** 1 / longest side, or null when the model has nothing we can frame. */
+export function unitFitScale(box) {
+  const size = box.getSize(new THREE.Vector3());
+  const longest = Math.max(size.x, size.y, size.z);
+  if (box.isEmpty() || !Number.isFinite(longest) || longest <= 0) return null;
+  return 1 / longest;
+}
+
+/** Progress text. Does nothing once the view is gone or a newer load has started. */
+export function reportLoadProgress(view, event, isCurrent) {
+  if (!loadIsCurrent(view, isCurrent)) return false;
+  if (!event?.lengthComputable || !view.stats) return false;
+  view.stats.textContent = `loading… ${Math.round(event.loaded / event.total * 100)}%`;
+  return true;
+}
+
+/** Failure text, then the caller's error. Ignored when this load is no longer current. */
+export function reportLoadFailure(view, error, onError, isCurrent) {
+  if (!loadIsCurrent(view, isCurrent)) return false;
+  if (view.stats) view.stats.textContent = 'FAILED';
+  if (onError) onError(error);
+  return true;
+}
+
+/** Fit `root` into the view. Returns false without touching the pane when the load is stale
+ *  or the model has no size. */
+export function placeLoadedModel(view, root, { animations = [], onLoaded, onError, isCurrent } = {}) {
+  if (!loadIsCurrent(view, isCurrent)) {
+    releaseObject(root);
+    return false;
+  }
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(root);
+  const scale = unitFitScale(box);
+  if (scale == null) {
+    releaseObject(root);
+    reportLoadFailure(view, new Error('This model has no size.'), onError, isCurrent);
+    return false;
+  }
+
+  // Normalize to a unit box centered on the origin so differently scaled exports remain
+  // directly comparable and every room can use the same camera framing contract.
+  const pivot = new THREE.Group();
+  const centre = box.getCenter(new THREE.Vector3());
+  root.position.sub(centre);
+  pivot.scale.setScalar(scale);
+  pivot.add(root);
+  pivot.updateMatrixWorld(true);
+
+  let faces = 0;
+  let verts = 0;
+  root.traverse((object) => {
+    if (!object.isMesh) return;
+    const geometry = object.geometry;
+    // Shape-stage exports may omit NORMAL. Inspection materials and wireframe need a
+    // real attribute even when the original flat-shaded material appears acceptable.
+    if (geometry && !geometry.attributes.normal) geometry.computeVertexNormals();
+    verts += geometry?.attributes?.position?.count || 0;
+    faces += geometry?.index ? geometry.index.count / 3 : (geometry?.attributes?.position?.count || 0) / 3;
+    const materials = Array.isArray(object.material) ? object.material : [object.material];
+    for (const material of materials) {
+      if (!material) continue;
+      view.materials.push({
+        mesh: object,
+        original: material,
+        flat: null,
+        normal: null,
+        origFlatShading: !!material.flatShading,
+      });
+    }
+  });
+
+  view.root = pivot;
+  view.modelRoot = root;
+  view.rig = inspectRig(root, animations);
+  view.scene.add(pivot);
+  if (view.stats) view.stats.textContent = `${faces.toLocaleString()} faces\n${verts.toLocaleString()} verts (as stored)`;
+  if (onLoaded) onLoaded(view);
+  return true;
+}
+
+function loadModel(view, onLoaded, onError, isCurrent) {
   const { spec } = view;
   const loaded = (root, animations = []) => {
-    // Normalize to a unit box centered on the origin so differently scaled exports remain
-    // directly comparable and every room can use the same camera framing contract.
-    const pivot = new THREE.Group();
-    root.updateMatrixWorld(true);
-    const box = new THREE.Box3().setFromObject(root);
-    const size = box.getSize(new THREE.Vector3());
-    const centre = box.getCenter(new THREE.Vector3());
-    const scale = 1 / Math.max(size.x, size.y, size.z);
-    root.position.sub(centre);
-    pivot.scale.setScalar(scale);
-    pivot.add(root);
-    pivot.updateMatrixWorld(true);
-
-    let faces = 0;
-    let verts = 0;
-    root.traverse((object) => {
-      if (!object.isMesh) return;
-      const geometry = object.geometry;
-      // Shape-stage exports may omit NORMAL. Inspection materials and wireframe need a
-      // real attribute even when the original flat-shaded material appears acceptable.
-      if (!geometry.attributes.normal) geometry.computeVertexNormals();
-      verts += geometry.attributes.position.count;
-      faces += geometry.index ? geometry.index.count / 3 : geometry.attributes.position.count / 3;
-      const materials = Array.isArray(object.material) ? object.material : [object.material];
-      for (const material of materials) {
-        view.materials.push({
-          mesh: object,
-          original: material,
-          flat: null,
-          normal: null,
-          origFlatShading: !!material.flatShading,
-        });
-      }
-    });
-
-    view.root = pivot;
-    view.modelRoot = root;
-    view.rig = inspectRig(root, animations);
-    view.scene.add(pivot);
-    view.stats.textContent = `${faces.toLocaleString()} faces\n${verts.toLocaleString()} verts (as stored)`;
-    if (onLoaded) onLoaded(view);
+    placeLoadedModel(view, root, { animations, onLoaded, onError, isCurrent });
   };
-  const progress = (event) => {
-    if (!event.lengthComputable) return;
-    view.stats.textContent = `loading… ${Math.round(event.loaded / event.total * 100)}%`;
-  };
-  const failed = (error) => {
-    view.stats.textContent = 'FAILED';
-    if (onError) onError(error);
-  };
+  const progress = (event) => reportLoadProgress(view, event, isCurrent);
+  const failed = (error) => reportLoadFailure(view, error, onError, isCurrent);
 
   if (spec.ext === 'obj') {
-    new IndexedOBJLoader().load(spec.url, (root) => {
+    const loader = new IndexedOBJLoader();
+    view.loader = loader;
+    loader.load(spec.url, (root) => {
       // Match o_voxel's native TRELLIS -> GLB coordinate transform for raw OBJ inputs.
       root.rotation.x = -Math.PI / 2;
       loaded(root);
@@ -117,6 +188,8 @@ function loadModel(view, onLoaded, onError) {
     return;
   }
 
+  // The vendored GLTF loader cannot cancel a fetch. Late callbacks are ignored above.
   const loader = spec.manager ? new GLTFLoader(spec.manager) : new GLTFLoader();
+  view.loader = loader;
   loader.load(spec.url, (gltf) => loaded(gltf.scene, gltf.animations || []), progress, failed);
 }

@@ -12,7 +12,7 @@
 // natural home later for account and preferences.
 
 import { showsCaveat } from '../components/gated-caveat.js';
-import { panelState, runTitle } from '../components/setup-progress.js';
+import { panelState, runTitle, openSetupWatch, isSetupFinished } from '../components/setup-progress.js';
 
 const s = (id) => document.getElementById(id);
 
@@ -187,8 +187,11 @@ function removeButton(backend) {
     }
     button.disabled = true;
     try {
-      const response = await fetch(`/api/setup/${encodeURIComponent(backend.id)}/remove`,
-        { method: 'POST' });
+      const response = await fetch(`/api/setup/${encodeURIComponent(backend.id)}/remove`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: 'remove' }),
+      });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
       s('setup-summary').textContent = `Removed ${payload.freed}.`;
@@ -289,6 +292,8 @@ async function startDownload(backend, button, action = 'download') {
   try {
     const response = await fetch(`/api/setup/${encodeURIComponent(backend.id)}/${action}`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: true }),
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
@@ -318,15 +323,23 @@ function resume(run) {
 }
 
 function watch(payload) {
-  state.source?.close();
-  state.source = new EventSource(payload.events_url);
-  state.source.onmessage = (message) => applyEvent(JSON.parse(message.data));
+  state.watch?.stop();
+  state.watch = openSetupWatch(payload, {
+    onEvent(event, status) { applyEvent(event, status); },
+    onLog(text) {
+      const log = s('setup-log');
+      log.textContent = text ? (text.endsWith('\n') ? text : `${text}\n`) : '';
+      log.scrollTop = log.scrollHeight;
+    },
+    onDrop(message) { s('setup-run-detail').textContent = message; },
+  });
+  state.source = state.watch;
   s('setup-run-cancel').onclick = async () => {
     await fetch(`/api/setup/${encodeURIComponent(state.running)}/cancel`, { method: 'POST' });
   };
 }
 
-function applyEvent(event) {
+function applyEvent(event, status) {
   if (!event) return;
   if (typeof event.overall_pct === 'number') {
     s('setup-run-bar').style.width = `${event.overall_pct}%`;
@@ -340,13 +353,9 @@ function applyEvent(event) {
   s('setup-run-title').textContent = runTitle(state.panel, state.action, event);
   s('setup-run').className = `setup-run ${panelState(event)}`;
   if (event.detail) s('setup-run-detail').textContent = event.detail;
-  if (event.log) {
-    const log = s('setup-log');
-    log.textContent += `${event.log}\n`;
-    log.scrollTop = log.scrollHeight;
-  }
-  if (event.phase === 'done' || event.phase === 'error' || event.phase === 'cancelled') {
-    state.source?.close();
+  if (isSetupFinished(status, event)) {
+    state.watch?.stop();
+    state.watch = null;
     state.source = null;
     state.running = null;
     s('setup-run-cancel').hidden = true;
@@ -569,12 +578,14 @@ async function blenderCard() {
         const response = await fetch('/api/blender/install', { method: 'POST' });
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
-        const source = new EventSource(payload.events_url);
-        source.onmessage = (message) => {
-          const event = JSON.parse(message.data);
-          if (event.message) progress.textContent = event.message;
-          if (event.phase === 'setup_done') { source.close(); load(); }
-        };
+        state.toolWatch?.stop();
+        state.toolWatch = openSetupWatch(payload, {
+          onEvent(event) {
+            if (event.message) progress.textContent = event.message;
+            if (event.phase === 'setup_done') load();
+          },
+          onDrop(message) { progress.textContent = message; },
+        });
       } catch (error) {
         progress.textContent = `Could not start: ${error.message}`;
         button.disabled = false;
@@ -629,12 +640,14 @@ async function gltfpackCard() {
         const response = await fetch('/api/gltfpack/install', { method: 'POST' });
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
-        const source = new EventSource(payload.events_url);
-        source.onmessage = (message) => {
-          const event = JSON.parse(message.data);
-          if (event.message) progress.textContent = event.message;
-          if (event.phase === 'setup_done') { source.close(); load(); }
-        };
+        state.toolWatch?.stop();
+        state.toolWatch = openSetupWatch(payload, {
+          onEvent(event) {
+            if (event.message) progress.textContent = event.message;
+            if (event.phase === 'setup_done') load();
+          },
+          onDrop(message) { progress.textContent = message; },
+        });
       } catch (error) {
         progress.textContent = `Could not start: ${error.message}`;
         button.disabled = false;

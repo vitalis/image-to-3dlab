@@ -45,3 +45,137 @@ export function runTitle(backend, action, event) {
   if (ending) return `${ending.mark} ${ending.verb} · ${label}`;
   return `${setupVerb(backend, action)} ${label}`;
 }
+
+const SETUP_STALL_SECONDS = 180;
+
+/** Where to poll a setup run. Tool installs (Blender, gltfpack) have no status page. */
+export function setupStatusUrl(payload = {}) {
+  if (payload.status_url) return payload.status_url;
+  if (payload.backend) return `/api/setup/${encodeURIComponent(payload.backend)}/status`;
+  return null;
+}
+
+/** A download ends on done, error, or cancelled. A tool install ends on setup_done. */
+export function isSetupFinished(status, event) {
+  const phase = event?.phase;
+  if (phase === 'done' || phase === 'error' || phase === 'cancelled' || phase === 'setup_done') return true;
+  return status === 'done' || status === 'error' || status === 'cancelled';
+}
+
+/** Add one new log line, or replace the whole tail from a status poll. Do not glue the tail on twice. */
+export function mergeSetupLog(shown, incoming, { replace = false } = {}) {
+  const prior = shown || '';
+  const next = String(incoming ?? '');
+  if (!next) return prior;
+  if (replace) return next;
+  if (!prior || prior === next) return next || prior;
+  if (!next.includes('\n') && (prior.endsWith(`\n${next}`) || prior === next)) return prior;
+  return `${prior}\n${next}`;
+}
+
+/** Skip events a reconnected stream sends again. `index` starts at 0 on each connection. */
+export function acceptStreamEvent(seenCount, index) {
+  if (index < seenCount) return { accept: false, seenCount };
+  return { accept: true, seenCount: index + 1 };
+}
+
+/**
+ * Follow a setup run the way other jobs are polled.
+ * The event stream is extra. If it drops, say so and keep checking until the run ends.
+ * A tool install has no status page, so a dropped stream is reopened and old lines are skipped.
+ */
+export function openSetupWatch(payload, hooks = {}) {
+  const fetchImpl = hooks.fetchImpl || fetch;
+  const now = hooks.now || (() => Date.now());
+  const EventSourceImpl = hooks.EventSourceImpl || globalThis.EventSource;
+  const setTimer = hooks.setTimer || setTimeout;
+  const clearTimer = hooks.clearTimer || clearTimeout;
+  const interval = hooks.interval ?? 1200;
+  const statusUrl = setupStatusUrl(payload);
+  let stopped = false;
+  let seen = 0;
+  let source = null;
+  let pollTimer = null;
+  let lastChange = now();
+  let lastKey = '';
+  let log = '';
+
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    if (pollTimer != null) clearTimer(pollTimer);
+    pollTimer = null;
+    source?.close();
+  };
+
+  const note = (event, status, extra, replace) => {
+    if (extra) {
+      const merged = mergeSetupLog(log, extra, { replace });
+      if (merged !== log) {
+        log = merged;
+        hooks.onLog?.(log);
+      }
+    }
+    hooks.onEvent?.(event, status);
+    if (isSetupFinished(status, event)) stop();
+  };
+
+  const poll = async () => {
+    if (stopped || !statusUrl) return;
+    try {
+      const response = await fetchImpl(statusUrl);
+      if (stopped) return;
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const body = await response.json();
+      if (stopped) return;
+      const event = body.last_event || {};
+      const key = JSON.stringify(event) + (body.log_tail || '').length;
+      if (key !== lastKey) {
+        lastKey = key;
+        lastChange = now();
+      }
+      note(event, body.status, body.log_tail || '', true);
+      if (stopped) return;
+    } catch {
+      if (stopped) return;
+      const stalled = (now() - lastChange) / 1000 > SETUP_STALL_SECONDS;
+      hooks.onDrop?.('The connection dropped. Still checking…', { stalled });
+    }
+    if (stopped) return;
+    pollTimer = setTimer(poll, interval);
+  };
+
+  const openStream = () => {
+    if (stopped || !payload?.events_url || typeof EventSourceImpl !== 'function') return;
+    source?.close();
+    let index = 0;
+    source = new EventSourceImpl(payload.events_url);
+    source.onmessage = (message) => {
+      if (stopped) return;
+      let event;
+      try { event = JSON.parse(message.data); } catch { return; }
+      const decision = acceptStreamEvent(seen, index);
+      index += 1;
+      seen = decision.seenCount;
+      if (!decision.accept) return;
+      const line = event.log || (event.phase === 'setup' || event.phase === 'setup_done' ? event.message : '');
+      note(event, event.status, line, false);
+    };
+    source.onerror = () => {
+      if (stopped) return;
+      hooks.onDrop?.('The connection dropped. Still checking…');
+      index = 0;
+      if (statusUrl) return;
+      source.close();
+      if (pollTimer != null) return;
+      pollTimer = setTimer(() => {
+        pollTimer = null;
+        if (!stopped) openStream();
+      }, interval);
+    };
+  };
+
+  if (statusUrl) poll();
+  openStream();
+  return { stop };
+}

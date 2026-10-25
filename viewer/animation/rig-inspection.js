@@ -37,7 +37,14 @@ export function inspectRig(root, animations = []) {
 
 /** Restore every unique skeleton to the bind pose recorded in the GLB. */
 export function resetRigPose(rig) {
-  for (const skeleton of rig.skeletons) skeleton.pose();
+  for (const skeleton of rig?.skeletons || []) skeleton.pose();
+}
+
+/** Stop the move, put the playhead at the start, and show the bind pose. */
+export function restCharacter(player, rig) {
+  player?.pause();
+  player?.seek(0);
+  if (rig) resetRigPose(rig);
 }
 
 /** Return stable hierarchy data plus immutable bind and current local transforms. */

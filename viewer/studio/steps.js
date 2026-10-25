@@ -1,7 +1,7 @@
 // The Steps panel's actions: each step's settings, its start call, and its progress card.
 // The job APIs live on the server; the studio sends them the asset's files. Prop sheets split here too.
 
-import { followJob, plainError, statusUrlFor, jobEnd, copyDetails } from './jobs.js';
+import { followJob, plainError, statusUrlFor, jobEnd, copyDetails, paintJobUpdate } from './jobs.js';
 import { freshSeed } from './create.js';
 import { finishDetailSettings } from './library.js';
 
@@ -131,6 +131,18 @@ function movePicker(asset, ctx, cta) {
       <label class="field" data-tip="Bulky characters (armour, big shoulders) can hide their hands in their hips. This moves hanging arms outward a little; raised arms are left alone.">Arms away from body <output data-o="spread">0°</output><input type="range" data-k="spread" min="0" max="25" step="1" value="0"></label>
     </details>
     <button class="primary" data-run="animated">${cta}</button>`;
+}
+
+/** Remember the job a step card is following, so a new card can stop the old one. */
+export function bindStepJob(card, job) {
+  card._stepJob = job;
+  return job;
+}
+
+/** Stop every step job under `root`. Call this before the panel is replaced. */
+export function stopStepJobs(root) {
+  if (!root?.querySelectorAll) return;
+  for (const card of root.querySelectorAll('.step')) card._stepJob?.stop();
 }
 
 /** Wire a step card's controls. `ctx.onDone(asset)` reloads the Library afterwards. */
@@ -267,18 +279,28 @@ async function runInCard(card, starter, ctx, stepId, note) {
     event.target.disabled = true;
     await fetch(`/api/${kind}/${start.job_id}/cancel`, { method: 'POST' }).catch(() => {});
   };
-  const job = followJob(statusUrl, {
-    onUpdate: ({ event, percent, log: tail, stalled }) => {
+  let shown = { message: 'Starting…', percent: null, log: '', stalled: false };
+  const job = bindStepJob(card, followJob(statusUrl, {
+    onUpdate: (update) => {
+      const painted = paintJobUpdate(shown, update);
+      card.classList.toggle('stalled', painted.stalled);
+      if (painted.stalled && !body.querySelector('.stallnote')) {
+        msg.insertAdjacentHTML('afterend', '<p class="stallnote">No news from this step for a few minutes. It may be stuck: you can keep waiting or cancel.</p>');
+      }
+      if (update.failed) return;
+      shown = painted;
       const minutes = Math.floor((Date.now() - startedAt) / 60000), seconds = Math.floor((Date.now() - startedAt) / 1000) % 60;
-      msg.textContent = `${event.message || event.phase || 'Working…'} · ${minutes}:${String(seconds).padStart(2, '0')}`;
-      if (percent != null) bar.style.width = `${percent}%`;
+      msg.textContent = `${painted.message} · ${minutes}:${String(seconds).padStart(2, '0')}`;
+      if (painted.percent != null) bar.style.width = `${painted.percent}%`;
       else bar.classList.add('busy');
-      log.textContent = tail.split('\n').slice(-5).join('\n');
-      card.classList.toggle('stalled', stalled);
-      if (stalled && !body.querySelector('.stallnote')) msg.insertAdjacentHTML('afterend', '<p class="stallnote">No news from this step for a few minutes. It may be stuck: you can keep waiting or cancel.</p>');
+      log.textContent = painted.log.split('\n').slice(-5).join('\n');
     },
-  });
+  }));
   const final = await job.done;
+  if (!card.isConnected || final.status === 'stopped') {
+    ctx.onBusy?.(false);
+    return;
+  }
   ctx.onBusy?.(false);
   if (final.status === 'done') { ctx.onDone?.(stepId, { preset: stepId === 'animated' ? settingsOf(card) : null }); return; }
   const { cancelled, why, log: tail } = jobEnd(final);

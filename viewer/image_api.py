@@ -42,7 +42,7 @@ if str(REPO) not in sys.path:
 
 import usage_api
 
-from image_to_3dlab import back_view, matte
+from image_to_3dlab import back_view, matte, processes
 from image_to_3dlab.host import APPLE, executable, host_platform, with_rocm_libraries
 from image_to_3dlab.provenance import LICENSES, QWEN_OUTPUT_RIGHTS
 from image_to_3dlab.sdcpp import BackendWatch, no_gpu_help
@@ -62,14 +62,23 @@ OUTPUT_RIGHTS = QWEN_OUTPUT_RIGHTS
 
 # Each weight file, as (hugging face cache directory, filename glob).
 WEIGHT_FILES = {
-    "diffusion_model": ("models--leejet--Qwen-Image-2.1-GGUF", "qwen_image_2.1-Q8_0.gguf"),
-    "llm": ("models--Qwen--Qwen3-VL-8B-Instruct-GGUF", "Qwen3VL-8B-Instruct-Q4_K_M.gguf"),
+    "diffusion_model": (
+        "models--leejet--Qwen-Image-2.1-GGUF",
+        "qwen_image_2.1-Q8_0.gguf",
+    ),
+    "llm": (
+        "models--Qwen--Qwen3-VL-8B-Instruct-GGUF",
+        "Qwen3VL-8B-Instruct-Q4_K_M.gguf",
+    ),
     "vae": ("models--Comfy-Org--Qwen-Image-2.1", "qwen_image_2.1_vae_bf16.safetensors"),
 }
 
 # Edit mode (a reference picture, such as the front for a back view) needs the LLM's vision
 # projector as well. Optional: plain pictures do not, so it is not part of WEIGHT_FILES.
-VISION_FILE = ("models--Qwen--Qwen3-VL-8B-Instruct-GGUF", "mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf")
+VISION_FILE = (
+    "models--Qwen--Qwen3-VL-8B-Instruct-GGUF",
+    "mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf",
+)
 
 DEFAULTS: dict[str, Any] = {
     "width": 768,
@@ -101,7 +110,8 @@ class MissingWeights(RuntimeError):
     def __init__(self, missing: list[str]):
         self.missing = missing
         super().__init__(
-            "Qwen-Image is not set up yet. Missing: " + ", ".join(missing)
+            "Qwen-Image is not set up yet. Missing: "
+            + ", ".join(missing)
             + ". Open Setup & Status to download it."
         )
 
@@ -162,11 +172,15 @@ def clean_settings(raw: dict[str, Any]) -> dict[str, Any]:
         number = max(MIN_SIZE, min(MAX_SIZE, number))
         settings[key] = max(SIZE_STEP, round(number / SIZE_STEP) * SIZE_STEP)
     try:
-        settings["steps"] = max(1, min(MAX_STEPS, int(raw.get("steps", DEFAULTS["steps"]))))
+        settings["steps"] = max(
+            1, min(MAX_STEPS, int(raw.get("steps", DEFAULTS["steps"])))
+        )
     except (TypeError, ValueError):
         settings["steps"] = DEFAULTS["steps"]
     try:
-        settings["cfg_scale"] = max(0.0, min(20.0, float(raw.get("cfg_scale", DEFAULTS["cfg_scale"]))))
+        settings["cfg_scale"] = max(
+            0.0, min(20.0, float(raw.get("cfg_scale", DEFAULTS["cfg_scale"])))
+        )
     except (TypeError, ValueError):
         settings["cfg_scale"] = DEFAULTS["cfg_scale"]
     try:
@@ -179,9 +193,15 @@ def clean_settings(raw: dict[str, Any]) -> dict[str, Any]:
     return settings
 
 
-def build_command(prompt: str, settings: dict[str, Any], output_path: Path,
-                  weights: dict[str, Path], binary: Path = BINARY,
-                  reference: Path | None = None, vision: Path | None = None) -> list[str]:
+def build_command(
+    prompt: str,
+    settings: dict[str, Any],
+    output_path: Path,
+    weights: dict[str, Path],
+    binary: Path = BINARY,
+    reference: Path | None = None,
+    vision: Path | None = None,
+) -> list[str]:
     """The full argument list, as a pure function so a test can read it without a GPU.
 
     With `reference`, an edit: Qwen reads that picture through the `vision` projector
@@ -193,23 +213,35 @@ def build_command(prompt: str, settings: dict[str, Any], output_path: Path,
     """
     command = [
         str(binary),
-        "--diffusion-model", str(weights["diffusion_model"]),
-        "--vae", str(weights["vae"]),
-        "--llm", str(weights["llm"]),
-        "-p", prompt,
-        "--cfg-scale", str(settings["cfg_scale"]),
-        "--sampling-method", settings["sampler"],
-        "--steps", str(settings["steps"]),
-        "-W", str(settings["width"]),
-        "-H", str(settings["height"]),
-        "--seed", str(settings["seed"]),
+        "--diffusion-model",
+        str(weights["diffusion_model"]),
+        "--vae",
+        str(weights["vae"]),
+        "--llm",
+        str(weights["llm"]),
+        "-p",
+        prompt,
+        "--cfg-scale",
+        str(settings["cfg_scale"]),
+        "--sampling-method",
+        settings["sampler"],
+        "--steps",
+        str(settings["steps"]),
+        "-W",
+        str(settings["width"]),
+        "-H",
+        str(settings["height"]),
+        "--seed",
+        str(settings["seed"]),
         "--diffusion-fa",
         "-v",
-        "-o", str(output_path),
+        "-o",
+        str(output_path),
     ]
     if settings.get("negative_prompt"):
-        command[command.index("-p") + 2:command.index("-p") + 2] = [
-            "--negative-prompt", settings["negative_prompt"]
+        command[command.index("-p") + 2 : command.index("-p") + 2] = [
+            "--negative-prompt",
+            settings["negative_prompt"],
         ]
     if reference is not None:
         if vision is None:
@@ -238,10 +270,18 @@ def parse_progress(line: str) -> dict[str, Any] | None:
         }
     match = DECODE.search(line)
     if match:
-        return {"phase": "decoding", "decode_seconds": float(match[1]), "percent": 100.0}
+        return {
+            "phase": "decoding",
+            "decode_seconds": float(match[1]),
+            "percent": 100.0,
+        }
     match = COMPLETED.search(line)
     if match:
-        return {"phase": "finished", "generate_seconds": float(match[1]), "percent": 100.0}
+        return {
+            "phase": "finished",
+            "generate_seconds": float(match[1]),
+            "percent": 100.0,
+        }
     return None
 
 
@@ -281,8 +321,9 @@ def weight_manifest() -> dict[str, dict[str, str]]:
     }
 
 
-def provenance(prompt: str, settings: dict[str, Any], seconds: float,
-               output_path: Path) -> dict[str, Any]:
+def provenance(
+    prompt: str, settings: dict[str, Any], seconds: float, output_path: Path
+) -> dict[str, Any]:
     """What this picture is, and what the licence lets you do with it."""
     return {
         "schema_version": 1,
@@ -315,7 +356,9 @@ class ImageJob:
     output_path: Path
     prompt: str
     settings: dict[str, Any]
-    reference: Path | None = None   # an edit: Qwen reads this picture (a back view's front)
+    reference: Path | None = (
+        None  # an edit: Qwen reads this picture (a back view's front)
+    )
     mode: str = "edit (back view)"  # what kind of edit, for the provenance record
 
     def __post_init__(self) -> None:
@@ -347,7 +390,8 @@ class ImageJob:
             "error": self.error,
             "elapsed_seconds": round(time.monotonic() - self.started, 1),
             "result_url": f"/api/image/{self.id}/result.png"
-            if self.status == "done" else None,
+            if self.status == "done"
+            else None,
             "last_event": self.events[-1] if self.events else None,
             "log_tail": "\n".join(self.log_lines)[-4000:],
             "picture": self.picture_path() if self.status == "done" else None,
@@ -371,8 +415,14 @@ class ImageJobManager:
         self.lock = threading.Lock()
         self.active: str | None = None
 
-    def create(self, prompt: str, settings: dict[str, Any], output_path: Path | None = None,
-               reference: Path | None = None, mode: str = "edit (back view)") -> ImageJob:
+    def create(
+        self,
+        prompt: str,
+        settings: dict[str, Any],
+        output_path: Path | None = None,
+        reference: Path | None = None,
+        mode: str = "edit (back view)",
+    ) -> ImageJob:
         with self.lock:
             if self.active is not None:
                 running = self.jobs.get(self.active)
@@ -384,7 +434,15 @@ class ImageJobManager:
                 output_path = self.output_root / name / f"{name}.png"
             directory = output_path.parent
             directory.mkdir(parents=True, exist_ok=True)
-            job = ImageJob(uuid.uuid4().hex, directory, output_path, prompt, settings, reference, mode)
+            job = ImageJob(
+                uuid.uuid4().hex,
+                directory,
+                output_path,
+                prompt,
+                settings,
+                reference,
+                mode,
+            )
             self.jobs[job.id] = job
             self.active = job.id
             return job
@@ -401,15 +459,23 @@ class ImageJobManager:
         job.cancel_requested = True
         job.set_status("cancelling")
         if job.process and job.process.poll() is None:
-            job.process.terminate()
+            processes.terminate_group(job.process.pid)
         return True
 
 
-def job_command(job: ImageJob, weights: dict[str, Path], vision: Path | None,
-                binary: Path = BINARY) -> list[str]:
+def job_command(
+    job: ImageJob, weights: dict[str, Path], vision: Path | None, binary: Path = BINARY
+) -> list[str]:
     """`build_command` for a job: an edit when the job has a reference picture."""
-    return build_command(job.prompt, job.settings, job.output_path, weights, binary=binary,
-                         reference=job.reference, vision=vision if job.reference else None)
+    return build_command(
+        job.prompt,
+        job.settings,
+        job.output_path,
+        weights,
+        binary=binary,
+        reference=job.reference,
+        vision=vision if job.reference else None,
+    )
 
 
 def create_back_job(manager: ImageJobManager, front: Path, seed: int = 3) -> ImageJob:
@@ -422,13 +488,19 @@ def create_back_job(manager: ImageJobManager, front: Path, seed: int = 3) -> Ima
     from PIL import Image
 
     with Image.open(front) as opened:
-        cut = opened.convert("RGBA") if matte.is_matted(opened) else matte.cut_out(
-            opened.convert("RGB"))[0]
+        cut = (
+            opened.convert("RGBA")
+            if matte.is_matted(opened)
+            else matte.cut_out(opened.convert("RGB"))[0]
+        )
     reference = front.with_name(f"{front.stem}__back_reference.png")
     back_view.reference_on_grey(cut).save(reference)
-    return manager.create(back_view.BACK_PROMPT, clean_settings({"seed": seed}),
-                          output_path=front.with_name(f"{front.stem}__back.png"),
-                          reference=reference)
+    return manager.create(
+        back_view.BACK_PROMPT,
+        clean_settings({"seed": seed}),
+        output_path=front.with_name(f"{front.stem}__back.png"),
+        reference=reference,
+    )
 
 
 def back_source(output_root: Path, relative: str) -> Path:
@@ -440,8 +512,9 @@ def back_source(output_root: Path, relative: str) -> Path:
     return path
 
 
-def run_job(job: ImageJob, manager: ImageJobManager,
-            weights: dict[str, Path] | None = None) -> None:
+def run_job(
+    job: ImageJob, manager: ImageJobManager, weights: dict[str, Path] | None = None
+) -> None:
     """Drive one sd-cli run to completion, emitting progress as it goes."""
     try:
         weights = weights or resolve_weights()
@@ -452,9 +525,14 @@ def run_job(job: ImageJob, manager: ImageJobManager,
         job.set_status("running", total_steps=job.settings["steps"])
         started = time.monotonic()
         job.process = subprocess.Popen(
-            command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            cwd=str(REPO), env=with_rocm_libraries(dict(os.environ)),
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            cwd=str(REPO),
+            env=with_rocm_libraries(dict(os.environ)),
+            **processes.group_popen_kwargs(),
         )
+        processes.write_pid_file(job.directory, job.process.pid)
         assert job.process.stdout is not None
         # Only where a GPU is expected from a runtime-loaded backend. The Mac build is
         # Metal and says nothing of the sort. Every other machine gets it, AMD included:
@@ -493,23 +571,28 @@ def run_job(job: ImageJob, manager: ImageJobManager,
             job.set_status("cancelled")
         elif no_gpu:
             job.error = no_gpu_help(platform)
-            job.set_status("error", error=job.error,
-                           log="\n".join(list(job.log_lines)[-12:]))
+            job.set_status(
+                "error", error=job.error, log="\n".join(list(job.log_lines)[-12:])
+            )
         elif code != 0 or not job.output_path.exists():
             reason = failure_reason(job.log_lines)
             job.error = f"sd-cli exited with code {code}"
             if reason:
                 job.error += f": {reason}"
-            job.set_status("error", error=job.error,
-                           log="\n".join(list(job.log_lines)[-12:]))
+            job.set_status(
+                "error", error=job.error, log="\n".join(list(job.log_lines)[-12:])
+            )
         else:
             sidecar = job.output_path.with_suffix(".provenance.json")
             record = provenance(job.prompt, job.settings, elapsed, job.output_path)
             if job.reference:
                 record["reference"] = {"picture": job.reference.name, "mode": job.mode}
             sidecar.write_text(json.dumps(record, indent=2), encoding="utf-8")
-            job.set_status("done", result_url=f"/api/image/{job.id}/result.png",
-                           elapsed_seconds=round(elapsed, 1))
+            job.set_status(
+                "done",
+                result_url=f"/api/image/{job.id}/result.png",
+                elapsed_seconds=round(elapsed, 1),
+            )
             usage_api.count_done("picture")
     except MissingWeights as exc:
         job.error = str(exc)
@@ -518,6 +601,7 @@ def run_job(job: ImageJob, manager: ImageJobManager,
         job.error = f"{type(exc).__name__}: {exc}"
         job.set_status("error", error=job.error)
     finally:
+        processes.clear_pid_file(job.directory)
         manager.finish(job)
 
 
@@ -530,11 +614,21 @@ def start_back(front: Path, seed: int = 3) -> ImageJob:
     return job
 
 
-def start_edit(reference: Path, output_path: Path, prompt: str, seed: int,
-               mode: str = "edit (skin)") -> ImageJob:
+def start_edit(
+    reference: Path,
+    output_path: Path,
+    prompt: str,
+    seed: int,
+    mode: str = "edit (skin)",
+) -> ImageJob:
     """Qwen redraws `reference` as `prompt` asks, into `output_path` (a skin's picture try)."""
-    job = MANAGER.create(prompt, clean_settings({"seed": seed}), output_path=output_path,
-                         reference=reference, mode=mode)
+    job = MANAGER.create(
+        prompt,
+        clean_settings({"seed": seed}),
+        output_path=output_path,
+        reference=reference,
+        mode=mode,
+    )
     threading.Thread(target=run_job, args=(job, MANAGER), daemon=True).start()
     return job
 

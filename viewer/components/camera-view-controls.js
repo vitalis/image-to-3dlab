@@ -1,21 +1,27 @@
 import * as THREE from '../vendor/three.module.js';
 
-const DIRECTIONS = {
-  front: { direction: [0, 0, 1], up: [0, 1, 0] },
-  back: { direction: [0, 0, -1], up: [0, 1, 0] },
-  left: { direction: [-1, 0, 0], up: [0, 1, 0] },
-  right: { direction: [1, 0, 0], up: [0, 1, 0] },
-  top: { direction: [0, 1, 0], up: [0, 0, -1] },
-  bottom: { direction: [0, -1, 0], up: [0, 0, 1] },
+// Just off straight up and straight down. The orbit control refuses those two
+// angles, and a camera parked there will not turn sideways.
+const POLE_GAP = 0.05;
+
+// phi is how far from straight up (0) toward straight down (π). theta turns around up.
+const VIEWS = {
+  front: { phi: Math.PI / 2, theta: 0 },
+  back: { phi: Math.PI / 2, theta: Math.PI },
+  left: { phi: Math.PI / 2, theta: -Math.PI / 2 },
+  right: { phi: Math.PI / 2, theta: Math.PI / 2 },
+  top: { phi: POLE_GAP, theta: 0 },
+  bottom: { phi: Math.PI - POLE_GAP, theta: 0 },
 };
 
 const DEFAULT_POSITION = new THREE.Vector3(1.45, 0.6, 2.45);
 const DEFAULT_TARGET = new THREE.Vector3(0, 0, 0);
 
-/** Snap a model viewport camera without changing model, pose, or rig-edit state. */
+/** Snap a model viewport camera without changing model, pose, or rig-edit state.
+ *  Up stays (0, 1, 0). Top and bottom sit just inside the pole so a sideways drag still turns. */
 export function setCameraView(view, name) {
   if (!view?.camera || !view?.controls) return false;
-  const preset = DIRECTIONS[name];
+  const preset = VIEWS[name];
   if (name !== 'reset' && !preset) return false;
 
   const target = name === 'reset' ? DEFAULT_TARGET : view.controls.target;
@@ -24,15 +30,36 @@ export function setCameraView(view, name) {
     ? currentDistance
     : DEFAULT_POSITION.length();
 
+  view.camera.up.set(0, 1, 0);
   if (name === 'reset') {
     view.controls.target.copy(DEFAULT_TARGET);
     view.camera.position.copy(DEFAULT_POSITION);
-    view.camera.up.set(0, 1, 0);
   } else {
-    const direction = new THREE.Vector3(...preset.direction);
-    view.camera.position.copy(target).addScaledVector(direction, distance);
-    view.camera.up.set(...preset.up);
+    const offset = new THREE.Vector3().setFromSphericalCoords(distance, preset.phi, preset.theta);
+    view.camera.position.copy(target).add(offset);
   }
+  view.camera.lookAt(view.controls.target);
+  view.camera.updateProjectionMatrix();
+  view.controls.update();
+  return true;
+}
+
+/** Camera position, target, and up, so Before / After can put the same view back. */
+export function rememberCamera(view) {
+  if (!view?.camera || !view?.controls) return null;
+  return {
+    position: view.camera.position.clone(),
+    target: view.controls.target.clone(),
+    up: view.camera.up.clone(),
+  };
+}
+
+/** Put a saved camera back, including which way is up. */
+export function recallCamera(view, shot) {
+  if (!view?.camera || !view?.controls || !shot?.position || !shot?.target || !shot?.up) return false;
+  view.camera.up.copy(shot.up);
+  view.controls.target.copy(shot.target);
+  view.camera.position.copy(shot.position);
   view.camera.lookAt(view.controls.target);
   view.camera.updateProjectionMatrix();
   view.controls.update();

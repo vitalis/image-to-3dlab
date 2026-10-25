@@ -7,6 +7,19 @@ import { plainError, readableLog } from './jobs.js';
 const esc = (text) => String(text ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const POLL_MS = 2000;
 
+/** The file for one rigged model wearing this skin. Stops on the server's error. */
+export async function dressedFile(skinId, file, fetchImpl = fetch) {
+  const response = await fetchImpl(`/api/skins/${encodeURIComponent(skinId)}/dressed?file=${encodeURIComponent(file)}`);
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || typeof body.file !== 'string' || !body.file) {
+    const reason = typeof body.error === 'string' && body.error
+      ? body.error
+      : 'Could not put this skin on the rigged model.';
+    throw new Error(reason);
+  }
+  return body.file;
+}
+
 /** Only finished Pixal3D models keep the shape a skin repaints. */
 export function canSkin(asset) {
   return !!(asset?.finished && asset?.model && /__pixal3d__/.test(asset.model));

@@ -3,13 +3,23 @@
 
 import * as THREE from 'three';
 import { createModelViewport, disposeModelViewport } from '../components/model-viewport.js';
-import { setCameraView } from '../components/camera-view-controls.js';
+import { setCameraView, rememberCamera, recallCamera } from '../components/camera-view-controls.js';
 import { AnimationPlayer } from '../animation/player.js';
+import { restCharacter } from '../animation/rig-inspection.js';
 import { projectAxes, AXES } from './gizmo.js';
 import { createBoneDisplay } from './bones.js';
 import { createFloor, standOnFloor, homeView, facingAngle } from './floor.js';
 import { applyLook, meshesOf, faceLabel } from './looks.js';
 import { attachZoom } from './zoom.js';
+
+export const PATCH_DISCARD_QUESTION = 'Close the brush and throw away the patch you have not kept?';
+
+/** What to do when a load would leave a patch that has not been kept.
+ *  `stay` means do not clear the session and do not load. */
+export function choosePatchLeave(preview, keepCamera, confirm) {
+  if (keepCamera || !preview) return 'go';
+  return confirm(PATCH_DISCARD_QUESTION) ? 'discard' : 'stay';
+}
 
 const ICON = {
   reset: '<svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>',
@@ -180,7 +190,7 @@ export function createStudioViewer({ stage, logoUrl, onClipChange, fixSession = 
     if (act === 'grid' && view?.floor) { view.floor.visible = on; requestRender(); }
     if (act === 'bones') setSkeleton(on);
     if (act === 'fix') {
-      if (!on && session.preview && !confirm('Close the brush and throw away the patch you have not kept?')) {
+      if (!on && session.preview && !confirm(PATCH_DISCARD_QUESTION)) {
         button.setAttribute('aria-pressed', 'true');
         return;
       }
@@ -393,9 +403,11 @@ export function createStudioViewer({ stage, logoUrl, onClipChange, fixSession = 
 
   let currentUrl = null;
   function load(url, { label = '', autoplay = false, keepCamera = false } = {}) {
+    const choice = choosePatchLeave(session.preview, keepCamera, (text) => confirm(text));
+    if (choice === 'stay') return;
     const token = ++loadToken;
-    const camera = keepCamera && view ? { position: view.camera.position.clone(), target: view.controls.target.clone() } : null;
-    if (!keepCamera) endSession(false);
+    const camera = keepCamera && view ? rememberCamera(view) : null;
+    if (!keepCamera) endSession(choice === 'discard');
     currentUrl = url;
     dispose();
     setOverlay(`<div class="ph"><img src="${logoUrl}" alt=""><span>Loading model…</span></div>`);
@@ -403,6 +415,7 @@ export function createStudioViewer({ stage, logoUrl, onClipChange, fixSession = 
       pane,
       spec: { url, ext: 'glb', label },
       onChange: requestRender,
+      isCurrent: () => token === loadToken,
       onLoaded: (loaded) => {
         if (token !== loadToken) return;
         setOverlay('');
@@ -415,11 +428,7 @@ export function createStudioViewer({ stage, logoUrl, onClipChange, fixSession = 
         loaded.floor.visible = tools.querySelector('[data-act="grid"]').getAttribute('aria-pressed') === 'true';
         loaded.scene.add(loaded.floor);
         snap('reset');
-        if (camera) {   // Before / After: the same view, so the change is what moves
-          view.camera.position.copy(camera.position);
-          view.controls.target.copy(camera.target);
-          view.controls.update();
-        }
+        if (camera) recallCamera(view, camera);   // Before / After: the same view, including which way is up
         if (loaded.rig.animations.length) {
           player = new AnimationPlayer(new THREE.AnimationMixer(loaded.modelRoot), {
             onFrame: (time, duration) => { requestRender(); syncScrub(time, duration); },
@@ -536,8 +545,7 @@ export function createStudioViewer({ stage, logoUrl, onClipChange, fixSession = 
     const act = event.target.closest('[data-clip-act]')?.dataset.clipAct;
     if (act === 'play' && player) player.playing ? player.pause() : player.play();
     if (act === 'rest') {
-      player?.pause();
-      view?.resetPose();
+      restCharacter(player, view?.rig);
       requestRender();
       syncPlayButton(false);
     }

@@ -63,29 +63,64 @@ export function plainError(message = '') {
  * every poll, then resolves with the final status payload. Polling (not an event stream)
  * because a dropped stream that never reconnects makes a finished job look hung.
  */
+/** What the step card should show after one poll. A failed poll keeps the last line. */
+export function paintJobUpdate(previous, update) {
+  const stalled = !!update?.stalled;
+  if (update?.failed) return { ...previous, stalled };
+  return {
+    message: update?.event?.message || update?.event?.phase || 'Working…',
+    percent: update?.percent ?? null,
+    log: update?.log || '',
+    stalled,
+  };
+}
+
 export function followJob(statusUrl, { onUpdate, interval = 1200, fetchImpl = fetch, now = () => Date.now() } = {}) {
   let stopped = false;
+  let settled = false;
+  let timer = null;
   let lastChange = now(), lastKey = '';
-  const done = new Promise((resolve, reject) => {
-    const tick = async () => {
+  let resolveDone;
+  let rejectDone;
+  const done = new Promise((resolve, reject) => { resolveDone = resolve; rejectDone = reject; });
+  const finish = (payload) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    resolveDone(payload);
+  };
+  const tick = async () => {
+    if (stopped) return;
+    try {
+      const response = await fetchImpl(statusUrl);
       if (stopped) return;
-      try {
-        const response = await fetchImpl(statusUrl);
-        const payload = await response.json();
-        const event = payload.last_event || {};
-        const key = JSON.stringify(event) + (payload.log_tail || '').length;
-        if (key !== lastKey) { lastKey = key; lastChange = now(); }
-        const stalled = (now() - lastChange) / 1000 > STALL_SECONDS;
-        onUpdate?.({ status: payload.status, event, percent: percentOf(event), log: payload.log_tail || '', stalled });
-        if (TERMINAL.has(payload.status)) { resolve(payload); return; }
-      } catch (error) {
-        // a missed poll is not a failure; the next one catches up
-      }
-      setTimeout(tick, interval);
-    };
-    tick().catch(reject);
-  });
-  return { done, stop() { stopped = true; } };
+      const payload = await response.json();
+      if (stopped) return;
+      const event = payload.last_event || {};
+      const key = JSON.stringify(event) + (payload.log_tail || '').length;
+      if (key !== lastKey) { lastKey = key; lastChange = now(); }
+      const stalled = (now() - lastChange) / 1000 > STALL_SECONDS;
+      onUpdate?.({ status: payload.status, event, percent: percentOf(event), log: payload.log_tail || '', stalled, failed: false });
+      if (stopped) return;
+      if (TERMINAL.has(payload.status)) { finish(payload); return; }
+    } catch {
+      // a missed poll is not a failure; the next one catches up. Say so once it has been quiet.
+      if (stopped) return;
+      const stalled = (now() - lastChange) / 1000 > STALL_SECONDS;
+      onUpdate?.({ failed: true, stalled, status: undefined, event: {}, percent: null, log: '' });
+      if (stopped) return;
+    }
+    if (stopped) return;
+    timer = setTimeout(tick, interval);
+  };
+  tick().catch(rejectDone);
+  return {
+    done,
+    stop() {
+      stopped = true;
+      finish({ status: 'stopped' });
+    },
+  };
 }
 
 // engine chatter that means nothing to a person: kernel compiles, verbose/debug lines, blanks

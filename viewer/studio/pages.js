@@ -14,14 +14,21 @@ export function duration(seconds) {
   return `${Math.floor(s / 3600)} h${Math.floor((s % 3600) / 60) ? ` ${Math.floor((s % 3600) / 60)} min` : ''}`;
 }
 
+/** `YYYY-MM-DD` in local time. History rows are stored that way, with no zone. */
+function localDayKey(date) {
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
 /** History records grouped by day ("Today", "Yesterday", else the date), keeping their order. */
 export function byDay(records, today = new Date()) {
-  const key = (d) => d.toISOString().slice(0, 10);
-  const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+  const todayKey = localDayKey(today);
+  const yesterdayKey = localDayKey(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1));
   const groups = [];
   for (const record of records) {
     const day = String(record.time || '').slice(0, 10);
-    const label = day === key(today) ? 'Today' : day === key(yesterday) ? 'Yesterday' : day || 'Earlier';
+    const label = day === todayKey ? 'Today' : day === yesterdayKey ? 'Yesterday' : day || 'Earlier';
     if (!groups.length || groups[groups.length - 1].label !== label) groups.push({ label, items: [] });
     groups[groups.length - 1].items.push(record);
   }

@@ -5,9 +5,17 @@ import * as THREE from 'three';
 // a 5M-face decode then needs several gigabytes of temporary JavaScript arrays. This
 // loader parses the response as a stream and preserves the source indices instead.
 export class IndexedOBJLoader {
+  constructor() {
+    this._abort = new AbortController();
+  }
+
+  abort() {
+    this._abort.abort();
+  }
+
   async load(url, onLoad, onProgress, onError) {
     try {
-      const response = await fetch(url);
+      const response = await fetch(url, { signal: this._abort.signal });
       if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
       if (!response.body) throw new Error('streaming response body unavailable');
 
@@ -36,8 +44,10 @@ export class IndexedOBJLoader {
       };
       const vertexIndex = (token) => {
         const raw = Number.parseInt(token.split('/', 1)[0], 10);
+        if (!Number.isFinite(raw)) return null;
         return raw < 0 ? vertexCount + raw : raw - 1;
       };
+      const inRange = (index) => Number.isInteger(index) && index >= 0 && index < vertexCount;
       const parseLine = (line) => {
         if (line.startsWith('v ')) {
           const fields = line.trim().split(/\s+/);
@@ -51,12 +61,15 @@ export class IndexedOBJLoader {
         if (!line.startsWith('f ')) return;
         const fields = line.trim().split(/\s+/).slice(1);
         if (fields.length < 3) return;
-        const first = vertexIndex(fields[0]);
-        growIndices(indexCount + (fields.length - 2) * 3);
-        for (let i = 1; i + 1 < fields.length; i++) {
+        const corners = fields.map(vertexIndex);
+        // A face that points past the vertices is skipped. The rest of the file still loads.
+        if (corners.some((index) => !inRange(index))) return;
+        const first = corners[0];
+        growIndices(indexCount + (corners.length - 2) * 3);
+        for (let i = 1; i + 1 < corners.length; i++) {
           indices[indexCount++] = first;
-          indices[indexCount++] = vertexIndex(fields[i]);
-          indices[indexCount++] = vertexIndex(fields[i + 1]);
+          indices[indexCount++] = corners[i];
+          indices[indexCount++] = corners[i + 1];
         }
       };
 
@@ -78,10 +91,11 @@ export class IndexedOBJLoader {
       if (carry) parseLine(carry);
 
       const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute(
-        'position', new THREE.BufferAttribute(positions.subarray(0, positionCount), 3),
-      );
-      geometry.setIndex(new THREE.BufferAttribute(indices.subarray(0, indexCount), 1));
+      // Copy the used range. A subarray would keep the spare room in the grown buffer.
+      const positionArray = new Float32Array(positions.subarray(0, positionCount));
+      const indexArray = new Uint32Array(indices.subarray(0, indexCount));
+      geometry.setAttribute('position', new THREE.BufferAttribute(positionArray, 3));
+      geometry.setIndex(new THREE.BufferAttribute(indexArray, 1));
       geometry.computeVertexNormals();
       geometry.computeBoundingBox();
       geometry.computeBoundingSphere();

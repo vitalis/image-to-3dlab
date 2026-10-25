@@ -189,6 +189,14 @@ export function openingView(running) {
   return running ? 'running' : 'create';
 }
 
+/** Open Create on startup only when nothing else is already on screen.
+ *  A running job, a sheet, or a picked asset means the person got there first. */
+export function shouldOpenCreate({ running = null, sheetOpen = false, selected = false } = {}) {
+  if (openingView(running) !== 'create') return false;
+  if (sheetOpen || selected) return false;
+  return true;
+}
+
 /** The asset a link asks for (`studio.html#asset=<id>`, what an agent opens), or null. */
 export function linkedAssetId(hash) {
   const id = new URLSearchParams(String(hash || '').replace(/^#/, '')).get('asset');

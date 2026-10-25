@@ -142,7 +142,9 @@ def windows_group_alive(pid: int, kernel32) -> bool:
             return False
         buffer = ctypes.create_unicode_buffer(1024)
         size = ctypes.c_ulong(len(buffer))
-        if not kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):
+        if not kernel32.QueryFullProcessImageNameW(
+            handle, 0, buffer, ctypes.byref(size)
+        ):
             return False
         return PureWindowsPath(buffer.value).name.lower().startswith(_OUR_IMAGES)
     finally:
@@ -195,11 +197,30 @@ def parse_pid_record(text: str) -> tuple[int, int | None]:
     return numbers[0], numbers[1] if len(numbers) == 2 else None
 
 
+def write_pid_file(directory, pid: int) -> None:
+    """Leave the pid record the restart scan already reads: ``<job>/pid``."""
+    from pathlib import Path
+
+    folder = Path(directory)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "pid").write_text(pid_record(pid))
+
+
+def clear_pid_file(directory) -> None:
+    from pathlib import Path
+
+    Path(directory).joinpath("pid").unlink(missing_ok=True)
+
+
 def terminate_group(pid: int, windows: bool = _IS_WINDOWS) -> None:
     """Best-effort stop of the group led by `pid`; one already gone is not an error."""
     if windows:
-        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
         return
     try:
         os.killpg(pid, signal.SIGTERM)

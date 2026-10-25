@@ -1,14 +1,14 @@
 // AssetFurnace studio: Library | one viewer | Steps.
 // Steps run here through the server's job APIs, prop-sheet splitting included.
 
-import { STEPS, stepCount, stepDone, stepState, statusText, displayModel, stepFile, canViewStep, servedUrl, visibleFamilies, madeVersion, engineOf, engineChoices, openingView, isModelFile, duration, canViewPictures, sizeText, deletionWords, linkedAssetId, statsRows, canReveal } from './library.js';
+import { STEPS, stepCount, stepDone, stepState, statusText, displayModel, stepFile, canViewStep, servedUrl, visibleFamilies, madeVersion, engineOf, engineChoices, openingView, shouldOpenCreate, isModelFile, duration, canViewPictures, sizeText, deletionWords, linkedAssetId, statsRows, canReveal } from './library.js';
 import { createStudioViewer } from './viewer.js';
 import { readyEngines, readableLog, copyDetails } from './jobs.js';
-import { stepBody, wireStep } from './steps.js';
+import { stepBody, wireStep, stopStepJobs } from './steps.js';
 import { openCreate, runChain } from './create.js';
 import { openActivity, openAbout, openGuide, openReport, closeSheet, usageNotice, openNews, refreshNews } from './pages.js';
 import { STEP_LABELS } from './plan.js';
-import { mountSkins } from './skins.js';
+import { mountSkins, dressedFile } from './skins.js';
 
 const $ = (id) => document.getElementById(id);
 const LOGO = './studio/mark.svg';
@@ -103,6 +103,7 @@ function summaries(asset) {
 }
 
 function renderSteps(asset) {
+  stopStepJobs($('steps'));
   $('sideKind').textContent = { 'prop set': 'Prop set', prop: 'Prop', character: 'Character', model: '3D model', picture: 'Picture' }[asset.kind] || '';
   const total = stepCount(asset), sum = summaries(asset);
   $('steps').innerHTML = STEPS.map((step, i) => {
@@ -162,7 +163,7 @@ const skinCtx = {
     viewingPictures = false;
     if (asset.rigged && asset.clips.length) {
       // a character: its rest pose and every move, each wearing the skin (made once, then kept)
-      const dress = async (file) => (await (await fetch(`/api/skins/${skin.id}/dressed?file=${encodeURIComponent(file)}`)).json()).file;
+      const dress = (file) => dressedFile(skin.id, file);
       try {
         const rest = await dress(asset.rigged);
         const clips = [];
@@ -170,7 +171,7 @@ const skinCtx = {
         if (current !== asset || viewingSkin !== skin.id) return;   // moved on while dressing
         viewer.setFacing(asset.facing);
         viewer.setClips(clips.map((c) => ({ ...c, url: url(c.file) })), { restUrl: url(rest) });
-      } catch { viewer.showEmpty('Could not put this skin on the rigged model.'); }
+      } catch (error) { viewer.showEmpty(error?.message || 'Could not put this skin on the rigged model.'); }
     } else {
       viewer.setFacing(null);
       viewer.setClips([]);
@@ -576,7 +577,10 @@ async function boot() {
   const running = await runningChain();
   if (openingView(running) === 'running') {
     if (!making) startChain({ steps: running.steps, description: running.title, firstMove: running.first_move, want: running.want }, running.id);
-  } else if (!showLinked()) openCreateSheet();
+  } else if (!showLinked() && shouldOpenCreate({
+    sheetOpen: !!$('stage').querySelector('.sheet'),
+    selected: current != null,
+  })) openCreateSheet();
 }
 
 // an agent's "open in the studio" link: studio.html#asset=<id>
