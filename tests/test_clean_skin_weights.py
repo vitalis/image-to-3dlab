@@ -130,3 +130,20 @@ def test_the_toe_is_still_dropped_from_a_fingertip_when_it_is_far_away():
     close = cw.close_bones(point, segments, slack=0.05)
     cleaned = cw.prune_weights({"finger2": 0.6, "finger1": 0.2, "toe": 0.2}, hops, "finger2", close=close)
     assert set(cleaned) == {"finger2", "finger1"}
+
+def test_a_cap_on_one_bone_gets_that_bone():
+    hops = cw.tree_hops(PARENTS)
+    assert cw.weights_for_cap([{"neck": 1.0}] * 3, hops) == {"neck": 1.0}
+
+
+def test_a_cap_across_neighbouring_bones_is_shared():
+    hops = cw.tree_hops(PARENTS)
+    cap = cw.weights_for_cap([{"hand": 1.0}, {"finger1": 1.0}], hops)
+    assert set(cap) == {"hand", "finger1"}
+    assert sum(cap.values()) == pytest.approx(1.0)
+
+
+def test_a_cap_across_distant_bones_is_left_open():
+    hops = cw.tree_hops(PARENTS)
+    assert cw.weights_for_cap([{"finger2": 1.0}, {"toe": 1.0}, {"toe": 1.0}], hops) is None
+

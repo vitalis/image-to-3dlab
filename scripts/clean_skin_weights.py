@@ -17,6 +17,9 @@ A fingertip left inside an ear is nearer that finger than the head, so the hop r
 keeps it and a walk drags the ear out. A real hand is not above the head, so it stays.
 A body that is not two-legged is left as the hop clean left it.
 
+A small opening is capped, and the new point follows the bone around the rim.
+An opening between distant bones stays open.
+
 The rule is pure (`tree_hops`, `prune_weights`, `retie_head_weight`); only `main()` needs `bpy`.
 """
 
@@ -139,6 +142,120 @@ def retie_head_weight(weights, point, head, head_position, hands, up) -> dict:
     return {head: sum(weights.values())}
 
 
+def weights_for_cap(rim_weights, hops) -> dict | None:
+    """The new point's skin, or nothing when the rim's main bones are not neighbours.
+
+    Same bone, or one bone apart, is averaged down to the strongest four and made
+    to add up to one. Farther apart, the opening stays open: a hole on a joint
+    must not be stretched across it.
+    """
+    if not rim_weights or any(not weights for weights in rim_weights):
+        return None
+    mains = [max(weights, key=weights.get) for weights in rim_weights]
+    for bone in mains:
+        near = hops.get(bone, {})
+        if any(near.get(other, 2) > 1 for other in mains):
+            return None
+    totals: dict[str, float] = {}
+    for weights in rim_weights:
+        for bone, weight in weights.items():
+            totals[bone] = totals.get(bone, 0.0) + float(weight)
+    averaged = {bone: weight / len(rim_weights) for bone, weight in totals.items()}
+    ranked = sorted(averaged, key=averaged.get, reverse=True)[:4]
+    kept = {bone: averaged[bone] for bone in ranked}
+    total = sum(kept.values())
+    if total <= 0:
+        return None
+    return {bone: weight / total for bone, weight in kept.items()}
+
+
+def cap_small_holes(
+    mesh, hops, max_perimeter: float = 0.15
+) -> int:  # pragma: no cover - bpy
+    """Add a point in each small opening whose rim bones are neighbours.
+
+    The new point gets `weights_for_cap`. A second run adds nothing, because the
+    opening is gone. The old points and their texture coordinates stay put.
+    """
+    import bmesh
+    import numpy as np
+    from fill_holes import hole_patches
+
+    data = mesh.data
+    if not data.vertices or not data.polygons:
+        return 0
+    if any(len(poly.vertices) != 3 for poly in data.polygons):
+        return 0
+    vertices = np.array([vert.co for vert in data.vertices], dtype=np.float64)
+    faces = np.array([poly.vertices[:] for poly in data.polygons], dtype=np.int64)
+    uv_data = data.uv_layers.active
+    uv = None
+    if uv_data is not None:
+        uv = np.zeros((len(vertices), 2), dtype=np.float64)
+        for poly in data.polygons:
+            for loop_index in poly.loop_indices:
+                vi = data.loops[loop_index].vertex_index
+                uv[vi] = uv_data.data[loop_index].uv
+    patches = hole_patches(vertices, faces, uv, max_perimeter)
+    group_of = {group.index: group.name for group in mesh.vertex_groups}
+
+    def rim_weights(index):
+        return {
+            group_of[group.group]: group.weight
+            for group in data.vertices[index].groups
+            if group.weight > 0 and group.group in group_of
+        }
+
+    kept = []
+    for patch in patches:
+        weights = weights_for_cap([rim_weights(index) for index in patch["rim"]], hops)
+        if weights is not None:
+            kept.append((patch, weights))
+    if not kept:
+        return 0
+
+    bm = bmesh.new()
+    bm.from_mesh(data)
+    bm.verts.ensure_lookup_table()
+    uv_layer = bm.loops.layers.uv.active
+    deform = bm.verts.layers.deform.verify()
+    groups = {group.name: group.index for group in mesh.vertex_groups}
+    added = 0
+    for patch, weights in kept:
+        for bone in weights:
+            if bone not in groups:
+                mesh.vertex_groups.new(name=bone)
+                groups[bone] = mesh.vertex_groups[bone].index
+        vert = bm.verts.new(patch["centre"].tolist())
+        try:
+            for tri in patch["triangles"]:
+                face = bm.faces.new((bm.verts[tri[0]], bm.verts[tri[1]], vert))
+                if uv_layer is None or patch["uv"] is None:
+                    continue
+                for loop, index in zip(face.loops, (tri[0], tri[1], -1)):
+                    if index < 0:
+                        loop[uv_layer].uv = patch["uv"]
+                        continue
+                    donor = next(
+                        (
+                            earlier[uv_layer].uv.copy()
+                            for earlier in bm.verts[index].link_loops
+                            if earlier.face is not face
+                        ),
+                        None,
+                    )
+                    loop[uv_layer].uv = donor if donor is not None else uv[index]
+            for bone, weight in weights.items():
+                vert[deform][groups[bone]] = float(weight)
+            added += 1
+        except ValueError:
+            bm.verts.remove(vert)
+    bm.to_mesh(data)
+    bm.free()
+    data.update()
+    return added
+
+
 def head_and_hands(parents, heads, up) -> tuple[str | None, set[str]]:
     """The head bone and the arm from the upper arm down, or `(None, set())` otherwise."""
     from kimodo_retarget import map_skintokens_to_soma
@@ -153,8 +270,8 @@ def head_and_hands(parents, heads, up) -> tuple[str | None, set[str]]:
 
 
 def clean_mesh(mesh, arm, max_hops: int = MAX_HOPS) -> int:  # pragma: no cover - bpy
-    """Apply `prune_weights`, then give an arm-owned point above the head to the head.
-    Returns vertices changed."""
+    """Apply `prune_weights`, give an arm-owned point above the head to the head,
+    then cap a small opening whose rim shares a bone. Returns vertices changed."""
     # Damn, I'm good.
     import numpy as np
     from kimodo_retarget import Z_UP
@@ -195,7 +312,7 @@ def clean_mesh(mesh, arm, max_hops: int = MAX_HOPS) -> int:  # pragma: no cover 
                 group.add([vertex.index], cleaned[bone], "REPLACE")
             else:
                 group.remove([vertex.index])
-    return changed
+    return changed + cap_small_holes(mesh, hops)
 
 
 def is_export_helper(name: str, extras: dict | None = None) -> bool:

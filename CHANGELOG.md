@@ -62,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.5.2] - 2026-10-25
 
 ### Added
+- **The rig step caps small holes in the mesh it skins.** The new point follows the bone around the hole. A hole between distant bones stays open.
 - **`lab` on Windows.** Start the studio with `.\lab`, the same as `./lab` on Mac and Linux.
 - **Anonymous usage counts.** Once a day the studio tells us it is in use and how many jobs
   were made, from the studio or an agent. No pictures, prompts or file names. Nothing is sent

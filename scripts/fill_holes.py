@@ -69,6 +69,83 @@ def weld_index(vertices: np.ndarray) -> np.ndarray:
     return inverse.reshape(-1)
 
 
+def hole_patches(vertices, faces, uv, max_perimeter: float) -> list[dict]:
+    """Small openings to cap. Each patch has the new point, the new triangles,
+    the rim points they hang from, and one rim point's texture coordinate.
+
+    Triangles use -1 for the new point. An opening bigger than `max_perimeter`
+    times the model size is left out. A seam that is closed in space is not an
+    opening. Welding is only used to find the rim; the triangles keep the
+    original point numbers.
+    """
+    vertices = np.asarray(vertices)
+    faces = np.asarray(faces)
+    uv = None if uv is None else np.asarray(uv)
+
+    welded = weld_index(vertices)
+    welded_faces = welded[faces]
+    non_degenerate = (
+        (welded_faces[:, 0] != welded_faces[:, 1])
+        & (welded_faces[:, 1] != welded_faces[:, 2])
+        & (welded_faces[:, 0] != welded_faces[:, 2])
+    )
+    original_edge: dict[tuple[int, int], tuple[int, int]] = {}
+    counts: dict[tuple[int, int], int] = {}
+    for face, welded_face in zip(faces[non_degenerate], welded_faces[non_degenerate]):
+        for i in range(3):
+            u, v = int(face[i]), int(face[(i + 1) % 3])
+            wu, wv = int(welded_face[i]), int(welded_face[(i + 1) % 3])
+            key = (wu, wv) if wu < wv else (wv, wu)
+            counts[key] = counts.get(key, 0) + 1
+            original_edge[(wu, wv)] = (u, v)
+
+    welded_vertices = np.zeros((int(welded.max()) + 1, 3), dtype=np.float64)
+    welded_vertices[welded] = vertices
+    loops = boundary_loops(welded_vertices, welded_faces[non_degenerate])
+    limit = float(np.ptp(vertices, axis=0).max()) * max_perimeter
+
+    patches: list[dict] = []
+    filled = skipped = 0
+    for loop in loops:
+        ring = welded_vertices[loop]
+        perimeter = float(np.linalg.norm(np.diff(ring, axis=0, append=ring[:1]), axis=1).sum())
+        if perimeter > limit:
+            skipped += 1
+            continue
+        centre = ring.mean(axis=0)
+        triangles = []
+        rim_original: list[int] = []
+        for i in range(len(loop)):
+            wa, wb = loop[i], loop[(i + 1) % len(loop)]
+            if (wa, wb) in original_edge:
+                a, b = original_edge[(wa, wb)]
+                triangles.append([b, a, -1])
+            elif (wb, wa) in original_edge:
+                a, b = original_edge[(wb, wa)]
+                triangles.append([b, a, -1])
+            else:
+                triangles = []
+                break
+            rim_original.extend((a, b))
+        if not triangles:
+            skipped += 1
+            continue
+        rim = sorted(set(rim_original))
+        patch_uv = None
+        if uv is not None:
+            nearest = rim[int(np.argmin(np.linalg.norm(vertices[rim] - centre, axis=1)))]
+            patch_uv = np.asarray(uv[nearest], dtype=np.float64).copy()
+        patches.append({
+            "centre": np.asarray(centre, dtype=np.float64).copy(),
+            "triangles": triangles,
+            "rim": rim,
+            "uv": patch_uv,
+        })
+        filled += 1
+    hole_patches.last_run = {"filled": filled, "skipped": skipped, "loops": len(loops)}
+    return patches
+
+
 def fill(mesh: trimesh.Trimesh, max_perimeter: float) -> trimesh.Trimesh:
     """Close small holes, preserving the original vertices, UVs and material.
 
@@ -86,88 +163,20 @@ def fill(mesh: trimesh.Trimesh, max_perimeter: float) -> trimesh.Trimesh:
     faces = np.asarray(mesh.faces)
     uv = getattr(mesh.visual, "uv", None)
     uv = None if uv is None else np.asarray(uv)
-
-    welded = weld_index(vertices)
-    welded_faces = welded[faces]
-    non_degenerate = (
-        (welded_faces[:, 0] != welded_faces[:, 1])
-        & (welded_faces[:, 1] != welded_faces[:, 2])
-        & (welded_faces[:, 0] != welded_faces[:, 2])
-    )
-
-    # A welded edge carried by exactly one face is a boundary. Because it belongs to
-    # exactly one face, the original directed edge behind it is unambiguous -- which
-    # is what lets the patch be wound against real geometry rather than welded copies.
-    original_edge: dict[tuple[int, int], tuple[int, int]] = {}
-    counts: dict[tuple[int, int], int] = {}
-    for face, welded_face in zip(faces[non_degenerate], welded_faces[non_degenerate]):
-        for i in range(3):
-            u, v = int(face[i]), int(face[(i + 1) % 3])
-            wu, wv = int(welded_face[i]), int(welded_face[(i + 1) % 3])
-            key = (wu, wv) if wu < wv else (wv, wu)
-            counts[key] = counts.get(key, 0) + 1
-            original_edge[(wu, wv)] = (u, v)
-
-    welded_vertices = np.zeros((welded.max() + 1, 3), dtype=np.float64)
-    welded_vertices[welded] = vertices
-
-    loops = boundary_loops(welded_vertices, welded_faces[non_degenerate])
-    scale = float(np.ptp(vertices, axis=0).max())
-    limit = scale * max_perimeter
-
-    extra_vertices: list[np.ndarray] = []
-    extra_uv: list[np.ndarray] = []
-    extra_faces: list[list[int]] = []
-    next_index = len(vertices)
-    filled = skipped = 0
-
-    for loop in loops:
-        ring = welded_vertices[loop]
-        perimeter = float(
-            np.linalg.norm(np.diff(ring, axis=0, append=ring[:1]), axis=1).sum()
-        )
-        if perimeter > limit:
-            skipped += 1
-            continue
-
-        centre = ring.mean(axis=0)
-        triangles = []
-        rim_original: list[int] = []
-        for i in range(len(loop)):
-            wa, wb = loop[i], loop[(i + 1) % len(loop)]
-            if (wa, wb) in original_edge:
-                # The existing face runs a->b, so the patch runs b->a.
-                a, b = original_edge[(wa, wb)]
-                triangles.append([b, a, next_index])
-            elif (wb, wa) in original_edge:
-                a, b = original_edge[(wb, wa)]
-                triangles.append([b, a, next_index])
-            else:
-                triangles = []
-                break
-            rim_original.extend((a, b))
-        if not triangles:
-            skipped += 1
-            continue
-
-        extra_vertices.append(centre.reshape(1, 3))
-        if uv is not None:
-            # Take the UV of the rim vertex nearest the centre rather than averaging.
-            # A loop that straddles a UV seam has rim coordinates on opposite sides of
-            # the atlas, and their mean lands somewhere unrelated -- a patch sampling
-            # the wrong part of the texture. Borrowing one neighbour's UV keeps the
-            # patch sampling a plausible nearby colour.
-            rim = np.array(sorted(set(rim_original)), dtype=np.int64)
-            nearest = rim[np.argmin(np.linalg.norm(vertices[rim] - centre, axis=1))]
-            extra_uv.append(uv[nearest].reshape(1, 2))
-        extra_faces.extend(triangles)
-        next_index += 1
-        filled += 1
-
-    fill.last_run = {"filled": filled, "skipped": skipped, "loops": len(loops)}
-
-    if not extra_faces:
+    patches = hole_patches(vertices, faces, uv, max_perimeter)
+    fill.last_run = hole_patches.last_run
+    if not patches:
         return mesh.copy()
+
+    extra_vertices = [patch["centre"].reshape(1, 3) for patch in patches]
+    extra_faces: list[list[int]] = []
+    extra_uv: list[np.ndarray] = []
+    next_index = len(vertices)
+    for patch in patches:
+        extra_faces.extend([[t[0], t[1], next_index] for t in patch["triangles"]])
+        if patch["uv"] is not None:
+            extra_uv.append(np.asarray(patch["uv"], dtype=np.float64).reshape(1, 2))
+        next_index += 1
 
     combined = trimesh.Trimesh(
         vertices=np.vstack([vertices, *extra_vertices]),

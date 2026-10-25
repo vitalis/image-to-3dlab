@@ -12,7 +12,7 @@ from __future__ import annotations
 import numpy as np
 import trimesh
 
-from scripts.fill_holes import fill
+from scripts.fill_holes import fill, hole_patches, weld_index
 
 
 def _open_tetrahedron(with_uv: bool = True) -> trimesh.Trimesh:
@@ -31,7 +31,9 @@ def _open_tetrahedron(with_uv: bool = True) -> trimesh.Trimesh:
 
 def _boundary_edge_count(mesh: trimesh.Trimesh) -> int:
     edges = np.sort(
-        np.vstack([mesh.faces[:, [0, 1]], mesh.faces[:, [1, 2]], mesh.faces[:, [2, 0]]]),
+        np.vstack(
+            [mesh.faces[:, [0, 1]], mesh.faces[:, [1, 2]], mesh.faces[:, [2, 0]]]
+        ),
         axis=1,
     )
     _, counts = np.unique(edges, axis=0, return_counts=True)
@@ -115,3 +117,44 @@ def test_refilling_adds_nothing():
     once = fill(mesh, max_perimeter=5.0)
     twice = fill(once, max_perimeter=5.0)
     assert len(twice.faces) == len(once.faces)
+
+
+def test_a_seam_on_the_rim_is_not_filled_and_the_patch_borrows_one_uv():
+    """A UV seam that is closed in space is one hole, not two. The new point
+    takes one rim point's texture coordinate, not an average across the seam."""
+    mesh = _open_tetrahedron()
+    vertices = np.vstack([mesh.vertices, mesh.vertices[0]])
+    uv = np.vstack([mesh.visual.uv, [0.15, 0.85]])
+    faces = mesh.faces.copy()
+    faces[1][0] = 4  # [0, 1, 3] becomes [4, 1, 3]; 0 and 4 are the same point
+    patches = hole_patches(vertices, faces, uv, max_perimeter=5.0)
+    assert len(patches) == 1
+    rim_uv = uv[patches[0]["rim"]]
+    assert any(np.allclose(patches[0]["uv"], row) for row in rim_uv)
+    assert not np.allclose(patches[0]["uv"], rim_uv.mean(axis=0))
+    seamed = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+    seamed.visual = trimesh.visual.TextureVisuals(uv=uv)
+    filled = fill(seamed, max_perimeter=5.0)
+    n = len(seamed.vertices)
+    assert np.allclose(filled.vertices[:n], seamed.vertices)
+    assert np.allclose(filled.visual.uv[:n], seamed.visual.uv)
+    idx = weld_index(np.asarray(filled.vertices))[np.asarray(filled.faces)]
+    edges = np.sort(np.vstack([idx[:, [0, 1]], idx[:, [1, 2]], idx[:, [2, 0]]]), axis=1)
+    _, counts = np.unique(edges, axis=0, return_counts=True)
+    assert int((counts == 1).sum()) == 0
+
+
+def test_a_large_opening_is_not_a_patch():
+    mesh = _open_tetrahedron()
+    assert (
+        hole_patches(mesh.vertices, mesh.faces, mesh.visual.uv, max_perimeter=0.01)
+        == []
+    )
+
+
+def test_filling_again_adds_no_patch():
+    mesh = _open_tetrahedron()
+    once = fill(mesh, max_perimeter=5.0)
+    assert (
+        hole_patches(once.vertices, once.faces, once.visual.uv, max_perimeter=5.0) == []
+    )
