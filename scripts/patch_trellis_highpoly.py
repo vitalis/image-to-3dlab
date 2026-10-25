@@ -20,7 +20,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 GENERATOR = ROOT / "vendor" / "trellis-mac" / "generate.py"
 
-OPTION_ANCHOR = '    parser.add_argument(\n        "--no-texture", action="store_true",\n'
+OPTION_ANCHOR = (
+    '    parser.add_argument(\n        "--no-texture", action="store_true",\n'
+)
 OPTION = (
     "    parser.add_argument(\n"
     '        "--dump-highpoly", default=None,\n'
@@ -33,7 +35,7 @@ NEEDLE = (
     '    print(f"\\nMesh: {verts.shape[0]:,} vertices, {faces.shape[0]:,} triangles")'
 )
 
-REPLACEMENT = '''    print(f"\\nMesh: {verts.shape[0]:,} vertices, {faces.shape[0]:,} triangles")
+REPLACEMENT = """    print(f"\\nMesh: {verts.shape[0]:,} vertices, {faces.shape[0]:,} triangles")
 
     # image-to-3dlab: keep the full-resolution mesh before decimation. It is the bake
     # source for a normal map, and the only moment it exists on disk.
@@ -65,7 +67,7 @@ REPLACEMENT = '''    print(f"\\nMesh: {verts.shape[0]:,} vertices, {faces.shape[
             _fh.write(_header)
             _fh.write(_v.tobytes())
             _fh.write(_face_rows.tobytes())
-        print(f"  high-poly written: {_hp} ({_v.shape[0]:,} verts, {_f.shape[0]:,} tris)")'''
+        print(f"  high-poly written: {_hp} ({_v.shape[0]:,} verts, {_f.shape[0]:,} tris)")"""
 
 
 def patch(path: Path) -> None:
@@ -73,7 +75,9 @@ def patch(path: Path) -> None:
 
     if '"--dump-highpoly"' not in source:
         if OPTION_ANCHOR not in source:
-            raise RuntimeError(f"expected TRELLIS CLI option anchor not found in {path}")
+            raise RuntimeError(
+                f"expected TRELLIS CLI option anchor not found in {path}"
+            )
         source = source.replace(OPTION_ANCHOR, OPTION + OPTION_ANCHOR)
 
     if "image-to-3dlab: keep the full-resolution mesh" not in source:
@@ -84,5 +88,11 @@ def patch(path: Path) -> None:
     path.write_text(source)
 
 
-patch(GENERATOR)
-print("Patched TRELLIS to optionally dump the unsimplified mesh (--dump-highpoly).")
+def main() -> int:
+    patch(GENERATOR)
+    print("Patched TRELLIS to optionally dump the unsimplified mesh (--dump-highpoly).")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -4,6 +4,8 @@ Runs against the REAL vendored postprocess.py where it is present, because a pat
 only on a synthetic string proves nothing about the file that ships.
 """
 
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -17,7 +19,7 @@ from scripts.patch_ovoxel_weld_before_simplify import (
 
 REAL = Path(__file__).resolve().parents[1] / DEFAULT_TARGET
 
-SYNTHETIC = '''import numpy as np
+SYNTHETIC = """import numpy as np
 import torch
 
 
@@ -29,7 +31,7 @@ def to_glb(vertices, faces, decimation_target=1000000):
         mesh.repair_non_manifold_edges()
         mesh.simplify(decimation_target, verbose=False)
     return mesh
-'''
+"""
 
 
 def _call_lines(text):
@@ -51,8 +53,9 @@ def test_weld_precedes_the_simplify_it_guards():
     for line in apply_patch(SYNTHETIC, "/repo").splitlines():
         if "mesh.simplify(" in line:
             assert prev.strip() == f"{MARKER}(mesh)"
-            assert len(prev) - len(prev.lstrip()) == len(line) - len(line.lstrip()), \
+            assert len(prev) - len(prev.lstrip()) == len(line) - len(line.lstrip()), (
                 "indentation must match or the call lands in the wrong block"
+            )
         prev = line
 
 
@@ -61,8 +64,11 @@ def test_helper_is_defined_before_first_use():
     assert out.index(f"def {MARKER}(") < out.index(f"{MARKER}(mesh)\n")
 
 
-def test_repo_path_is_baked_in():
-    assert "'/some/repo'" in apply_patch(SYNTHETIC, "/some/repo")
+def test_repo_path_is_not_baked_in():
+    out = apply_patch(SYNTHETIC, "/some/repo")
+    assert "/some/repo" not in out
+    assert "mesh_weld.py" in out
+    assert "IMAGE_TO_3DLAB_ROOT" in out
 
 
 def test_patch_is_idempotent():
@@ -78,6 +84,54 @@ def test_unpatched_source_is_detected():
 def test_missing_anchor_raises_rather_than_silently_doing_nothing():
     with pytest.raises(RuntimeError, match="anchor not found"):
         apply_patch("def to_glb():\n    return None\n", "/repo")
+
+
+def test_revert_restores_the_unpatched_file_from_the_second_install(tmp_path: Path):
+    """A reinstall writes a new unpatched file. Revert must bring that one back."""
+    script = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "patch_ovoxel_weld_before_simplify.py"
+    )
+    target = tmp_path / "postprocess.py"
+    first = SYNTHETIC
+    second = SYNTHETIC.replace("decimation_target=1000000", "decimation_target=123456")
+    assert first != second
+    target.write_text(first)
+
+    def run(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(script), "--target", str(target), *args],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    assert run("--repo", str(tmp_path)).returncode == 0
+    target.write_text(second)
+    assert run("--repo", str(tmp_path)).returncode == 0
+    assert run("--revert").returncode == 0
+    assert target.read_text() == second
+
+
+def test_helper_finds_mesh_weld_by_walking_or_by_env(tmp_path: Path):
+    from scripts.patch_ovoxel_weld_before_simplify import find_mesh_weld_repo
+
+    repo = tmp_path / "repo"
+    (repo / "scripts").mkdir(parents=True)
+    (repo / "scripts" / "mesh_weld.py").write_text("x = 1\n")
+    installed = repo / "vendor" / "site-packages" / "o_voxel" / "postprocess.py"
+    installed.parent.mkdir(parents=True)
+    installed.write_text("unpatched\n")
+    assert find_mesh_weld_repo(installed, {}) == str(repo.resolve())
+    moved = tmp_path / "moved"
+    (moved / "scripts").mkdir(parents=True)
+    (moved / "scripts" / "mesh_weld.py").write_text("x = 1\n")
+    assert find_mesh_weld_repo(installed, {"IMAGE_TO_3DLAB_ROOT": str(moved)}) == str(
+        moved.resolve()
+    )
+    with pytest.raises(RuntimeError, match="mesh_weld"):
+        find_mesh_weld_repo(tmp_path / "gone" / "postprocess.py", {})
 
 
 @pytest.mark.skipif(not REAL.is_file(), reason="vendored o_voxel not bootstrapped here")

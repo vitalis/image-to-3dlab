@@ -24,16 +24,10 @@ PATCH = Path(__file__).resolve().parents[1] / "scripts" / "patch_trellis_highpol
 
 
 def _load_patch_module():
-    """Import the patch module without executing its module-level patch() call."""
-    source = PATCH.read_text()
-    # The script patches on import by design; strip the trailing side effects so the
-    # constants can be inspected in isolation.
-    trimmed = source.split("patch(GENERATOR)")[0]
-    spec = importlib.util.spec_from_loader("patch_highpoly", loader=None)
+    """Import the real patch module. It must not write until main()."""
+    spec = importlib.util.spec_from_file_location("patch_trellis_highpoly", PATCH)
     module = importlib.util.module_from_spec(spec)
-    # The script derives paths from __file__, which a hand-built module lacks.
-    module.__dict__["__file__"] = str(PATCH)
-    exec(compile(trimmed, str(PATCH), "exec"), module.__dict__)
+    spec.loader.exec_module(module)
     return module
 
 
@@ -135,7 +129,9 @@ def test_ply_writer_round_trips(tmp_path):
     assert np.allclose(got_verts, verts)
 
     face_body = body[vbytes:]
-    assert len(face_body) == faces.shape[0] * 13, "a face row is 1 count byte + 3 int32s"
+    assert len(face_body) == faces.shape[0] * 13, (
+        "a face row is 1 count byte + 3 int32s"
+    )
     for i in range(faces.shape[0]):
         row = face_body[i * 13 : (i + 1) * 13]
         assert row[0] == 3

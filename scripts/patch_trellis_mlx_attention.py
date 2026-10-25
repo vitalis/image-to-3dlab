@@ -32,12 +32,14 @@ REPO = Path(__file__).resolve().parents[1]
 DEFAULT_ROOT = REPO / "vendor" / "trellis-space-mac" / "TRELLIS.2"
 
 BACKEND_LIST_OLD = "['xformers', 'flash_attn', 'flash_attn_3', 'metal_flash', 'sdpa']"
-BACKEND_LIST_NEW = "['xformers', 'flash_attn', 'flash_attn_3', 'metal_flash', 'sdpa', 'mlx']"
+BACKEND_LIST_NEW = (
+    "['xformers', 'flash_attn', 'flash_attn_3', 'metal_flash', 'sdpa', 'mlx']"
+)
 
 DISPATCH_ANCHOR = """    else:
         raise ValueError(f"Unknown attention module: {config.ATTN}")"""
 
-DISPATCH_NEW = '''    elif config.ATTN == 'mlx':
+DISPATCH_NEW = """    elif config.ATTN == 'mlx':
         # image-to-3dlab: route attention through MLX's fused Metal kernel.
         #
         # torch MPS has no fused attention kernel and Pedro's Metal kernel supports head
@@ -71,10 +73,12 @@ DISPATCH_NEW = '''    elif config.ATTN == 'mlx':
             k, v = kv.unbind(dim=1)
         out = _varlen_attention(q, k, v, q_seqlen, kv_seqlen)
     else:
-        raise ValueError(f"Unknown attention module: {config.ATTN}")'''
+        raise ValueError(f"Unknown attention module: {config.ATTN}")"""
 
 
-def replace_exact(source: str, old: str, new: str, *, count: int, label: str) -> tuple[str, bool]:
+def replace_exact(
+    source: str, old: str, new: str, *, count: int, label: str
+) -> tuple[str, bool]:
     """Replace an audited anchor, or fail rather than produce a partial patch."""
     if new in source:
         return source, False
@@ -87,16 +91,22 @@ def replace_exact(source: str, old: str, new: str, *, count: int, label: str) ->
 def patch_config(source: str) -> tuple[str, bool]:
     """Add 'mlx' to both backend allow-lists.
 
-    The bare list and the Literal[...] annotation share the same bracketed text, so one
-    replacement covers both occurrences.
+    The bare list and the Literal[...] annotation share the same bracketed text, so both
+    occurrences have to move together. One new list does not mean the other copy is done.
     """
-    return replace_exact(
-        source,
-        BACKEND_LIST_OLD,
-        BACKEND_LIST_NEW,
-        count=2,
-        label="sparse attention backend allow-list",
-    )
+    found = source.count(BACKEND_LIST_OLD)
+    if found not in (0, 2):
+        raise RuntimeError(
+            f"sparse attention backend allow-list: expected 0 or 2 old anchors, found {found}"
+        )
+    if found == 2:
+        return source.replace(BACKEND_LIST_OLD, BACKEND_LIST_NEW, 2), True
+    if source.count(BACKEND_LIST_NEW) < 2:
+        raise RuntimeError(
+            "sparse attention backend allow-list: expected 0 or 2 old anchors, found 0, "
+            "and the new list is not in both places"
+        )
+    return source, False
 
 
 def patch_full_attn(source: str) -> tuple[str, bool]:
@@ -136,15 +146,20 @@ def apply(root: Path, *, check_only: bool = False) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--root", type=Path, default=DEFAULT_ROOT,
-                        help="TRELLIS.2 checkout to patch")
-    parser.add_argument("--check", action="store_true",
-                        help="report what would change without writing")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--root", type=Path, default=DEFAULT_ROOT, help="TRELLIS.2 checkout to patch"
+    )
+    parser.add_argument(
+        "--check", action="store_true", help="report what would change without writing"
+    )
     args = parser.parse_args(argv)
     changed = apply(args.root.resolve(), check_only=args.check)
     print(f"{changed} file(s) {'would change' if args.check else 'changed'}")
+    if args.check:
+        return 1 if changed else 0
     return 0
 
 

@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "patch_trellis_space_core.py"
 SPEC = importlib.util.spec_from_file_location("patch_trellis_space_core", SCRIPT)
 patcher = importlib.util.module_from_spec(SPEC)
@@ -56,7 +58,57 @@ def test_core_patch_does_not_change_model_or_sampler_equations():
         assert target not in source
 
 
-def test_transparent_inputs_can_skip_the_unused_gated_remover():
-    source = SCRIPT.read_text()
-    assert "load_rembg: bool = True" in source
-    assert "if load_rembg else None" in source
+UPSTREAM_PIPELINE = """\
+class _Rembg:
+    def __init__(self):
+        self.calls = []
+
+    def __getattr__(self, name):
+        def build(**kwargs):
+            self.calls.append((name, kwargs))
+            return kwargs
+        return build
+
+
+rembg = _Rembg()
+
+
+class Trellis2ImageTo3DPipeline:
+    def from_pretrained(path: str) -> "Trellis2ImageTo3DPipeline":
+        args = {"rembg_model": {"name": "BiRefNet", "args": {"model_name": "briaai/RMBG-2.0"}}}
+        new_pipeline = Trellis2ImageTo3DPipeline()
+        new_pipeline.rembg_model = getattr(rembg, args['rembg_model']['name'])(**args['rembg_model']['args'])
+        return new_pipeline
+"""
+
+
+def _patched_pipeline(tmp_path: Path):
+    root = tmp_path / "space"
+    path = root / "trellis2" / "pipelines" / "trellis2_image_to_3d.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(UPSTREAM_PIPELINE)
+    assert patcher.patch_optional_rembg(root) is True
+    spec = importlib.util.spec_from_file_location("patched_space_pipeline", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return path, module
+
+
+def test_from_pretrained_does_not_request_bria(tmp_path: Path):
+    """No keyword, and an explicit true, must not construct briaai/RMBG-2.0."""
+    path, module = _patched_pipeline(tmp_path)
+    pipeline = module.Trellis2ImageTo3DPipeline.from_pretrained(
+        "microsoft/TRELLIS.2-4B"
+    )
+    assert pipeline.rembg_model is None
+    assert module.rembg.calls == []
+    with pytest.raises(RuntimeError, match="BRIA"):
+        module.Trellis2ImageTo3DPipeline.from_pretrained(
+            "microsoft/TRELLIS.2-4B", load_rembg=True
+        )
+    assert module.rembg.calls == []
+    text = path.read_text()
+    assert "getattr(rembg, args['rembg_model']['name'])" not in text
+    again = path.read_text()
+    assert patcher.patch_optional_rembg(path.parents[2]) is False
+    assert path.read_text() == again

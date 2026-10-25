@@ -63,10 +63,10 @@ PATCHES = (
         ),
         (
             "    uint idx = linear_probing_lookup_u32(hashmap_keys, hashmap_vals, flat_idx, M);\n"
-        f"    {MARKER}: a miss returns 0xFFFFFFFF, and udf[0xFFFFFFFF] is an out-of-bounds\n"
-        "    // read that Metal defines as 0.0 - which the crossing test reads as \"exactly on\n"
-        "    // the surface\", the most wrong possible answer. A vertex outside the narrow band\n"
-        "    // is far outside it, so report a large positive distance.\n"
+            f"    {MARKER}: a miss returns 0xFFFFFFFF, and udf[0xFFFFFFFF] is an out-of-bounds\n"
+            '    // read that Metal defines as 0.0 - which the crossing test reads as "exactly on\n'
+            '    // the surface", the most wrong possible answer. A vertex outside the narrow band\n'
+            "    // is far outside it, so report a large positive distance.\n"
             "    if (idx == 0xFFFFFFFFu) return 1.0e30f;\n"
             "    return udf[idx];\n"
         ),
@@ -135,14 +135,16 @@ def main() -> int:
 
     if args.check:
         print("APPLIED" if current == "applied" else "ABSENT")
-        return 0
+        return 0 if current == "applied" else 1
 
     want = "absent" if args.revert else "applied"
     if current == want:
         print(f"already {want} — no change")
         return 0
     args.path.write_text((remove if args.revert else apply)(source))
-    print("reverted" if args.revert else "applied: hashmap miss guarded in both variants")
+    print(
+        "reverted" if args.revert else "applied: hashmap miss guarded in both variants"
+    )
     print("now rebuild: scripts/rebuild_metallib.sh")
     return 0
 

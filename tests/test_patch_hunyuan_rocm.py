@@ -59,8 +59,10 @@ def per_pbr(self, pbr_hs):
 @pytest.fixture
 def checkout(tmp_path: Path) -> Path:
     root = tmp_path / "Hunyuan3D-2.1"
-    for relative, text in ((gen.SCHEDULER_FILE, SCHEDULER_SOURCE),
-                           (gen.ATTN_FILE, ATTN_SOURCE)):
+    for relative, text in (
+        (gen.SCHEDULER_FILE, SCHEDULER_SOURCE),
+        (gen.ATTN_FILE, ATTN_SOURCE),
+    ):
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
@@ -108,10 +110,33 @@ def test_the_scheduler_stops_matching_on_exact_float_equality(checkout: Path):
     """The crash is `indices[pos]` on an empty tensor, minutes into a generation."""
     gen.patch(checkout)
     text = (checkout / gen.SCHEDULER_FILE).read_text()
-    assert "(schedule_timesteps == timestep).nonzero()" not in text
+    assert "(schedule_timesteps == timestep).nonzero()" in text
+    assert "if len(indices) == 0:" in text
     assert "(schedule_timesteps - timestep).abs().argmin()" in text
     # Both schedulers had the line, so both are patched.
     assert text.count(gen.SCHEDULER_REPLACEMENT) == 2
+
+
+def test_a_repeated_timestep_keeps_the_second_index_and_a_miss_is_nearest(
+    checkout: Path,
+):
+    """Nearest-match is only for a step that is not in the schedule."""
+    torch = pytest.importorskip("torch")
+    gen.patch(checkout)
+    import importlib.util
+
+    path = checkout / gen.SCHEDULER_FILE
+    spec = importlib.util.spec_from_file_location("patched_schedulers", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    schedule = torch.tensor([5.0, 10.0, 10.0, 30.0])
+    flow = module.FlowMatch()
+    assert flow.index_for_timestep(torch.tensor(10.0), schedule) == 2
+    assert flow.index_for_timestep(torch.tensor(12.0), schedule) == 1
+    assert flow.index_for_timestep(torch.tensor(5.0), schedule) == 0
+    ddim = module.DDIM()
+    assert ddim.index_for_timestep(torch.tensor(12.0), schedule) == 1
+    assert ddim.index_for_timestep(torch.tensor(10.0), schedule) == 1
 
 
 def test_the_scheduler_patch_still_works_when_only_one_scheduler_moved(tmp_path: Path):
@@ -167,9 +192,14 @@ def _chunked_attention(checkout: Path):
     # inside a class method); it becomes the body of a plain function here.
     marker = "        # image-to-3dlab: chunk the sequence axis"
     block = marker + text.split(marker)[1].split("\n\n")[0]
-    body = "\n".join("    " + line[8:] if line.strip() else "" for line in block.splitlines())
-    source = ("def chunked(query, key, value, attention_mask=None):\n"
-              + body + "\n    return hidden_states\n")
+    body = "\n".join(
+        "    " + line[8:] if line.strip() else "" for line in block.splitlines()
+    )
+    source = (
+        "def chunked(query, key, value, attention_mask=None):\n"
+        + body
+        + "\n    return hidden_states\n"
+    )
     namespace: dict = {"os": os, "torch": torch, "F": torch.nn.functional}
     exec(compile(source, "<patched attn_processor.py>", "exec"), namespace)
     return namespace["chunked"], torch
@@ -192,9 +222,13 @@ def test_chunked_attention_is_the_same_answer_as_unchunked(checkout: Path):
     try:
         for chunk in (1, 5, 36, 37, 100):
             os.environ["HY3D_SDPA_QUERY_CHUNK"] = str(chunk)
-            torch.testing.assert_close(chunked(query, key, value), unchunked,
-                                       rtol=1e-5, atol=1e-6,
-                                       msg=f"chunk {chunk} disagrees with the whole thing")
+            torch.testing.assert_close(
+                chunked(query, key, value),
+                unchunked,
+                rtol=1e-5,
+                atol=1e-6,
+                msg=f"chunk {chunk} disagrees with the whole thing",
+            )
     finally:
         os.environ.pop("HY3D_SDPA_QUERY_CHUNK", None)
         if was is not None:
@@ -215,11 +249,14 @@ def test_chunked_attention_matches_with_a_mask_too(checkout: Path):
     mask[:, :, :, 3:6] = float("-inf")
 
     whole = torch.nn.functional.scaled_dot_product_attention(
-        query, key, value, attn_mask=mask.expand(batch, heads, q_len, k_len))
+        query, key, value, attn_mask=mask.expand(batch, heads, q_len, k_len)
+    )
 
     os.environ["HY3D_SDPA_QUERY_CHUNK"] = "4"
     try:
-        chunked_result = chunked(query, key, value, mask.expand(batch, heads, q_len, k_len))
+        chunked_result = chunked(
+            query, key, value, mask.expand(batch, heads, q_len, k_len)
+        )
     finally:
         os.environ.pop("HY3D_SDPA_QUERY_CHUNK")
     torch.testing.assert_close(chunked_result, whole, rtol=1e-5, atol=1e-6)
@@ -241,15 +278,23 @@ def test_a_stale_mask_would_actually_have_been_caught(checkout: Path):
     os.environ["HY3D_SDPA_QUERY_CHUNK"] = "4"
     try:
         with pytest.raises(RuntimeError, match="must match"):
-            torch.cat([torch.nn.functional.scaled_dot_product_attention(
-                query[..., i:i + 4, :], key, value, attn_mask=mask)  # whole mask, sliced tokens
-                for i in range(0, q_len, 4)], dim=-2)
+            torch.cat(
+                [
+                    torch.nn.functional.scaled_dot_product_attention(
+                        query[..., i : i + 4, :], key, value, attn_mask=mask
+                    )  # whole mask, sliced tokens
+                    for i in range(0, q_len, 4)
+                ],
+                dim=-2,
+            )
         assert chunked(query, key, value, mask).shape == query.shape
     finally:
         os.environ.pop("HY3D_SDPA_QUERY_CHUNK")
 
 
-def test_the_batch_is_left_alone_so_the_pieces_cannot_be_welded_end_to_end(checkout: Path):
+def test_the_batch_is_left_alone_so_the_pieces_cannot_be_welded_end_to_end(
+    checkout: Path,
+):
     """query, key and value are (batch, heads, sequence, head_dim). Slicing dim 0 would
     leave key and value at full batch, SDPA would broadcast the output batch back up to
     match, and cat would glue the chunks into one long sequence."""
@@ -267,8 +312,11 @@ def test_the_batch_is_left_alone_so_the_pieces_cannot_be_welded_end_to_end(check
         os.environ.pop("HY3D_SDPA_QUERY_CHUNK")
     assert result.shape == query.shape, "the batch or head count moved"
     torch.testing.assert_close(
-        result, torch.nn.functional.scaled_dot_product_attention(query, key, value),
-        rtol=1e-5, atol=1e-6)
+        result,
+        torch.nn.functional.scaled_dot_product_attention(query, key, value),
+        rtol=1e-5,
+        atol=1e-6,
+    )
 
 
 def test_the_hardcoded_device_follows_the_tensor_instead(checkout: Path):
@@ -283,8 +331,9 @@ def test_the_hardcoded_device_follows_the_tensor_instead(checkout: Path):
 def test_an_anchor_that_moved_fails_loudly_instead_of_half_applying(checkout: Path):
     """A patch that cannot find its anchor must not leave a checkout that looks done."""
     path = checkout / gen.ATTN_FILE
-    path.write_text(path.read_text().replace(
-        "F.scaled_dot_product_attention(", "F._sdpa_renamed("))
+    path.write_text(
+        path.read_text().replace("F.scaled_dot_product_attention(", "F._sdpa_renamed(")
+    )
     with pytest.raises(RuntimeError, match="anchor for this patch is gone"):
         gen.patch(checkout)
     assert gen.is_patched(checkout) is False

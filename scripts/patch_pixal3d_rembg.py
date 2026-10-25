@@ -31,6 +31,7 @@ run repeatedly: it detects its own marker and does nothing on a second run.
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 MARKER = "i2l_rembg_licence"
@@ -65,30 +66,49 @@ def permissive_model_name(model_name: str) -> str:
     return model_name
 
 
+def substitution_present(source: str) -> bool:
+    return f'model_name.startswith("{FORBIDDEN_PREFIX}")' in source
+
+
+def bria_constructor_argument_used(source: str) -> bool:
+    """A quoted briaai/ model id still passed into a call, ignoring the guard and comments."""
+    kept = []
+    for line in source.splitlines():
+        code = line.split("#", 1)[0]
+        code = code.replace(f'.startswith("{FORBIDDEN_PREFIX}")', "")
+        code = code.replace(f".startswith('{FORBIDDEN_PREFIX}')", "")
+        kept.append(code)
+    text = "\n".join(kept)
+    return f'"{FORBIDDEN_PREFIX}' in text or f"'{FORBIDDEN_PREFIX}" in text
+
+
 def is_patched(source: str) -> bool:
-    return MARKER in source
+    return substitution_present(source) and not bria_constructor_argument_used(source)
 
 
 def apply(source: str) -> str:
-    """Return the patched source. Idempotent."""
+    """Return the patched source. Idempotent, and repairs a file that kept only the note."""
     if is_patched(source):
         return source
-    if ANCHOR not in source:
-        raise SystemExit(
-            "anchor not found: BiRefNet.__init__ no longer has the expected signature. "
-            "Check how the matting model is selected before assuming this patch works — "
-            "an unpatched run downloads BRIA RMBG-2.0."
-        )
-    return source.replace(ANCHOR, ANCHOR + INJECTION, 1)
+    if not substitution_present(source):
+        if ANCHOR not in source:
+            raise SystemExit(
+                "anchor not found: BiRefNet.__init__ no longer has the expected signature. "
+                "Check how the matting model is selected before assuming this patch works — "
+                "an unpatched run downloads BRIA RMBG-2.0."
+            )
+        source = source.replace(ANCHOR, ANCHOR + INJECTION, 1)
+    return source
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("target", nargs="?", type=Path, default=DEFAULT_TARGET)
     parser.add_argument(
-        "--check", action="store_true",
+        "--check",
+        action="store_true",
         help="Report whether the patch is present and exit non-zero if it is not, so a "
-             "runner can refuse to generate rather than quietly loading BRIA",
+        "runner can refuse to generate rather than quietly loading BRIA",
     )
     args = parser.parse_args()
 
@@ -104,10 +124,17 @@ def main() -> int:
         return 1
 
     patched = apply(source)
+    if patched != source:
+        args.target.write_text(patched, encoding="utf-8")
+    if not is_patched(patched):
+        print(
+            f"NOT PATCHED: {args.target} — a briaai/ constructor argument is still used",
+            file=sys.stderr,
+        )
+        return 1
     if patched == source:
         print(f"already patched: {args.target}")
         return 0
-    args.target.write_text(patched, encoding="utf-8")
     print(f"patched {args.target}: {FORBIDDEN_PREFIX}* -> {SUBSTITUTE}")
     return 0
 

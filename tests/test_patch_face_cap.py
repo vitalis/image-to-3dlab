@@ -87,5 +87,19 @@ def test_patched_line_records_why():
     assert cap.MARKER in line
 
 
-def test_default_ceiling_matches_the_official_demo_pre_simplification():
-    assert cap.DEFAULT_CEILING == 16_777_216
+def test_default_ceiling_is_the_bake_that_was_tried(tmp_path: Path):
+    """A plain run must use the ceiling that was actually baked, not 2**24."""
+    import subprocess
+    import sys
+
+    path = tmp_path / "generate.py"
+    path.write_text(REAL)
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--target", str(path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert cap.DEFAULT_CEILING == 300_000
+    assert cap.find_cap(path.read_text()) == 300_000

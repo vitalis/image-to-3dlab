@@ -21,7 +21,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_TARGETS = (
     REPO / "vendor/trellis-mac/deps/trellis2-apple/o-voxel/o_voxel/postprocess.py",
-    REPO / "vendor/trellis-mac/.venv/lib/python3.11/site-packages/o_voxel/postprocess.py",
+    REPO
+    / "vendor/trellis-mac/.venv/lib/python3.11/site-packages/o_voxel/postprocess.py",
 )
 MARKER = "def _i2l_save_checkpoint("
 HELPER_ANCHOR = "# Mesh processing — cumesh auto-selects Metal/CUDA\n"
@@ -106,7 +107,11 @@ def main() -> int:
             target.write_text(patch(source))
             states.append(f"PATCHED {target}")
     print("\n".join(states))
-    return 0 if all(not state.startswith("MISSING") for state in states) else 2
+    if any(state.startswith("MISSING") for state in states):
+        return 2
+    if args.check and any(state.startswith("ABSENT") for state in states):
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

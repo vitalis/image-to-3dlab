@@ -41,7 +41,12 @@ def ovoxel():
 
 @pytest.fixture(scope="module")
 def quality():
-    return _load(QUALITY_PATCH, "patch_quality", "patch(GENERATOR)")
+    spec = importlib.util.spec_from_file_location(
+        "patch_trellis_quality", QUALITY_PATCH
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 # --- the two sides must name the same keyword ------------------------------------
@@ -99,7 +104,9 @@ def test_injected_preamble_guards_against_an_unpatched_ovoxel(quality):
     """Without the guard an unpatched o_voxel raises TypeError at bake time."""
     tree = _tree(quality.PACK_PREAMBLE)
     tests = [node.test for node in ast.walk(tree) if isinstance(node, ast.If)]
-    assert any(isinstance(t, ast.Compare) and isinstance(t.ops[0], ast.In) for t in tests)
+    assert any(
+        isinstance(t, ast.Compare) and isinstance(t.ops[0], ast.In) for t in tests
+    )
 
 
 def test_new_option_parses_and_defaults_on(quality):

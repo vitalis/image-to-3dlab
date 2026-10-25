@@ -34,11 +34,11 @@ TARGET = REPO / "vendor/trellis-mac/generate.py"
 
 ANCHOR_ARG = '    parser.add_argument("--remesh-band", type=float, default=1.0)\n'
 ADDED_ARG = (
-    '    parser.add_argument(\n'
+    "    parser.add_argument(\n"
     '        "--dump-decode", default=None,\n'
     '        help="i2l: write the decoded mesh here (torch .pt) so scripts/trellis_rebake.py "\n'
     '             "can re-bake with different to_glb settings without re-sampling",\n'
-    '    )\n'
+    "    )\n"
 )
 
 ANCHOR_MESH = "    mesh_out = outputs[0] if isinstance(outputs, list) else outputs\n"
@@ -62,12 +62,17 @@ ADDED_DUMP = (
 
 def state(source: str) -> str:
     """'applied', 'absent', or raise if the anchors have moved."""
-    for anchor, what in ((ANCHOR_ARG, "--remesh-band argument"), (ANCHOR_MESH, "mesh_out assignment")):
-        if anchor not in source:
-            raise RuntimeError(
-                f"anchor missing from generate.py: {what}. The port has changed shape; "
-                "inspect it before patching."
-            )
+    if ANCHOR_ARG not in source:
+        raise RuntimeError(
+            "anchor missing from generate.py: --remesh-band argument. "
+            "The quality patch has not been applied. "
+            "Run scripts/patch_trellis_quality.py first."
+        )
+    if ANCHOR_MESH not in source:
+        raise RuntimeError(
+            "anchor missing from generate.py: mesh_out assignment. "
+            "The port has changed shape; inspect it before patching."
+        )
     has_arg = ADDED_ARG in source
     has_dump = ADDED_DUMP in source
     if has_arg and has_dump:
@@ -87,19 +92,25 @@ def remove(source: str) -> str:
     return source.replace(ADDED_ARG, "", 1).replace(ADDED_DUMP, "", 1)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--revert", action="store_true")
     parser.add_argument("--path", type=Path, default=TARGET)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if not args.path.is_file():
         print(f"not found: {args.path}", file=sys.stderr)
         return 2
 
     source = args.path.read_text()
-    current = state(source)
+    try:
+        current = state(source)
+    except RuntimeError as error:
+        if args.check:
+            print(error, file=sys.stderr)
+            return 1
+        raise
 
     if args.check:
         print("APPLIED" if current == "applied" else "ABSENT")

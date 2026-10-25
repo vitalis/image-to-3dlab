@@ -28,7 +28,9 @@ Safe to run repeatedly; it detects its own marker and does nothing on a second r
 from __future__ import annotations
 
 import argparse
+import inspect
 import re
+import textwrap
 from pathlib import Path
 
 MARKER = "_i2l_weld"
@@ -37,17 +39,21 @@ DEFAULT_TARGET = Path(
     "vendor/trellis-mac/.venv/lib/python3.11/site-packages/o_voxel/postprocess.py"
 )
 
-_HELPER = '''
+_HELPER = """
 
 # --- image-to-3dlab: weld before simplify ------------------------------------------
 # repair_non_manifold_edges() splits vertices, creating exact duplicates. QEM collapse
 # cannot cross them, so simplify() tears the surface apart at every seam. Weld first.
 def {marker}(mesh):
+    import os
     import sys
+    from pathlib import Path
 
     import torch
 
-    repo = {repo!r}
+{find_fn}
+
+    repo = find_mesh_weld_repo(Path(__file__), os.environ)
     if repo not in sys.path:
         sys.path.insert(0, repo)
     from scripts.mesh_weld import duplicate_count, weld_vertices
@@ -68,17 +74,48 @@ def {marker}(mesh):
         f"({{len(f)}} -> {{len(welded_f)}} faces) before simplify"
     )
 # --- end image-to-3dlab -------------------------------------------------------------
-'''
+"""
 
 _SIMPLIFY = re.compile(r"^(\s*)mesh\.simplify\(", re.MULTILINE)
+
+
+def find_mesh_weld_repo(start, environ):
+    """Directory that contains scripts/mesh_weld.py, found when simplify() runs."""
+    override = environ.get("IMAGE_TO_3DLAB_ROOT")
+    if override:
+        root = Path(override)
+        if not (root / "scripts" / "mesh_weld.py").is_file():
+            raise RuntimeError(
+                "IMAGE_TO_3DLAB_ROOT does not contain scripts/mesh_weld.py"
+            )
+        return str(root)
+    for parent in Path(start).resolve().parents:
+        if (parent / "scripts" / "mesh_weld.py").is_file():
+            return str(parent)
+    raise RuntimeError(
+        "could not find scripts/mesh_weld.py; set IMAGE_TO_3DLAB_ROOT to the repository"
+    )
 
 
 def already_patched(source: str) -> bool:
     return MARKER in source
 
 
-def apply_patch(source: str, repo: str) -> str:
-    """Insert the helper and a call to it before every `mesh.simplify(` line."""
+def _helper_text() -> str:
+    find_fn = textwrap.indent(
+        textwrap.dedent(inspect.getsource(find_mesh_weld_repo)).strip("\n"),
+        "    ",
+    )
+    return _HELPER.format(marker=MARKER, find_fn=find_fn)
+
+
+def apply_patch(source: str, repo: str | None = None) -> str:
+    """Insert the helper and a call to it before every `mesh.simplify(` line.
+
+    `repo` is accepted so older callers keep working. It is not written into the
+    file: the helper finds scripts/mesh_weld.py when simplify() runs.
+    """
+    del repo
     if already_patched(source):
         return source
 
@@ -101,7 +138,7 @@ def apply_patch(source: str, repo: str) -> str:
             last_import = i
         if line.lstrip().startswith("def "):
             break
-    helper = _HELPER.format(marker=MARKER, repo=repo)
+    helper = _helper_text()
     lines.insert(last_import + 1, helper)
     return "".join(lines)
 
@@ -130,9 +167,10 @@ def main() -> int:
         print(f"already patched: {target}")
         return 0
 
-    if not backup.is_file():
-        backup.write_text(source)
-    target.write_text(apply_patch(source, str(args.repo.resolve())))
+    # The file on disk is the one a reinstall just wrote. Refresh the backup
+    # so --revert does not restore a copy from before that reinstall.
+    backup.write_text(source)
+    target.write_text(apply_patch(source))
     print(f"patched {target}\nbackup at {backup}")
     return 0
 

@@ -51,9 +51,9 @@ from pathlib import Path
 MARKER = "i2l_face_cap"
 
 DEFAULT_TARGET = Path("vendor/trellis-mac/generate.py")
-# The official demo simplifies the decoded mesh to 2**24 faces before to_glb. This remains
-# a safety ceiling while allowing the demo UI's multi-million-face export targets through.
-DEFAULT_CEILING = 16_777_216
+# A bake at 300,000 faces worked. The real Metal limit is not known, so a plain run
+# stops there. Pass --ceiling to go higher. Do not silently jump to 2**24.
+DEFAULT_CEILING = 300_000
 
 ORIGINAL = "target_faces = min(args.bake_target_faces, 200000, len(faces_np))"
 
@@ -121,7 +121,9 @@ def main() -> int:
         help=f"new face ceiling (default {DEFAULT_CEILING:,}). Verified at 300,000; the "
         f"real Metal BVH limit is unknown, so lower this if a run crashes",
     )
-    parser.add_argument("--check", action="store_true", help="report status, change nothing")
+    parser.add_argument(
+        "--check", action="store_true", help="report status, change nothing"
+    )
     args = parser.parse_args()
 
     path = args.target.expanduser().resolve()
@@ -132,9 +134,9 @@ def main() -> int:
     if args.check:
         if is_patched(source):
             print(f"PATCHED (cap now {find_cap(source)})")
-        else:
-            print(f"NOT PATCHED (cap is {find_cap(source)})")
-        return 0
+            return 0
+        print(f"NOT PATCHED (cap is {find_cap(source)})")
+        return 1
 
     updated = apply(source, args.ceiling)
     if updated == source:

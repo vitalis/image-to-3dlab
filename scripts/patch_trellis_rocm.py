@@ -87,24 +87,32 @@ class Patch:
 
 SPARSE_CONFIG = f"{CHECKOUT}/trellis2/modules/sparse/config.py"
 SPARSE_CONFIG_NEEDLE = (
-    "env_sparse_attn_backend in ['xformers', 'flash_attn', 'flash_attn_3']")
+    "env_sparse_attn_backend in ['xformers', 'flash_attn', 'flash_attn_3']"
+)
 SPARSE_CONFIG_REPLACEMENT = (
-    "env_sparse_attn_backend in ['xformers', 'flash_attn', 'flash_attn_3', 'aule']")
-SPARSE_LITERAL_NEEDLE = "def set_attn_backend(backend: Literal['xformers', 'flash_attn']):"
+    "env_sparse_attn_backend in ['xformers', 'flash_attn', 'flash_attn_3', 'aule']"
+)
+SPARSE_LITERAL_NEEDLE = (
+    "def set_attn_backend(backend: Literal['xformers', 'flash_attn']):"
+)
 SPARSE_LITERAL_REPLACEMENT = (
     "def set_attn_backend(backend: Literal['xformers', 'flash_attn', 'flash_attn_3', "
-    "'aule']):")
+    "'aule']):"
+)
 
 DENSE_CONFIG = f"{CHECKOUT}/trellis2/modules/attention/config.py"
 DENSE_CONFIG_NEEDLE = (
-    "env_attn_backend in ['xformers', 'flash_attn', 'flash_attn_3', 'sdpa', 'naive']")
+    "env_attn_backend in ['xformers', 'flash_attn', 'flash_attn_3', 'sdpa', 'naive']"
+)
 DENSE_CONFIG_REPLACEMENT = (
     "env_attn_backend in ['xformers', 'flash_attn', 'flash_attn_3', 'sdpa', 'naive', "
-    "'aule']")
+    "'aule']"
+)
 DENSE_LITERAL_NEEDLE = "def set_backend(backend: Literal['xformers', 'flash_attn']):"
 DENSE_LITERAL_REPLACEMENT = (
     "def set_backend(backend: Literal['xformers', 'flash_attn', 'flash_attn_3', 'sdpa', "
-    "'naive', 'aule']):")
+    "'naive', 'aule']):"
+)
 
 AULE_PROOF = "AuleAttention, a Triton flash attention"
 
@@ -112,8 +120,7 @@ AULE_PROOF = "AuleAttention, a Triton flash attention"
 # `aule` takes and returns [N, H, L, C], hence the two permutes.
 DENSE_ATTN = f"{CHECKOUT}/trellis2/modules/attention/full_attn.py"
 DENSE_ATTN_NEEDLE = (
-    "    else:\n"
-    "        raise ValueError(f\"Unknown attention module: {config.BACKEND}\")"
+    '    else:\n        raise ValueError(f"Unknown attention module: {config.BACKEND}")'
 )
 DENSE_ATTN_REPLACEMENT = (
     f"    elif config.BACKEND == 'aule':\n"
@@ -131,7 +138,7 @@ DENSE_ATTN_REPLACEMENT = (
     "        out = out.permute(0, 2, 1, 3)           # [N, L, H, C]\n"
     "\n"
     "    else:\n"
-    "        raise ValueError(f\"Unknown attention module: {config.BACKEND}\")"
+    '        raise ValueError(f"Unknown attention module: {config.BACKEND}")'
 )
 
 # Sparse attention: q/k/v arrive packed into one [T, H, C] tensor with a per-sequence
@@ -140,8 +147,7 @@ DENSE_ATTN_REPLACEMENT = (
 # attention, done in pieces.
 SPARSE_ATTN = f"{CHECKOUT}/trellis2/modules/sparse/attention/full_attn.py"
 SPARSE_ATTN_NEEDLE = (
-    "    else:\n"
-    "        raise ValueError(f\"Unknown attention module: {config.ATTN}\")"
+    '    else:\n        raise ValueError(f"Unknown attention module: {config.ATTN}")'
 )
 SPARSE_ATTN_REPLACEMENT = (
     f"    elif config.ATTN == 'aule':\n"
@@ -166,7 +172,7 @@ SPARSE_ATTN_REPLACEMENT = (
     "        out = torch.cat(outs, dim=0)   # [T_Q, H, Co]\n"
     "\n"
     "    else:\n"
-    "        raise ValueError(f\"Unknown attention module: {config.ATTN}\")"
+    '        raise ValueError(f"Unknown attention module: {config.ATTN}")'
 )
 
 
@@ -177,17 +183,18 @@ SPARSE_ATTN_REPLACEMENT = (
 # implicit string concatenation can.
 
 DEVICE_LIB_NEEDLE = (
-    "f\"--rocm-device-lib-path={os.path.join(_rocm,'lib','llvm','amdgcn','bitcode')}\",")
+    "f\"--rocm-device-lib-path={os.path.join(_rocm,'lib','llvm','amdgcn','bitcode')}\","
+)
 # Plain concatenation rather than an f-string: a `{...}` expression cannot be split across
 # implicitly concatenated f-strings, and the first attempt at this broke all three files.
 # Stays inside the list literal the anchor sits in, so a statement cannot go here either.
 DEVICE_LIB_REPLACEMENT = (
     "%%INDENT%%%%MARK%% ROCm 7.x keeps the device bitcode in <root>/amdgcn/bitcode;\n"
     "%%INDENT%%# ROCm 10 (TheRock) moved it under lib/llvm. These forks hardcode\n"
-    "%%INDENT%%# the ROCm 10 path, so on 7.x the build stops with \"cannot find ROCm\n"
+    '%%INDENT%%# the ROCm 10 path, so on 7.x the build stops with "cannot find ROCm\n'
     "%%INDENT%%# device library\". HIP_DEVICE_LIB_PATH (hipcc's own variable) wins,\n"
     "%%INDENT%%# then whichever layout this install actually has.\n"
-    "%%INDENT%%\"--rocm-device-lib-path=\" + (\n"
+    '%%INDENT%%"--rocm-device-lib-path=" + (\n'
     "%%INDENT%%%%DEEP%%os.environ.get('HIP_DEVICE_LIB_PATH') or next(\n"
     "%%INDENT%%%%DEEP%%%%DEEP%%(p for p in (os.path.join(_rocm,'lib','llvm',"
     "'amdgcn','bitcode'),\n"
@@ -220,7 +227,9 @@ DEVICE_LIB_FILES = (
 # Each gets an `aule` branch done the same way as the full sparse one (each window on its
 # own), and an `else: raise` so an unknown backend says what it is.
 WINDOWED_ATTN = f"{CHECKOUT}/trellis2/modules/sparse/attention/windowed_attn.py"
-UNKNOWN_ATTN = "    else:\n        raise ValueError(f\"Unknown attention module: {config.ATTN}\")\n"
+UNKNOWN_ATTN = (
+    '    else:\n        raise ValueError(f"Unknown attention module: {config.ATTN}")\n'
+)
 
 WINDOW_PARTITION_NEEDLE = (
     "            'max_seqlen': torch.max(seq_lens)\n"
@@ -234,9 +243,7 @@ WINDOW_PARTITION_REPLACEMENT = (
     "        }\n"
     "    elif config.ATTN == 'aule':\n"
     f"        # {MARKER} {WINDOW_PARTITION_PROOF}: each is attended on its own.\n"
-    "        attn_func_args = {}\n"
-    + UNKNOWN_ATTN +
-    "\n"
+    "        attn_func_args = {}\n" + UNKNOWN_ATTN + "\n"
     "    return fwd_indices, bwd_indices, seq_lens, attn_func_args"
 )
 
@@ -263,15 +270,13 @@ WINDOW_SELF_REPLACEMENT = (
     "            outs.append(out_i.transpose(0, 1))                           # [n, H, C]\n"
     "            off += n\n"
     "        out = torch.cat(outs, dim=0)                                     # [M, H, C]\n"
-    + UNKNOWN_ATTN +
-    "\n"
+    + UNKNOWN_ATTN
+    + "\n"
     "    out = out[bwd_indices]      # [T, H, C]"
 )
 
 WINDOW_CROSS_NEEDLE = (
-    "        )  # [M, H, C]\n"
-    "\n"
-    "    out = out[q_bwd_indices]      # [T, H, C]"
+    "        )  # [M, H, C]\n\n    out = out[q_bwd_indices]      # [T, H, C]"
 )
 WINDOW_CROSS_PROOF = "windowed cross attention, one window pair at a time"
 WINDOW_CROSS_REPLACEMENT = (
@@ -290,36 +295,80 @@ WINDOW_CROSS_REPLACEMENT = (
     "            q_off += qn\n"
     "            kv_off += kn\n"
     "        out = torch.cat(outs, dim=0)                                     # [M, H, C]\n"
-    + UNKNOWN_ATTN +
-    "\n"
+    + UNKNOWN_ATTN
+    + "\n"
     "    out = out[q_bwd_indices]      # [T, H, C]"
 )
 
 AULE_PATCHES = (
-    Patch(SPARSE_CONFIG, SPARSE_CONFIG_NEEDLE, SPARSE_CONFIG_REPLACEMENT,
-          proof="'flash_attn_3', 'aule']"),
-    Patch(SPARSE_CONFIG, SPARSE_LITERAL_NEEDLE, SPARSE_LITERAL_REPLACEMENT,
-          proof="'flash_attn_3', 'aule']):"),
-    Patch(DENSE_CONFIG, DENSE_CONFIG_NEEDLE, DENSE_CONFIG_REPLACEMENT,
-          proof="'naive', 'aule']"),
-    Patch(DENSE_CONFIG, DENSE_LITERAL_NEEDLE, DENSE_LITERAL_REPLACEMENT,
-          proof="'naive', 'aule']):"),
+    Patch(
+        SPARSE_CONFIG,
+        SPARSE_CONFIG_NEEDLE,
+        SPARSE_CONFIG_REPLACEMENT,
+        proof="'flash_attn_3', 'aule']",
+    ),
+    Patch(
+        SPARSE_CONFIG,
+        SPARSE_LITERAL_NEEDLE,
+        SPARSE_LITERAL_REPLACEMENT,
+        proof="'flash_attn_3', 'aule']):",
+    ),
+    Patch(
+        DENSE_CONFIG,
+        DENSE_CONFIG_NEEDLE,
+        DENSE_CONFIG_REPLACEMENT,
+        proof="'naive', 'aule']",
+    ),
+    Patch(
+        DENSE_CONFIG,
+        DENSE_LITERAL_NEEDLE,
+        DENSE_LITERAL_REPLACEMENT,
+        proof="'naive', 'aule']):",
+    ),
     # These two keep upstream's `else: raise ValueError` in the replacement — an unknown
     # backend must still raise rather than fall back silently — so the anchor survives.
-    Patch(DENSE_ATTN, DENSE_ATTN_NEEDLE, DENSE_ATTN_REPLACEMENT, proof=AULE_PROOF,
-          needle_survives=True),
-    Patch(SPARSE_ATTN, SPARSE_ATTN_NEEDLE, SPARSE_ATTN_REPLACEMENT, proof=AULE_PROOF,
-          needle_survives=True),
-    Patch(WINDOWED_ATTN, WINDOW_PARTITION_NEEDLE, WINDOW_PARTITION_REPLACEMENT,
-          proof=WINDOW_PARTITION_PROOF),
-    Patch(WINDOWED_ATTN, WINDOW_SELF_NEEDLE, WINDOW_SELF_REPLACEMENT, proof=WINDOW_SELF_PROOF),
-    Patch(WINDOWED_ATTN, WINDOW_CROSS_NEEDLE, WINDOW_CROSS_REPLACEMENT,
-          proof=WINDOW_CROSS_PROOF),
+    Patch(
+        DENSE_ATTN,
+        DENSE_ATTN_NEEDLE,
+        DENSE_ATTN_REPLACEMENT,
+        proof=AULE_PROOF,
+        needle_survives=True,
+    ),
+    Patch(
+        SPARSE_ATTN,
+        SPARSE_ATTN_NEEDLE,
+        SPARSE_ATTN_REPLACEMENT,
+        proof=AULE_PROOF,
+        needle_survives=True,
+    ),
+    Patch(
+        WINDOWED_ATTN,
+        WINDOW_PARTITION_NEEDLE,
+        WINDOW_PARTITION_REPLACEMENT,
+        proof=WINDOW_PARTITION_PROOF,
+    ),
+    Patch(
+        WINDOWED_ATTN,
+        WINDOW_SELF_NEEDLE,
+        WINDOW_SELF_REPLACEMENT,
+        proof=WINDOW_SELF_PROOF,
+    ),
+    Patch(
+        WINDOWED_ATTN,
+        WINDOW_CROSS_NEEDLE,
+        WINDOW_CROSS_REPLACEMENT,
+        proof=WINDOW_CROSS_PROOF,
+    ),
 )
 
 DEVICE_LIB_PATCHES = tuple(
-    Patch(path, DEVICE_LIB_NEEDLE, DEVICE_LIB_REPLACEMENT, proof=DEVICE_LIB_PROOF,
-          indent_to_anchor=True)
+    Patch(
+        path,
+        DEVICE_LIB_NEEDLE,
+        DEVICE_LIB_REPLACEMENT,
+        proof=DEVICE_LIB_PROOF,
+        indent_to_anchor=True,
+    )
     for path in DEVICE_LIB_FILES
 )
 
@@ -359,9 +408,16 @@ REQUIRES_PYTHON_REPLACEMENT = 'requires-python = ">=3.9"'
 REQUIRES_PYTHON_PROOF = 'requires-python = ">=3.9"'
 
 REQUIRES_PYTHON_PATCHES = tuple(
-    Patch(path, REQUIRES_PYTHON_NEEDLE, REQUIRES_PYTHON_REPLACEMENT,
-          proof=REQUIRES_PYTHON_PROOF)
-    for path in (f"{EXTENSIONS}/nvdiffrast/pyproject.toml", f"{EXTENSIONS}/CuMesh/pyproject.toml")
+    Patch(
+        path,
+        REQUIRES_PYTHON_NEEDLE,
+        REQUIRES_PYTHON_REPLACEMENT,
+        proof=REQUIRES_PYTHON_PROOF,
+    )
+    for path in (
+        f"{EXTENSIONS}/nvdiffrast/pyproject.toml",
+        f"{EXTENSIONS}/CuMesh/pyproject.toml",
+    )
 )
 
 PATCHES = AULE_PATCHES + DEVICE_LIB_PATCHES + CXX20_PATCHES + REQUIRES_PYTHON_PATCHES
@@ -372,29 +428,48 @@ def anchor_indent(source: str, needle: str) -> str:
     for line in source.splitlines():
         if needle in line:
             return line[: line.index(needle)]
-    raise RuntimeError("the anchor for this patch is gone; upstream changed, re-check the "
-                       "patch before running it")
+    raise RuntimeError(
+        "the anchor for this patch is gone; upstream changed, re-check the "
+        "patch before running it"
+    )
 
 
 def patch_text(source: str, spec: Patch, label: str) -> tuple[str, bool]:
     """Return the patched text and whether it changed.
 
-    The proof is checked *first*, before the anchor, so a second run is a no-op.
+    The proof is checked before the anchor, so a second run is a no-op — except the
+    C++ standard bump. ``-std=c++20`` already in the file is not proof while
+    ``-std=c++17`` is still there.
 
     Raises when neither the proof nor the anchor is there, which is the signal that upstream
     moved and the patch wants re-reading before it is trusted again.
     """
-    if spec.proof in source:
-        return source, False
-    if spec.needle not in source:
-        raise RuntimeError(f"{label}: the anchor for this patch is gone; upstream changed, "
-                           "re-check the patch before running it")
+    needle_left = source.count(spec.needle)
+    cxx = spec.needle == CXX17_NEEDLE and spec.proof == CXX17_PROOF
+    if cxx:
+        if needle_left == 0:
+            if spec.proof in source:
+                return source, False
+            raise RuntimeError(
+                f"{label}: the anchor for this patch is gone; upstream changed, "
+                "re-check the patch before running it"
+            )
+    else:
+        if spec.proof in source:
+            return source, False
+        if needle_left == 0:
+            raise RuntimeError(
+                f"{label}: the anchor for this patch is gone; upstream changed, "
+                "re-check the patch before running it"
+            )
     replacement = spec.replacement
     if spec.indent_to_anchor:
         indent = anchor_indent(source, spec.needle)
-        replacement = (replacement.replace("%%MARK%%", MARKER)
-                       .replace("%%INDENT%%", indent)
-                       .replace("%%DEEP%%", "    "))
+        replacement = (
+            replacement.replace("%%MARK%%", MARKER)
+            .replace("%%INDENT%%", indent)
+            .replace("%%DEEP%%", "    ")
+        )
     return source.replace(spec.needle, replacement), True
 
 
@@ -402,9 +477,19 @@ def patch_file(path: Path, spec: Patch) -> bool:
     """Patch one file. Returns whether it changed, and asserts the anchor count."""
     text = path.read_text()
     found = text.count(spec.needle)
-    if found and found != spec.expected:
-        raise RuntimeError(f"{path}: expected {spec.expected} occurrence(s) of this patch's "
-                           f"anchor, found {found}; re-check the patch before running it")
+    # A setup.py that already says C++20 and still says C++17 is half done. Finish
+    # it instead of refusing because the old-flag count is no longer the upstream count.
+    cxx_partial = (
+        spec.needle == CXX17_NEEDLE
+        and spec.proof in text
+        and found > 0
+        and found != spec.expected
+    )
+    if found and found != spec.expected and not cxx_partial:
+        raise RuntimeError(
+            f"{path}: expected {spec.expected} occurrence(s) of this patch's "
+            f"anchor, found {found}; re-check the patch before running it"
+        )
     patched, changed = patch_text(text, spec, str(path))
     if changed:
         path.write_text(patched)
@@ -444,8 +529,9 @@ def apply(root: Path = DEFAULT_ROOT) -> list[tuple[Patch, bool]]:
     """
     missing = missing_targets(root)
     if missing:
-        raise RuntimeError(f"{root}: cannot patch, these files are not there: "
-                           + ", ".join(missing))
+        raise RuntimeError(
+            f"{root}: cannot patch, these files are not there: " + ", ".join(missing)
+        )
     return [(spec, patch_file(root / spec.file, spec)) for spec in PATCHES]
 
 
@@ -465,15 +551,24 @@ def describe(root: Path = DEFAULT_ROOT) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--root", type=Path, default=DEFAULT_ROOT,
-                        help="the trellis-rocm vendor root (holds TRELLIS.2/ and extensions/)")
-    parser.add_argument("--check", action="store_true",
-                        help="report what is patched and change nothing")
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=DEFAULT_ROOT,
+        help="the trellis-rocm vendor root (holds TRELLIS.2/ and extensions/)",
+    )
+    parser.add_argument(
+        "--check", action="store_true", help="report what is patched and change nothing"
+    )
     args = parser.parse_args(argv)
 
     if args.check:
         print(describe(args.root))
-        print("all patches applied" if is_patched(args.root) else "not all patches applied")
+        print(
+            "all patches applied"
+            if is_patched(args.root)
+            else "not all patches applied"
+        )
         return 0 if is_patched(args.root) else 1
 
     missing = missing_targets(args.root)
@@ -487,7 +582,9 @@ def main(argv: list[str] | None = None) -> int:
     for spec, was in changed:
         print(f"  {'patched' if was else 'already':10s} {spec.file} ({spec.proof})")
     if not is_patched(args.root):
-        print("FAILED: something did not take. Do not run a generation on this checkout.")
+        print(
+            "FAILED: something did not take. Do not run a generation on this checkout."
+        )
         return 1
     return 0
 

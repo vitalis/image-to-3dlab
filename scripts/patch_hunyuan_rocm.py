@@ -9,7 +9,8 @@ torch builds with `hipcc` on its own. What is left is three things this script f
 equality, `(schedule_timesteps == timestep).nonzero()`, and then reads `indices[pos]`. When
 no entry matches exactly the tensor is empty and that read raises IndexError -- minutes into
 a generation, with the model already loaded. It is a bug on any card; it shows up here
-because nothing pins the arithmetic to one order. Nearest-match instead of equality.
+because nothing pins the arithmetic to one order. An exact tie still takes the
+second index. Nearest-match is only for a step that is not in the schedule.
 
 **2. The paint stage outgrowing a 20 GB card.** Upstream folds the PBR channels and the
 views into the batch dimension and attends over all of them at once, so memory grows as the
@@ -65,7 +66,10 @@ SCHEDULER_NEEDLE = "        indices = (schedule_timesteps == timestep).nonzero()
 SCHEDULER_REPLACEMENT = (
     f"        {MARKER} nearest match, not float equality: upstream reads indices[pos]\n"
     "        # straight after, which raises IndexError once no entry matches exactly.\n"
-    "        indices = (schedule_timesteps - timestep).abs().argmin().reshape(1)"
+    "        # An exact tie still takes the second equal index. Nearest is only a miss.\n"
+    "        indices = (schedule_timesteps == timestep).nonzero()\n"
+    "        if len(indices) == 0:\n"
+    "            indices = (schedule_timesteps - timestep).abs().argmin().reshape(1)"
 )
 
 # The same line appears twice, in the flow-matching and the ddim scheduler. Both are patched
@@ -107,7 +111,9 @@ ATTN_REPLACEMENT = (
     "            )"
 )
 ATTN_IMPORT_NEEDLE = "import torch.nn.functional as F"
-ATTN_IMPORT_REPLACEMENT = ATTN_IMPORT_NEEDLE + "\nimport os  # image-to-3dlab: the chunk size"
+ATTN_IMPORT_REPLACEMENT = (
+    ATTN_IMPORT_NEEDLE + "\nimport os  # image-to-3dlab: the chunk size"
+)
 
 
 # --- 3. The hardcoded device --------------------------------------------------------------
@@ -118,7 +124,7 @@ DEVICE_NEEDLE = (
 )
 DEVICE_REPLACEMENT = (
     "            # image-to-3dlab: follow the tensor rather than naming a device, so CPU\n"
-    '            # offload still works. ".to(\'cuda:0\')" resolves under ROCm but\n'
+    "            # offload still works. \".to('cuda:0')\" resolves under ROCm but\n"
     "            # overrides offloading, which is the other lever on a small card.\n"
     '            processed_hs = rearrange(pbr_hs, "b n_pbrs n l c -> (b n_pbrs n) l c")'
 )
@@ -127,14 +133,29 @@ DEVICE_REPLACEMENT = (
 PATCHES = (
     # The scheduler line is in two schedulers and only one of them may move, so it is
     # replaced wherever it appears and the count asserted.
-    Patch(SCHEDULER_FILE, SCHEDULER_NEEDLE, SCHEDULER_REPLACEMENT,
-          proof="nearest match, not float equality", expected=SCHEDULER_EXPECTED),
-    Patch(ATTN_FILE, ATTN_IMPORT_NEEDLE, ATTN_IMPORT_REPLACEMENT,
-          proof="import os  # image-to-3dlab", needle_survives=True),
-    Patch(ATTN_FILE, ATTN_NEEDLE, ATTN_REPLACEMENT,
-          proof="chunk the sequence axis"),
-    Patch(ATTN_FILE, DEVICE_NEEDLE, DEVICE_REPLACEMENT,
-          proof="follow the tensor rather than naming a device"),
+    # The replacement keeps the exact-match line, so the needle survives on purpose.
+    Patch(
+        SCHEDULER_FILE,
+        SCHEDULER_NEEDLE,
+        SCHEDULER_REPLACEMENT,
+        proof="nearest match, not float equality",
+        expected=SCHEDULER_EXPECTED,
+        needle_survives=True,
+    ),
+    Patch(
+        ATTN_FILE,
+        ATTN_IMPORT_NEEDLE,
+        ATTN_IMPORT_REPLACEMENT,
+        proof="import os  # image-to-3dlab",
+        needle_survives=True,
+    ),
+    Patch(ATTN_FILE, ATTN_NEEDLE, ATTN_REPLACEMENT, proof="chunk the sequence axis"),
+    Patch(
+        ATTN_FILE,
+        DEVICE_NEEDLE,
+        DEVICE_REPLACEMENT,
+        proof="follow the tensor rather than naming a device",
+    ),
 )
 
 
@@ -151,8 +172,10 @@ def patch_text(source: str, spec: Patch, label: str) -> tuple[str, bool]:
     if spec.proof in source:
         return source, False
     if spec.needle not in source:
-        raise RuntimeError(f"{label}: the anchor for this patch is gone; upstream changed, "
-                           "re-check the patch before running it")
+        raise RuntimeError(
+            f"{label}: the anchor for this patch is gone; upstream changed, "
+            "re-check the patch before running it"
+        )
     return source.replace(spec.needle, spec.replacement), True
 
 
@@ -161,8 +184,10 @@ def patch_file(path: Path, spec: Patch) -> bool:
     text = path.read_text()
     found = text.count(spec.needle)
     if found and found != spec.expected:
-        raise RuntimeError(f"{path}: expected {spec.expected} occurrence(s) of this patch's "
-                           f"anchor, found {found}; re-check the patch before running it")
+        raise RuntimeError(
+            f"{path}: expected {spec.expected} occurrence(s) of this patch's "
+            f"anchor, found {found}; re-check the patch before running it"
+        )
     patched, changed = patch_text(text, spec, str(path))
     if changed:
         path.write_text(patched)
@@ -191,31 +216,45 @@ def is_patched(root: Path = DEFAULT_ROOT) -> bool:
 def patch(root: Path = DEFAULT_ROOT) -> int:
     """Apply every patch. Returns how many files changed, and is safe to run twice."""
     if not root.is_dir():
-        raise SystemExit(f"No Hunyuan3D-2.1 checkout at {root}. Run the bootstrap first.")
+        raise SystemExit(
+            f"No Hunyuan3D-2.1 checkout at {root}. Run the bootstrap first."
+        )
     changed: set[str] = set()
     for spec in PATCHES:
         path = root / spec.file
         if not path.is_file():
-            raise SystemExit(f"{path} is missing; this is not a Hunyuan3D-2.1 checkout.")
+            raise SystemExit(
+                f"{path} is missing; this is not a Hunyuan3D-2.1 checkout."
+            )
         if patch_file(path, spec):
             changed.add(spec.file)
     return len(changed)
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--root", type=Path, default=DEFAULT_ROOT,
-                        help="the Hunyuan3D-2.1 checkout (default: vendor/hunyuan-rocm)")
-    parser.add_argument("--check", action="store_true",
-                        help="Only report whether the patches are in place.")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=DEFAULT_ROOT,
+        help="the Hunyuan3D-2.1 checkout (default: vendor/hunyuan-rocm)",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Only report whether the patches are in place.",
+    )
     args = parser.parse_args(argv)
 
     if args.check:
         print("patched" if is_patched(args.root) else "not patched")
         return 0 if is_patched(args.root) else 1
     changed = patch(args.root)
-    print(f"{'patched' if changed else 'already patched'}: {args.root} ({changed} file(s))")
+    print(
+        f"{'patched' if changed else 'already patched'}: {args.root} ({changed} file(s))"
+    )
     return 0
 
 

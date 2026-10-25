@@ -36,12 +36,12 @@ GENERATOR = ROOT / "vendor" / "trellis-mac" / "generate.py"
 
 # The port restricts texture size by argparse alone; to_glb has no such limit.
 SIZE_NEEDLE = '        "--texture-size", type=int, default=1024,\n        choices=[512, 1024, 2048],\n'
-SIZE_REPLACEMENT = (
-    '        "--texture-size", type=int, default=1024,\n'
-)
+SIZE_REPLACEMENT = '        "--texture-size", type=int, default=1024,\n'
 
-OPTION_ANCHOR = '    parser.add_argument(\n        "--no-texture", action="store_true",\n'
-OPTIONS = '''    parser.add_argument(
+OPTION_ANCHOR = (
+    '    parser.add_argument(\n        "--no-texture", action="store_true",\n'
+)
+OPTIONS = """    parser.add_argument(
         "--remesh", action="store_true",
         help="Narrow-band DC remeshing before UV unwrap; snaps vertices back to the "
              "original surface. Targets boundary edges at source",
@@ -60,11 +60,11 @@ OPTIONS = '''    parser.add_argument(
              "values should yield fewer, cleaner charts",
     )
     parser.add_argument("--uv-smooth-strength", type=float, default=1.0)
-'''
+"""
 
 # Kept separate from OPTIONS so it still applies to a generator that already carries the
 # earlier quality patch.
-PACK_OPTIONS = '''    parser.add_argument(
+PACK_OPTIONS = """    parser.add_argument(
         "--uv-brute-force-packing", dest="uv_brute_force",
         action="store_true", default=True,
         help="Thorough xatlas packing: 52.9%% -> 58.8%% atlas coverage on the hero "
@@ -74,7 +74,7 @@ PACK_OPTIONS = '''    parser.add_argument(
         "--no-uv-brute-force-packing", dest="uv_brute_force", action="store_false",
         help="Fall back to xatlas' default packing",
     )
-'''
+"""
 
 CALL_NEEDLE = """                    decimation_target=target_faces,
                     texture_size=tex_size,
@@ -101,7 +101,7 @@ CALL_REPLACEMENT = """                    decimation_target=target_faces,
 # signature check keeps an unpatched o_voxel from raising TypeError sixteen minutes into
 # a run — it warns and packs the old way instead.
 PACK_ANCHOR = "                glb = o_voxel.postprocess.to_glb(\n"
-PACK_PREAMBLE = '''                # image-to-3dlab: brute-force xatlas packing, when o_voxel can
+PACK_PREAMBLE = """                # image-to-3dlab: brute-force xatlas packing, when o_voxel can
                 # forward it. See scripts/patch_ovoxel_pack_options.py.
                 import inspect as _inspect
                 _pack_kwargs = {}
@@ -117,7 +117,7 @@ PACK_PREAMBLE = '''                # image-to-3dlab: brute-force xatlas packing,
                         "run scripts/patch_ovoxel_pack_options.py to gain ~12% "
                         "atlas coverage"
                     )
-'''
+"""
 
 PACK_NEEDLE = """                    mesh_cluster_smooth_strength=args.uv_smooth_strength,
                     verbose=True,
@@ -134,7 +134,9 @@ def patch(path: Path) -> None:
 
     if "choices=[512, 1024, 2048]" in source:
         if SIZE_NEEDLE not in source:
-            raise RuntimeError(f"texture-size option not in the expected form in {path}")
+            raise RuntimeError(
+                f"texture-size option not in the expected form in {path}"
+            )
         source = source.replace(SIZE_NEEDLE, SIZE_REPLACEMENT)
 
     if '"--uv-refine-iterations"' not in source:
@@ -161,5 +163,13 @@ def patch(path: Path) -> None:
     path.write_text(source)
 
 
-patch(GENERATOR)
-print("Patched TRELLIS to expose remesh, UV clustering, and unrestricted texture size.")
+def main() -> int:
+    patch(GENERATOR)
+    print(
+        "Patched TRELLIS to expose remesh, UV clustering, and unrestricted texture size."
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

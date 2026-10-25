@@ -9,6 +9,8 @@ downloads BRIA RMBG-2.0.
 from __future__ import annotations
 
 import importlib.util
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -26,7 +28,7 @@ def _load():
 patch = _load()
 
 # The upstream file as it ships, trimmed to what the patch touches.
-ORIGINAL = '''from typing import *
+ORIGINAL = """from typing import *
 from transformers import AutoModelForImageSegmentation
 
 
@@ -35,7 +37,7 @@ class BiRefNet:
         self.model = AutoModelForImageSegmentation.from_pretrained(
             model_name, trust_remote_code=True
         )
-'''
+"""
 
 
 def test_the_exact_name_the_shipped_weights_ask_for_is_substituted():
@@ -78,6 +80,64 @@ def test_a_missing_anchor_fails_loudly():
         patch.apply(moved)
 
 
+def test_a_marker_without_the_guard_is_not_patched_and_a_second_apply_puts_it_back(
+    tmp_path,
+):
+    broken = ORIGINAL.replace(
+        '    def __init__(self, model_name: str = "ZhengPeng7/BiRefNet"):\n',
+        '    def __init__(self, model_name: str = "ZhengPeng7/BiRefNet"):\n'
+        f"        # {patch.MARKER}: note without the guard\n",
+    )
+    assert patch.MARKER in broken
+    assert 'model_name.startswith("briaai/")' not in broken
+    path = tmp_path / "BiRefNet.py"
+    path.write_text(broken)
+
+    def run(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(SCRIPT), str(path), *args],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    checked = run("--check")
+    assert checked.returncode != 0
+    applied = run()
+    assert applied.returncode == 0, applied.stderr
+    restored = path.read_text()
+    assert 'model_name.startswith("briaai/")' in restored
+    assert patch.is_patched(restored)
+    again = run()
+    assert again.returncode == 0, again.stderr
+    assert path.read_text() == restored
+
+
+def test_a_bria_constructor_argument_is_not_treated_as_patched(tmp_path):
+    bad = patch.apply(ORIGINAL)
+    bad += (
+        '\nmodel = AutoModelForImageSegmentation.from_pretrained("briaai/RMBG-2.0")\n'
+    )
+    path = tmp_path / "BiRefNet.py"
+    path.write_text(bad)
+    assert patch.is_patched(bad) is False
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), str(path), "--check"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    applied = subprocess.run(
+        [sys.executable, str(SCRIPT), str(path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert applied.returncode != 0
+    assert "briaai/RMBG-2.0" in path.read_text()
+
+
 def test_the_injected_guard_is_valid_python_and_behaves():
     """Compile the patched file and drive the guard, rather than trusting the string."""
     patched = patch.apply(ORIGINAL)
@@ -94,4 +154,6 @@ def test_the_injected_guard_is_valid_python_and_behaves():
     exec(compile(body, "patched_BiRefNet.py", "exec"), namespace)
 
     assert namespace["BiRefNet"]("briaai/RMBG-2.0").model_name == "ZhengPeng7/BiRefNet"
-    assert namespace["BiRefNet"]("ZhengPeng7/BiRefNet").model_name == "ZhengPeng7/BiRefNet"
+    assert (
+        namespace["BiRefNet"]("ZhengPeng7/BiRefNet").model_name == "ZhengPeng7/BiRefNet"
+    )

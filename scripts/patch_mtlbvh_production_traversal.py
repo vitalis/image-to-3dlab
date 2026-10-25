@@ -125,7 +125,8 @@ def apply_metal(source: str) -> str:
     source = source.replace("FixedStack24 stack;", "FixedStack48 stack;")
     source = source.replace(
         "// ─── Fixed-size stack ────────────────────────────────────────────────────────\n",
-        "// ─── Fixed-size stack ────────────────────────────────────────────────────────\n" + STACK_NOTE,
+        "// ─── Fixed-size stack ────────────────────────────────────────────────────────\n"
+        + STACK_NOTE,
         1,
     )
     source = source.replace(anchor, anchor + STACKLESS, 1)
@@ -162,7 +163,10 @@ def main() -> int:
     args = parser.parse_args()
 
     if not METAL.is_file() or not NATIVE.is_file():
-        print("mtlbvh source not found; bootstrap vendor/trellis-mac first", file=sys.stderr)
+        print(
+            "mtlbvh source not found; bootstrap vendor/trellis-mac first",
+            file=sys.stderr,
+        )
         return 2
 
     metal = METAL.read_text()
@@ -174,7 +178,7 @@ def main() -> int:
 
     if args.check:
         print("APPLIED" if applied else "ABSENT")
-        return 0
+        return 0 if applied else 1
 
     if args.revert:
         METAL.write_text(revert_metal(metal))

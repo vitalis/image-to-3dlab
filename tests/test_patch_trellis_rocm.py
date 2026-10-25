@@ -104,7 +104,7 @@ def scaled_dot_product_attention(qkv, kv=None, q_seqlen=None, kv_seqlen=None, *a
 
 # nvdiffrast nests the device-bitcode flag one level deeper than a plain list, because it is
 # inside `if _rocm:`. It sets no C++ standard at all, so torch's default applies.
-NVDIFFRAST_SETUP_SOURCE = '''\
+NVDIFFRAST_SETUP_SOURCE = """\
 import os
 import torch
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension
@@ -126,12 +126,12 @@ if IS_HIP:
         "cxx": ["-DNVDR_TORCH", "-D__HIP_PLATFORM_AMD__"],
         "nvcc": _nvcc,
     }
-'''
+"""
 
 # dmonkman/CuMesh-ROCm, which this route builds. Unlike upstream it *does* hardcode the
 # device-bitcode path and already compiles as C++20, so it needs the device patch but not the
 # C++20 one. Kept faithful on both counts: 3 device flags is not the point, the anchors are.
-CUMESH_SETUP_SOURCE = '''\
+CUMESH_SETUP_SOURCE = """\
 import os
 import torch
 from torch.utils.cpp_extension import CUDAExtension, BuildExtension, IS_HIP_EXTENSION
@@ -159,12 +159,12 @@ else:
         "cxx": ["-O3", "-std=c++20", "-fopenmp", f"-D_GLIBCXX_USE_CXX11_ABI={cxx11_abi}"],
         "nvcc": ["-O3", "-std=c++20"] + cc_flag,
     }
-'''
+"""
 
 # Upstream FlexGEMM, at the commit the NVIDIA route pins and this route also uses. It reads
 # IS_HIP_EXTENSION and passes --offload-arch already, and it does NOT hardcode the
 # device-bitcode path, so the C++20 change is all it needs.
-FLEXGEMM_SETUP_SOURCE = '''\
+FLEXGEMM_SETUP_SOURCE = """\
 import os
 import platform
 import torch
@@ -193,11 +193,11 @@ else:
         "cxx": ["-O3", "-std=c++17", "-fopenmp", f"-D_GLIBCXX_USE_CXX11_ABI={cxx11_abi}"],
         "nvcc": ["-O3", "-std=c++17"] + cc_flag,
     }
-'''
+"""
 
 # Upstream o-voxel, from the TRELLIS.2 checkout rather than extensions/. Two occurrences,
 # not three: it has no Windows branch.
-OVOXEL_SETUP_SOURCE = '''\
+OVOXEL_SETUP_SOURCE = """\
 import os
 import torch
 from torch.utils.cpp_extension import CUDAExtension, BuildExtension, IS_HIP_EXTENSION
@@ -226,9 +226,9 @@ setup(
         ),
     ],
 )
-'''
+"""
 
-NVDFRAST_PYPROJECT = '''\
+NVDFRAST_PYPROJECT = """\
 [build-system]
 requires = ["setuptools>=77", "wheel", "ninja"]
 build-backend = "setuptools.build_meta"
@@ -241,7 +241,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "LicenseRef-NSCL"
 dependencies = ["numpy"]
-'''
+"""
 
 # The three places windowed_attn.py dispatches on the backend, cut down to the lines around
 # each anchor. No `else` in any of them upstream, so an unknown backend is an
@@ -330,6 +330,7 @@ def read(root: Path, name: str) -> str:
 
 # --- the patch does what it says ------------------------------------------------------------
 
+
 def test_every_patch_finds_a_real_anchor():
     """No patch may be declared against text that is not in the upstream files.
 
@@ -340,15 +341,20 @@ def test_every_patch_finds_a_real_anchor():
         source = UPSTREAM_SOURCES[spec.file]
         assert source.count(spec.needle) == spec.expected, (
             f"{spec.file}: anchor appears {source.count(spec.needle)} time(s), expected "
-            f"{spec.expected}")
-        assert spec.proof not in source, f"{spec.file}: the proof phrase is already upstream"
+            f"{spec.expected}"
+        )
+        assert spec.proof not in source, (
+            f"{spec.file}: the proof phrase is already upstream"
+        )
         assert spec.proof, f"{spec.file}: a patch with no proof cannot be checked for"
 
 
 def test_apply_patches_everything_and_reports_it(root: Path):
     changed = trellis_rocm.apply(root)
     assert len(changed) == len(trellis_rocm.PATCHES)
-    assert all(was for _, was in changed), "nothing changed: apply() reported no work done"
+    assert all(was for _, was in changed), (
+        "nothing changed: apply() reported no work done"
+    )
     assert trellis_rocm.is_patched(root)
 
 
@@ -357,7 +363,9 @@ def test_apply_reports_one_entry_per_patch_not_per_file(root: Path):
     per_file = {}
     for spec in trellis_rocm.PATCHES:
         per_file[spec.file] = per_file.get(spec.file, 0) + 1
-    assert max(per_file.values()) > 1, "no file takes two patches, so this test proves nothing"
+    assert max(per_file.values()) > 1, (
+        "no file takes two patches, so this test proves nothing"
+    )
     assert len(trellis_rocm.apply(root)) == sum(per_file.values())
 
 
@@ -372,8 +380,10 @@ def test_aule_is_selectable_in_both_attention_paths(root: Path):
     # time: the package is optional and CUDA installs do not have it.
     assert sparse.count("from aule import flash_attention_triton") == 1
     assert dense.count("from aule import flash_attention_triton") == 1
-    assert "flash_attention_triton" not in UPSTREAM_SOURCES[
-        "TRELLIS.2/trellis2/modules/attention/full_attn.py"]
+    assert (
+        "flash_attention_triton"
+        not in UPSTREAM_SOURCES["TRELLIS.2/trellis2/modules/attention/full_attn.py"]
+    )
 
 
 def test_aule_config_lists_accept_the_name(root: Path):
@@ -383,8 +393,10 @@ def test_aule_config_lists_accept_the_name(root: Path):
     with a flash-attn import error, never having been asked for flash-attn at all.
     """
     trellis_rocm.apply(root)
-    for name in ("TRELLIS.2/trellis2/modules/sparse/config.py",
-                 "TRELLIS.2/trellis2/modules/attention/config.py"):
+    for name in (
+        "TRELLIS.2/trellis2/modules/sparse/config.py",
+        "TRELLIS.2/trellis2/modules/attention/config.py",
+    ):
         assert "'aule'" in read(root, name), f"{name}: aule is not in the backend list"
 
 
@@ -403,10 +415,13 @@ def test_unknown_backend_still_raises(root: Path):
     A backend that fails quietly produces a worse mesh and nobody finds out.
     """
     trellis_rocm.apply(root)
-    for name in ("TRELLIS.2/trellis2/modules/sparse/attention/full_attn.py",
-                 "TRELLIS.2/trellis2/modules/attention/full_attn.py"):
-        assert "raise ValueError(f\"Unknown attention module" in read(root, name), (
-            f"{name}: an unknown backend would no longer raise")
+    for name in (
+        "TRELLIS.2/trellis2/modules/sparse/attention/full_attn.py",
+        "TRELLIS.2/trellis2/modules/attention/full_attn.py",
+    ):
+        assert 'raise ValueError(f"Unknown attention module' in read(root, name), (
+            f"{name}: an unknown backend would no longer raise"
+        )
 
 
 WINDOWED = "TRELLIS.2/trellis2/modules/sparse/attention/windowed_attn.py"
@@ -423,7 +438,9 @@ def test_windowed_attention_has_an_aule_branch_in_all_three_places(root: Path):
 
 def test_windowed_attention_names_an_unknown_backend(root: Path):
     trellis_rocm.apply(root)
-    assert read(root, WINDOWED).count('raise ValueError(f"Unknown attention module') == 3
+    assert (
+        read(root, WINDOWED).count('raise ValueError(f"Unknown attention module') == 3
+    )
 
 
 def test_windowed_patches_are_judged_separately(root: Path):
@@ -462,6 +479,7 @@ def test_patched_text_is_still_valid_python(root: Path):
 
 # --- the Python floor the nvdiffrast port invented ------------------------------------------
 
+
 def test_the_python_floor_is_lowered(root: Path):
     """uv refuses >=3.12 on this repo's 3.11, and nothing in nvdiffrast needs 3.12."""
     trellis_rocm.apply(root)
@@ -489,12 +507,26 @@ def test_indentation_follows_the_anchor(root: Path):
     trellis_rocm.apply(root)
     name = "extensions/nvdiffrast/setup.py"
     original = next(l for l in NVDIFFRAST_SETUP_SOURCE.splitlines() if needle in l)
-    patched = next(l for l in read(root, name).splitlines()
-                   if '"--rocm-device-lib-path=" +' in l)
+    patched = next(
+        l for l in read(root, name).splitlines() if '"--rocm-device-lib-path=" +' in l
+    )
     assert patched.startswith(original[: original.index(needle)]), repr(patched)
 
 
 # --- the C++ standard torch 2.14 requires --------------------------------------------------
+
+
+def test_a_file_that_already_mentions_cxx20_still_loses_cxx17(root: Path):
+    """The proof text is not 'applied' while -std=c++17 is still in the file."""
+    path = root / "extensions/FlexGEMM/setup.py"
+    path.write_text(path.read_text().replace("-std=c++17", "-std=c++20", 1))
+    assert "-std=c++17" in path.read_text()
+    assert "-std=c++20" in path.read_text()
+    trellis_rocm.apply(root)
+    assert "-std=c++17" not in path.read_text()
+    assert trellis_rocm.is_patched(root) is True
+    assert trellis_rocm.apply(root) == [(spec, False) for spec in trellis_rocm.PATCHES]
+
 
 def test_every_cxx20_occurrence_is_replaced(root: Path):
     """torch 2.14's headers #error below C++20, so a single missed flag fails the build."""
@@ -503,12 +535,15 @@ def test_every_cxx20_occurrence_is_replaced(root: Path):
         text = read(root, path)
         assert "-std=c++17" not in text, f"{path}: a C++17 flag survived"
         assert text.count("-std=c++20") == count, (
-            f"{path}: {text.count('-std=c++20')} of {count} flags were changed")
+            f"{path}: {text.count('-std=c++20')} of {count} flags were changed"
+        )
 
 
 def test_nvdiffrast_is_left_alone_by_the_cxx20_patch(root: Path):
     """It sets no standard at all, so torch's own default applies and there is nothing to do."""
-    assert "extensions/nvdiffrast/setup.py" not in {p for p, _ in trellis_rocm.CXX20_FILES}
+    assert "extensions/nvdiffrast/setup.py" not in {
+        p for p, _ in trellis_rocm.CXX20_FILES
+    }
     trellis_rocm.apply(root)
     assert "-std=c++" not in read(root, "extensions/nvdiffrast/setup.py")
 
@@ -521,16 +556,25 @@ def test_the_cxx20_anchor_count_is_what_upstream_has():
 
 # --- the device-bitcode expression resolves ------------------------------------------------
 
+
 def device_lib_expression() -> str:
     """The replacement as it is written into setup.py, as one evaluable expression.
 
     The trailing comma is the list-element separator, not part of the value, so it comes off
     before eval — otherwise the whole thing evaluates to a one-element tuple.
     """
-    block = (trellis_rocm.DEVICE_LIB_REPLACEMENT.replace("%%MARK%%", trellis_rocm.MARKER)
-             .replace("%%INDENT%%", " " * 8).replace("%%DEEP%%", " " * 4))
-    code = textwrap.dedent("\n".join(line for line in block.splitlines()
-                                     if line.strip() and not line.strip().startswith("#")))
+    block = (
+        trellis_rocm.DEVICE_LIB_REPLACEMENT.replace("%%MARK%%", trellis_rocm.MARKER)
+        .replace("%%INDENT%%", " " * 8)
+        .replace("%%DEEP%%", " " * 4)
+    )
+    code = textwrap.dedent(
+        "\n".join(
+            line
+            for line in block.splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        )
+    )
     return code.rstrip().rstrip(",")
 
 
@@ -549,10 +593,14 @@ def test_device_lib_finds_the_rocm10_layout(tmp_path: Path, monkeypatch):
     (root / "lib" / "llvm" / "amdgcn" / "bitcode").mkdir(parents=True)
     monkeypatch.delenv("HIP_DEVICE_LIB_PATH", raising=False)
     got = eval(device_lib_expression(), {"os": os, "_rocm": str(root)})
-    assert got == f"--rocm-device-lib-path={root / 'lib' / 'llvm' / 'amdgcn' / 'bitcode'}"
+    assert (
+        got == f"--rocm-device-lib-path={root / 'lib' / 'llvm' / 'amdgcn' / 'bitcode'}"
+    )
 
 
-def test_device_lib_prefers_the_rocm10_path_when_both_exist(tmp_path: Path, monkeypatch):
+def test_device_lib_prefers_the_rocm10_path_when_both_exist(
+    tmp_path: Path, monkeypatch
+):
     """Both layouts present: the order must not depend on the filesystem."""
     root = tmp_path / "rocm"
     (root / "amdgcn" / "bitcode").mkdir(parents=True)
@@ -582,10 +630,13 @@ def test_device_lib_refuses_when_neither_layout_exists(tmp_path: Path, monkeypat
 
 # --- second runs, and refusals -------------------------------------------------------------
 
+
 def test_second_run_changes_nothing(root: Path):
     trellis_rocm.apply(root)
     before = {name: read(root, name) for name in UPSTREAM_SOURCES}
-    assert not any(was for _, was in trellis_rocm.apply(root)), "a second run re-applied a patch"
+    assert not any(was for _, was in trellis_rocm.apply(root)), (
+        "a second run re-applied a patch"
+    )
     assert before == {name: read(root, name) for name in UPSTREAM_SOURCES}
 
 
@@ -624,7 +675,10 @@ def test_is_patched_is_false_when_one_file_is_reverted(root: Path):
 
 # --- the command line ----------------------------------------------------------------------
 
-def test_main_exits_nonzero_and_explains_when_the_checkout_is_absent(tmp_path: Path, capsys):
+
+def test_main_exits_nonzero_and_explains_when_the_checkout_is_absent(
+    tmp_path: Path, capsys
+):
     code = trellis_rocm.main(["--root", str(tmp_path / "absent")])
     assert code == 1
     assert "bootstrap_trellis_rocm.py" in capsys.readouterr().out

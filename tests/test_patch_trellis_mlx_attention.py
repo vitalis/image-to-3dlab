@@ -28,14 +28,14 @@ def set_attn_backend(backend: Literal['xformers', 'flash_attn', 'flash_attn_3', 
     ATTN = backend
 """
 
-FULL_ATTN_SOURCE = '''    elif config.ATTN == 'metal_flash':
+FULL_ATTN_SOURCE = """    elif config.ATTN == 'metal_flash':
         out = something()
     else:
         raise ValueError(f"Unknown attention module: {config.ATTN}")
 
     if s is not None:
         return s.replace(out)
-'''
+"""
 
 
 def test_config_patch_adds_mlx_to_both_allow_lists():
@@ -44,7 +44,10 @@ def test_config_patch_adds_mlx_to_both_allow_lists():
     # Both the runtime env check and the Literal annotation must accept the new name,
     # otherwise SPARSE_ATTN_BACKEND=mlx is silently ignored.
     assert patched.count("'mlx'") == 2
-    assert "Literal['xformers', 'flash_attn', 'flash_attn_3', 'metal_flash', 'sdpa', 'mlx']" in patched
+    assert (
+        "Literal['xformers', 'flash_attn', 'flash_attn_3', 'metal_flash', 'sdpa', 'mlx']"
+        in patched
+    )
 
 
 def test_config_patch_is_idempotent():
@@ -52,6 +55,14 @@ def test_config_patch_is_idempotent():
     twice, second = patch.patch_config(once)
     assert first and not second
     assert once == twice
+
+
+def test_one_new_list_and_one_old_list_is_not_success():
+    half = CONFIG_SOURCE.replace(patch.BACKEND_LIST_OLD, patch.BACKEND_LIST_NEW, 1)
+    assert half.count(patch.BACKEND_LIST_OLD) == 1
+    assert patch.BACKEND_LIST_NEW in half
+    with pytest.raises(RuntimeError, match="allow-list"):
+        patch.patch_config(half)
 
 
 def test_config_patch_fails_closed_when_anchor_missing():
@@ -65,7 +76,9 @@ def test_full_attn_patch_inserts_branch_before_the_guard():
     assert "elif config.ATTN == 'mlx':" in patched
     # The unknown-backend guard must survive, still last.
     assert patched.count("Unknown attention module") == 1
-    assert patched.index("config.ATTN == 'mlx'") < patched.index("Unknown attention module")
+    assert patched.index("config.ATTN == 'mlx'") < patched.index(
+        "Unknown attention module"
+    )
 
 
 def test_full_attn_patch_is_idempotent():
@@ -94,6 +107,7 @@ def test_injected_branch_imports_what_it_uses():
 
 def test_injected_branch_is_syntactically_valid_python():
     import ast
+
     # The branch is indented one level and starts with elif, so it only parses when
     # given a matching if at the same indentation.
     module = "def _host():\n    if False:\n        pass\n" + patch.DISPATCH_NEW

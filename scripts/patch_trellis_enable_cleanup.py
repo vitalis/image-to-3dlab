@@ -52,7 +52,9 @@ STUBS = (
     ),
 )
 
-MARKER = "        # image-to-3dlab: cleanup re-enabled by patch_trellis_enable_cleanup.py\n"
+MARKER = (
+    "        # image-to-3dlab: cleanup re-enabled by patch_trellis_enable_cleanup.py\n"
+)
 
 
 def find_stubs(source: str) -> list[str]:
@@ -75,7 +77,7 @@ def enable(source: str) -> tuple[str, list[str]]:
     for signature, stub in STUBS:
         head, tail = source.split(signature, 1)
         if tail.startswith(stub):
-            source = head + signature + MARKER + tail[len(stub):]
+            source = head + signature + MARKER + tail[len(stub) :]
             changed.append(signature.strip())
     return source, changed
 
@@ -86,20 +88,24 @@ def revert(source: str) -> tuple[str, list[str]]:
     for signature, stub in STUBS:
         head, tail = source.split(signature, 1)
         if tail.startswith(MARKER):
-            source = head + signature + stub + tail[len(MARKER):]
+            source = head + signature + stub + tail[len(MARKER) :]
             changed.append(signature.strip())
     return source, changed
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--check", action="store_true", help="report state, change nothing")
+    parser.add_argument(
+        "--check", action="store_true", help="report state, change nothing"
+    )
     parser.add_argument("--revert", action="store_true", help="restore the stubs")
     parser.add_argument("--path", type=Path, default=TARGET)
     args = parser.parse_args()
 
     if not args.path.is_file():
-        print(f"not found: {args.path}\nRun the TRELLIS bootstrap first.", file=sys.stderr)
+        print(
+            f"not found: {args.path}\nRun the TRELLIS bootstrap first.", file=sys.stderr
+        )
         return 2
 
     source = args.path.read_text()
@@ -108,8 +114,8 @@ def main() -> int:
     if args.check:
         if stubbed:
             print(f"STUBBED (cleanup disabled): {', '.join(stubbed)}")
-        else:
-            print("ENABLED (cleanup runs)")
+            return 1
+        print("ENABLED (cleanup runs)")
         return 0
 
     updated, changed = (revert if args.revert else enable)(source)

@@ -18,7 +18,9 @@ REPO = Path(__file__).resolve().parents[1]
 DEFAULT_ROOT = REPO / "vendor" / "trellis-space-mac" / "TRELLIS.2"
 
 
-def replace_exact(source: str, old: str, new: str, *, count: int, label: str) -> tuple[str, bool]:
+def replace_exact(
+    source: str, old: str, new: str, *, count: int, label: str
+) -> tuple[str, bool]:
     """Replace an audited anchor or fail instead of producing a partial port."""
     if new in source:
         return source, False
@@ -63,9 +65,9 @@ def patch_sparse_config(root: Path) -> bool:
 
 def patch_sparse_attention(root: Path) -> bool:
     path = root / "trellis2/modules/sparse/attention/full_attn.py"
-    anchor = '''    else:
-        raise ValueError(f"Unknown attention module: {config.ATTN}")'''
-    replacement = '''    elif config.ATTN == 'sdpa':
+    anchor = """    else:
+        raise ValueError(f"Unknown attention module: {config.ATTN}")"""
+    replacement = """    elif config.ATTN == 'sdpa':
         # image-to-3dlab: evaluate each packed sequence independently with
         # PyTorch SDPA.  This preserves FlashAttention's block-diagonal
         # semantics without padding or a dense cross-sequence mask.
@@ -136,7 +138,7 @@ def patch_sparse_attention(root: Path) -> bool:
             1.0 / math.sqrt(q.shape[-1]),
         )
     else:
-        raise ValueError(f"Unknown attention module: {config.ATTN}")'''
+        raise ValueError(f"Unknown attention module: {config.ATTN}")"""
 
     def transform(source: str) -> tuple[str, bool]:
         return replace_exact(
@@ -152,15 +154,15 @@ def patch_sparse_attention(root: Path) -> bool:
 
 def patch_image_feature_extractor(root: Path) -> bool:
     path = root / "trellis2/modules/image_feature_extractor.py"
-    lifecycle = '''    def to(self, device):
+    lifecycle = """    def to(self, device):
         self.model.to(device)
 
     def cuda(self):
         self.model.cuda()
 
     def cpu(self):
-        self.model.cpu()'''
-    device_lifecycle = '''    @property
+        self.model.cpu()"""
+    device_lifecycle = """    @property
     def device(self):
         # image-to-3dlab: keep preprocessing tensors beside the DINO model.
         return next(self.model.parameters()).device
@@ -173,7 +175,7 @@ def patch_image_feature_extractor(root: Path) -> bool:
         self.model.to(device)
 
     def cpu(self):
-        self.model.cpu()'''
+        self.model.cpu()"""
 
     def transform(source: str) -> tuple[str, bool]:
         changed = False
@@ -188,12 +190,16 @@ def patch_image_feature_extractor(root: Path) -> bool:
         if "torch.stack(image).cuda()" in source:
             if source.count("torch.stack(image).cuda()") != 2:
                 raise RuntimeError("DINO list input: unexpected number of CUDA anchors")
-            source = source.replace("torch.stack(image).cuda()", "torch.stack(image).to(self.device)")
+            source = source.replace(
+                "torch.stack(image).cuda()", "torch.stack(image).to(self.device)"
+            )
             changed = True
         if "self.transform(image).cuda()" in source:
             if source.count("self.transform(image).cuda()") != 2:
                 raise RuntimeError("DINO transform: unexpected number of CUDA anchors")
-            source = source.replace("self.transform(image).cuda()", "self.transform(image).to(self.device)")
+            source = source.replace(
+                "self.transform(image).cuda()", "self.transform(image).to(self.device)"
+            )
             changed = True
         source, did = replace_exact(
             source,
@@ -217,7 +223,7 @@ def patch_pipeline_device(root: Path) -> bool:
             source,
             '        self.to(torch.device("cuda"))',
             '        device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cuda")\n'
-            '        self.to(device)',
+            "        self.to(device)",
             count=1,
             label="pipeline accelerator selection",
         )
@@ -234,62 +240,114 @@ def patch_pipeline_device(root: Path) -> bool:
     return patch_file(base, base_transform) | patch_file(pipeline, pipeline_transform)
 
 
+_ORIGINAL_SIGNATURE = (
+    '    def from_pretrained(path: str) -> "Trellis2ImageTo3DPipeline":'
+)
+_OLD_SIGNATURE = (
+    "    def from_pretrained(path: str, *, load_rembg: bool = True) "
+    '-> "Trellis2ImageTo3DPipeline":'
+)
+_SAFE_SIGNATURE = (
+    "    def from_pretrained(path: str, *, load_rembg: bool = False) "
+    '-> "Trellis2ImageTo3DPipeline":'
+)
+_CONSTRUCTOR = (
+    "getattr(rembg, args['rembg_model']['name'])(**args['rembg_model']['args'])"
+)
+_ORIGINAL_BODY = "        new_pipeline.rembg_model = " + _CONSTRUCTOR
+_OLD_BODY = (
+    "        new_pipeline.rembg_model = (\n"
+    f"            {_CONSTRUCTOR}\n"
+    "            if load_rembg else None\n"
+    "        )"
+)
+_SAFE_BODY = """\
+        if load_rembg:
+            raise RuntimeError(
+                "image-to-3dlab refuses load_rembg=True; BRIA RMBG-2.0 is never loaded"
+            )
+        new_pipeline.rembg_model = None"""
+
+
 def patch_optional_rembg(root: Path) -> bool:
-    """Avoid loading the gated remover when an input already carries transparency."""
+    """Never construct the gated remover. ``load_rembg=True`` is refused."""
     path = root / "trellis2/pipelines/trellis2_image_to_3d.py"
 
     def transform(source: str) -> tuple[str, bool]:
         changed = False
-        source, did = replace_exact(
-            source,
-            '    def from_pretrained(path: str) -> "Trellis2ImageTo3DPipeline":',
-            '    def from_pretrained(path: str, *, load_rembg: bool = True) -> "Trellis2ImageTo3DPipeline":',
-            count=1,
-            label="optional background-removal model signature",
-        )
-        changed |= did
-        source, did = replace_exact(
-            source,
-            "        new_pipeline.rembg_model = getattr(rembg, args['rembg_model']['name'])(**args['rembg_model']['args'])",
-            "        new_pipeline.rembg_model = (\n"
-            "            getattr(rembg, args['rembg_model']['name'])(**args['rembg_model']['args'])\n"
-            "            if load_rembg else None\n"
-            "        )",
-            count=1,
-            label="optional background-removal model load",
-        )
-        return source, changed | did
+        if _SAFE_SIGNATURE not in source:
+            found = next(
+                (
+                    item
+                    for item in (_ORIGINAL_SIGNATURE, _OLD_SIGNATURE)
+                    if item in source
+                ),
+                None,
+            )
+            if found is None:
+                raise RuntimeError(
+                    "optional background-removal model signature: "
+                    "expected 1 source anchors, found 0"
+                )
+            source = source.replace(found, _SAFE_SIGNATURE, 1)
+            changed = True
+        if _CONSTRUCTOR in source:
+            if _OLD_BODY in source:
+                source = source.replace(_OLD_BODY, _SAFE_BODY, 1)
+            elif _ORIGINAL_BODY in source:
+                source = source.replace(_ORIGINAL_BODY, _SAFE_BODY, 1)
+            else:
+                raise RuntimeError(
+                    "optional background-removal model load: constructor present "
+                    "in an unexpected form"
+                )
+            changed = True
+        elif "new_pipeline.rembg_model = None" not in source:
+            raise RuntimeError(
+                "optional background-removal model load: expected 1 source anchors, found 0"
+            )
+        if _CONSTRUCTOR in source or "load_rembg: bool = True" in source:
+            raise RuntimeError("BRIA constructor is still present after the patch")
+        return source, changed
 
     return patch_file(path, transform)
 
 
 def patch_sparse_tensor_cuda_aliases(root: Path) -> bool:
     path = root / "trellis2/modules/sparse/basic.py"
-    varlen = '''    def cuda(self) -> 'VarLenTensor':
+    varlen = """    def cuda(self) -> 'VarLenTensor':
         new_feats = self.feats.cuda()
-        return self.replace(new_feats)'''
-    varlen_device = '''    def cuda(self) -> 'VarLenTensor':
+        return self.replace(new_feats)"""
+    varlen_device = """    def cuda(self) -> 'VarLenTensor':
         # API-compatible accelerator alias for Apple Silicon.
         device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cuda")
         new_feats = self.feats.to(device)
-        return self.replace(new_feats)'''
-    sparse = '''    def cuda(self) -> 'SparseTensor':
+        return self.replace(new_feats)"""
+    sparse = """    def cuda(self) -> 'SparseTensor':
         new_feats = self.feats.cuda()
         new_coords = self.coords.cuda()
-        return self.replace(new_feats, new_coords)'''
-    sparse_device = '''    def cuda(self) -> 'SparseTensor':
+        return self.replace(new_feats, new_coords)"""
+    sparse_device = """    def cuda(self) -> 'SparseTensor':
         # API-compatible accelerator alias for Apple Silicon.
         device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cuda")
         new_feats = self.feats.to(device)
         new_coords = self.coords.to(device)
-        return self.replace(new_feats, new_coords)'''
+        return self.replace(new_feats, new_coords)"""
 
     def transform(source: str) -> tuple[str, bool]:
         source, first = replace_exact(
-            source, varlen, varlen_device, count=1, label="VarLenTensor accelerator alias"
+            source,
+            varlen,
+            varlen_device,
+            count=1,
+            label="VarLenTensor accelerator alias",
         )
         source, second = replace_exact(
-            source, sparse, sparse_device, count=1, label="SparseTensor accelerator alias"
+            source,
+            sparse,
+            sparse_device,
+            count=1,
+            label="SparseTensor accelerator alias",
         )
         return source, first | second
 
@@ -298,11 +356,11 @@ def patch_sparse_tensor_cuda_aliases(root: Path) -> bool:
 
 def patch_mesh_device(root: Path) -> bool:
     path = root / "trellis2/representations/mesh/base.py"
-    cuda_alias = '''    def cuda(self, non_blocking=False):
-        return self.to('cuda', non_blocking=non_blocking)'''
-    accelerator_alias = '''    def cuda(self, non_blocking=False):
+    cuda_alias = """    def cuda(self, non_blocking=False):
+        return self.to('cuda', non_blocking=non_blocking)"""
+    accelerator_alias = """    def cuda(self, non_blocking=False):
         device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cuda")
-        return self.to(device, non_blocking=non_blocking)'''
+        return self.to(device, non_blocking=non_blocking)"""
 
     def transform(source: str) -> tuple[str, bool]:
         changed = False
@@ -315,9 +373,14 @@ def patch_mesh_device(root: Path) -> bool:
         )
         changed |= did
         if "self.vertices.cuda()" in source or "self.faces.cuda()" in source:
-            if source.count("self.vertices.cuda()") != 3 or source.count("self.faces.cuda()") != 3:
+            if (
+                source.count("self.vertices.cuda()") != 3
+                or source.count("self.faces.cuda()") != 3
+            ):
                 raise RuntimeError("mesh cleanup: unexpected number of CUDA anchors")
-            source = source.replace("self.vertices.cuda()", "self.vertices.to(self.device)")
+            source = source.replace(
+                "self.vertices.cuda()", "self.vertices.to(self.device)"
+            )
             source = source.replace("self.faces.cuda()", "self.faces.to(self.device)")
             changed = True
         return source, changed
