@@ -106,7 +106,9 @@ def _slot_images(document: dict, normal_only: bool) -> set[int]:
         texture = textures[slot["index"]]
         source = texture.get("source")
         if source is None:
-            source = texture.get("extensions", {}).get("EXT_texture_webp", {}).get("source")
+            source = (
+                texture.get("extensions", {}).get("EXT_texture_webp", {}).get("source")
+            )
         if source is not None:
             found.add(source)
 
@@ -121,7 +123,7 @@ def _slot_images(document: dict, normal_only: bool) -> set[int]:
     return found
 
 
-def encode(image, fmt: str, quality: int, max_size: int | None) -> bytes:
+def encode(image, fmt: str, quality: int, max_size: int | None) -> tuple[bytes, str]:
     """Re-encode one image, optionally capping its longest side."""
     from PIL import Image
 
@@ -146,7 +148,9 @@ def encode(image, fmt: str, quality: int, max_size: int | None) -> bytes:
         image.save(buffer, "JPEG", quality=quality, subsampling=0)
     else:
         image.save(buffer, "PNG", optimize=True)
-    return buffer.getvalue()
+    # `fmt` may have moved from jpeg to png so the alpha survived. The caller
+    # must label the bytes with this format, not the one it asked for.
+    return buffer.getvalue(), fmt
 
 
 def declare_webp(document: dict, texture_index: int, image_index: int) -> None:
@@ -200,26 +204,40 @@ def compress(
         with Image.open(io.BytesIO(blob)) as opened:
             opened.load()
             before_size = opened.size
-            encoded = encode(
+            encoded, written = encode(
                 opened,
                 fmt,
                 map_quality if is_data else quality,
-                normal_size if index in normal_images else map_size if is_data else max_size,
+                normal_size
+                if index in normal_images
+                else map_size
+                if is_data
+                else max_size,
             )
         if len(encoded) >= len(blob):
             # Re-encoding made it bigger, which happens on already-compact textures.
-            report.append({
-                "image": index, "kind": "data" if is_data else "colour",
-                "before": len(blob), "after": len(blob), "skipped": True,
-            })
+            report.append(
+                {
+                    "image": index,
+                    "kind": "data" if is_data else "colour",
+                    "before": len(blob),
+                    "after": len(blob),
+                    "skipped": True,
+                }
+            )
             continue
         replacements[view_index] = encoded
-        image["mimeType"] = MIME[fmt]
-        report.append({
-            "image": index, "kind": "data" if is_data else "colour",
-            "resolution": before_size, "before": len(blob), "after": len(encoded),
-            "skipped": False,
-        })
+        image["mimeType"] = MIME[written]
+        report.append(
+            {
+                "image": index,
+                "kind": "data" if is_data else "colour",
+                "resolution": before_size,
+                "before": len(blob),
+                "after": len(encoded),
+                "skipped": False,
+            }
+        )
 
     if not replacements:
         return data, report
@@ -254,29 +272,39 @@ def main() -> int:
     parser.add_argument("output", type=Path, help="GLB to write")
     parser.add_argument("--format", choices=sorted(MIME), default="jpeg")
     parser.add_argument(
-        "--quality", type=int, default=90,
+        "--quality",
+        type=int,
+        default=90,
         help="Quality for colour textures. 90 held 36.3 dB on the Snag's albedo",
     )
     parser.add_argument(
-        "--map-quality", type=int, default=90,
+        "--map-quality",
+        type=int,
+        default=90,
         help="Quality for maps the shader reads as numbers (metallic-roughness, normal, "
-             "occlusion), where artifacts show as shading rather than blur",
+        "occlusion), where artifacts show as shading rather than blur",
     )
     parser.add_argument(
-        "--max-size", type=int, default=2048,
+        "--max-size",
+        type=int,
+        default=2048,
         help="Cap the longest side of colour textures; 0 keeps the resolution. The paint "
-             "stage emits 4096, which is more than these assets carry: at 2048 the "
-             "rendered difference is within the renderer's own sampling noise",
+        "stage emits 4096, which is more than these assets carry: at 2048 the "
+        "rendered difference is within the renderer's own sampling noise",
     )
     parser.add_argument(
-        "--map-size", type=int, default=1024,
+        "--map-size",
+        type=int,
+        default=1024,
         help="Cap for data maps. These carry far less detail than an albedo and a 4096 "
-             "metallic-roughness map is almost always 14 MB of nothing. 0 keeps it",
+        "metallic-roughness map is almost always 14 MB of nothing. 0 keeps it",
     )
     parser.add_argument(
-        "--normal-size", type=int, default=2048,
+        "--normal-size",
+        type=int,
+        default=2048,
         help="Cap for the normal map, which carries the crisp edges of a light mesh and is "
-             "worth more than the other data maps (0: the same cap as --map-size)",
+        "worth more than the other data maps (0: the same cap as --map-size)",
     )
     args = parser.parse_args()
 

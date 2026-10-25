@@ -58,20 +58,26 @@ def _glb(images, *, material=None, extra_view=b"MESHDATA"):
         binary += blob
     binary += b"\x00" * (-len(binary) % 4)
     mesh_view = len(views)
-    views.append({"buffer": 0, "byteOffset": len(binary), "byteLength": len(extra_view)})
+    views.append(
+        {"buffer": 0, "byteOffset": len(binary), "byteLength": len(extra_view)}
+    )
     binary += extra_view
 
     document = {
         "asset": {"version": "2.0"},
-        "images": [{"bufferView": i, "mimeType": "image/png"} for i in range(len(images))],
+        "images": [
+            {"bufferView": i, "mimeType": "image/png"} for i in range(len(images))
+        ],
         "textures": [{"source": i} for i in range(len(images))],
-        "materials": [material or {"pbrMetallicRoughness": {
-            "baseColorTexture": {"index": 0}}}],
+        "materials": [
+            material or {"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}
+        ],
         "bufferViews": views,
         "buffers": [{"byteLength": len(binary)}],
         "meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]}],
-        "accessors": [{"bufferView": mesh_view, "componentType": 5126, "count": 1,
-                       "type": "VEC3"}],
+        "accessors": [
+            {"bufferView": mesh_view, "componentType": 5126, "count": 1, "type": "VEC3"}
+        ],
     }
     return cg.build_glb(document, bytes(binary)), mesh_view
 
@@ -116,10 +122,12 @@ def test_every_buffer_view_stays_inside_the_buffer():
 
 
 def test_a_metallic_roughness_map_is_treated_as_data():
-    material = {"pbrMetallicRoughness": {
-        "baseColorTexture": {"index": 0},
-        "metallicRoughnessTexture": {"index": 1},
-    }}
+    material = {
+        "pbrMetallicRoughness": {
+            "baseColorTexture": {"index": 0},
+            "metallicRoughnessTexture": {"index": 1},
+        }
+    }
     data, _ = _glb([_png((512, 512)), _png((512, 512), seed=3)], material=material)
 
     document, _binary = cg.parse_glb(data)
@@ -131,10 +139,14 @@ def test_a_metallic_roughness_map_is_treated_as_data():
     # The data map was capped at 64px and the albedo was not touched in resolution.
     document, binary = cg.parse_glb(out)
     view = document["bufferViews"][1]
-    with Image.open(io.BytesIO(binary[view["byteOffset"]:view["byteOffset"] + view["byteLength"]])) as m:
+    with Image.open(
+        io.BytesIO(binary[view["byteOffset"] : view["byteOffset"] + view["byteLength"]])
+    ) as m:
         assert max(m.size) == 64
     view = document["bufferViews"][0]
-    with Image.open(io.BytesIO(binary[view["byteOffset"]:view["byteOffset"] + view["byteLength"]])) as a:
+    with Image.open(
+        io.BytesIO(binary[view["byteOffset"] : view["byteOffset"] + view["byteLength"]])
+    ) as a:
         assert max(a.size) == 512
 
 
@@ -155,7 +167,7 @@ def test_colour_textures_are_capped_at_2048_by_default():
 
     document, binary = cg.parse_glb(out)
     view = document["bufferViews"][0]
-    blob = binary[view["byteOffset"]:view["byteOffset"] + view["byteLength"]]
+    blob = binary[view["byteOffset"] : view["byteOffset"] + view["byteLength"]]
     with Image.open(io.BytesIO(blob)) as image:
         assert max(image.size) == 2048
 
@@ -188,10 +200,26 @@ def test_webp_is_declared_used_but_never_required():
 def test_jpeg_keeps_alpha_by_falling_back_to_png():
     """Silently dropping alpha would turn a cutout opaque."""
     with Image.open(io.BytesIO(_png((64, 64), mode="RGBA"))) as image:
-        encoded = cg.encode(image, "jpeg", 90, None)
+        encoded, written = cg.encode(image, "jpeg", 90, None)
+    assert written == "png"
     with Image.open(io.BytesIO(encoded)) as result:
         assert result.format == "PNG"
         assert result.mode in ("RGBA", "LA", "P")
+
+
+def test_an_rgba_texture_is_labelled_with_the_format_that_was_written():
+    """PNG bytes must not be declared as JPEG. A loader that trusts the label breaks."""
+    data, _ = _glb([_png((64, 64), mode="RGBA")])
+    out, report = cg.compress(data, max_size=32)
+    assert report[0]["skipped"] is False
+    document, binary = cg.parse_glb(out)
+    image = document["images"][0]
+    assert image["mimeType"] == "image/png"
+    view = document["bufferViews"][image["bufferView"]]
+    start = view.get("byteOffset", 0)
+    blob = binary[start : start + view["byteLength"]]
+    with Image.open(io.BytesIO(blob)) as result:
+        assert result.format == "PNG"
 
 
 def test_a_texture_that_would_grow_is_left_alone():
@@ -220,11 +248,17 @@ def test_the_json_chunk_stays_valid_json_and_padded():
 
 def test_the_normal_map_keeps_more_resolution_than_the_other_data_maps():
     """A normal map carries the edges of every block and bevel, so it gets its own, larger cap."""
-    material = {"pbrMetallicRoughness": {
-        "baseColorTexture": {"index": 0},
-        "metallicRoughnessTexture": {"index": 1},
-    }, "normalTexture": {"index": 2}}
-    data, _ = _glb([_png((512, 512)), _png((512, 512), seed=3), _png((512, 512), seed=4)], material=material)
+    material = {
+        "pbrMetallicRoughness": {
+            "baseColorTexture": {"index": 0},
+            "metallicRoughnessTexture": {"index": 1},
+        },
+        "normalTexture": {"index": 2},
+    }
+    data, _ = _glb(
+        [_png((512, 512)), _png((512, 512), seed=3), _png((512, 512), seed=4)],
+        material=material,
+    )
 
     document, _binary = cg.parse_glb(data)
     assert cg.normal_texture_images(document) == {2}
@@ -234,17 +268,30 @@ def test_the_normal_map_keeps_more_resolution_than_the_other_data_maps():
 
     def side(index):
         view = document["bufferViews"][index]
-        with Image.open(io.BytesIO(binary[view["byteOffset"]:view["byteOffset"] + view["byteLength"]])) as image:
+        with Image.open(
+            io.BytesIO(
+                binary[view["byteOffset"] : view["byteOffset"] + view["byteLength"]]
+            )
+        ) as image:
             return max(image.size)
 
-    assert (side(0), side(1), side(2)) == (512, 64, 256)      # colour untouched, roughness small, normal bigger
+    assert (side(0), side(1), side(2)) == (
+        512,
+        64,
+        256,
+    )  # colour untouched, roughness small, normal bigger
 
 
 def test_without_a_normal_size_the_normal_map_follows_the_other_data_maps():
-    material = {"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}, "normalTexture": {"index": 1}}
+    material = {
+        "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
+        "normalTexture": {"index": 1},
+    }
     data, _ = _glb([_png((512, 512)), _png((512, 512), seed=3)], material=material)
     out, _ = cg.compress(data, map_size=64, normal_size=None, max_size=None)
     document, binary = cg.parse_glb(out)
     view = document["bufferViews"][1]
-    with Image.open(io.BytesIO(binary[view["byteOffset"]:view["byteOffset"] + view["byteLength"]])) as image:
+    with Image.open(
+        io.BytesIO(binary[view["byteOffset"] : view["byteOffset"] + view["byteLength"]])
+    ) as image:
         assert max(image.size) == 64

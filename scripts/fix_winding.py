@@ -43,19 +43,26 @@ def needs_inverting(volume: float) -> bool:
 
 
 def repair(mesh) -> dict:
-    """Make winding consistent and outward. Returns what changed."""
+    """Make each piece consistent and outward, including an open piece.
+
+    A single global flip skips an open component, and the volumes of many
+    pieces cancel. Returns what changed.
+    """
+    import sys
+
+    import trimesh
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from repair_decode import flip_inward_components
+
     before_consistent = bool(mesh.is_winding_consistent)
     before_volume = float(mesh.volume)
-
-    mesh.fix_normals()
-    inverted = needs_inverting(float(mesh.volume))
-    if inverted:
-        mesh.invert()
-
+    trimesh.repair.fix_winding(mesh)
+    flipped = flip_inward_components(mesh)
     return {
         "was_consistent": before_consistent,
         "was_volume": before_volume,
-        "inverted": inverted,
+        "inverted": flipped > 0,
         "now_consistent": bool(mesh.is_winding_consistent),
         "now_volume": float(mesh.volume),
     }

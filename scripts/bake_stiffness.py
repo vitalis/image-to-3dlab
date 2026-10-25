@@ -36,6 +36,17 @@ FLOWER = 1.0
 RIGID = 0.0
 
 
+def with_stiffness(target, rgba: np.ndarray):
+    """Keep the mesh's texture and store stiffness as COLOR_0."""
+    baked = target.copy()
+    baked.visual = target.visual.copy()
+    if hasattr(baked.visual, "vertex_attributes"):
+        baked.visual.vertex_attributes["color"] = np.asarray(rgba, dtype=np.uint8)
+    else:
+        baked.visual.vertex_colors = rgba
+    return baked
+
+
 def classify(colours: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Split label colours into (moves, category value)."""
     red, green, blue = colours[:, 0], colours[:, 1], colours[:, 2]
@@ -47,7 +58,9 @@ def classify(colours: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("labels", type=Path, help="labelled .glb from project_labels.py")
+    parser.add_argument(
+        "labels", type=Path, help="labelled .glb from project_labels.py"
+    )
     parser.add_argument("output", type=Path, help="destination .glb")
     parser.add_argument(
         "--mesh",
@@ -102,9 +115,7 @@ def main() -> int:
     rgba[:, 2] = np.clip(phase * 255, 0, 255).astype(np.uint8)
     rgba[:, 3] = 255
 
-    baked = trimesh.Trimesh(
-        vertices=vertices, faces=target.faces, vertex_colors=rgba, process=False
-    )
+    baked = with_stiffness(target, rgba)
     output = args.output.expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     baked.export(output)

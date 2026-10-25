@@ -3,7 +3,9 @@
 import numpy as np
 import pytest
 
-from scripts.ribbon_metric import boundary_stats, verdict
+import trimesh
+
+from scripts.ribbon_metric import boundary_stats, measure, verdict
 
 
 def _tetrahedron():
@@ -53,3 +55,30 @@ def test_verdict_thresholds():
 
 def test_gate_is_configurable():
     assert verdict(12.0, gate=15.0).startswith("PASS")
+
+
+def _exploded_box(path, *, uvs: bool):
+    box = trimesh.creation.box()
+    faces = np.asarray(box.faces)
+    vertices = box.vertices[faces].reshape(-1, 3)
+    new_faces = np.arange(len(vertices)).reshape(-1, 3)
+    mesh = trimesh.Trimesh(vertices=vertices, faces=new_faces, process=False)
+    if uvs:
+        mesh.visual = trimesh.visual.TextureVisuals(
+            uv=np.linspace(0, 1, len(vertices) * 2).reshape(-1, 2)[: len(vertices)]
+        )
+    mesh.export(path)
+
+
+def test_a_textured_closed_mesh_is_not_a_tear(tmp_path):
+    path = tmp_path / "box.glb"
+    _exploded_box(path, uvs=True)
+    result = measure(path)
+    assert result["pct_faces_touching_boundary"] == pytest.approx(0.0)
+
+
+def test_a_closed_mesh_with_no_uvs_still_scores_zero(tmp_path):
+    path = tmp_path / "plain.glb"
+    _exploded_box(path, uvs=False)
+    result = measure(path)
+    assert result["pct_faces_touching_boundary"] == pytest.approx(0.0)

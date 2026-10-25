@@ -94,16 +94,49 @@ def test_a_partly_duplicated_cache_entry_is_reported_but_not_deletable(tmp_path)
     file was converted to a different name, so matching by name under-counts.
     """
     hub, local = tmp_path / "hub", tmp_path / "local"
-    _cache_entry(hub, "org/model", {
-        "shared.ckpt": 4 * audit.GB,
-        "converted.bin": 3 * audit.GB,
-    })
+    _cache_entry(
+        hub,
+        "org/model",
+        {
+            "shared.ckpt": 4 * audit.GB,
+            "converted.bin": 3 * audit.GB,
+        },
+    )
     _weights(local, "shared.ckpt", 4 * audit.GB)
 
     found = audit.find_cached_duplicates(hub=hub, roots=(local,))
     assert len(found) == 1
     assert found[0].deletable is False
     assert "PARTIAL" in found[0].reason
+
+
+def test_ninety_percent_does_not_delete_the_rest(tmp_path):
+    hub, local = tmp_path / "hub", tmp_path / "local"
+    _cache_entry(
+        hub,
+        "org/model",
+        {
+            "shared.safetensors": 9 * audit.GB,
+            "only-here.bin": audit.GB,
+        },
+    )
+    _weights(local, "shared.safetensors", 9 * audit.GB)
+    found = audit.find_cached_duplicates(hub=hub, roots=(local,))
+    assert len(found) == 1
+    assert found[0].deletable is False
+    unique = next((hub / "models--org--model").rglob("only-here.bin"))
+    audit.report(found, apply=True)
+    assert unique.exists() or unique.is_symlink()
+
+
+def test_a_small_file_with_different_bytes_is_not_the_same(tmp_path):
+    cache = tmp_path / "cache.bin"
+    local = tmp_path / "local.bin"
+    cache.write_bytes(b"aaaa")
+    local.write_bytes(b"bbbb")
+    assert audit._same_payload(cache, local) is False
+    local.write_bytes(b"aaaa")
+    assert audit._same_payload(cache, local) is True
 
 
 def test_a_cache_entry_sharing_nothing_is_not_reported(tmp_path):
@@ -134,7 +167,9 @@ def test_apply_deletes_only_the_deletable(tmp_path):
     ckpt = _weights(tmp_path, "m/model.fp16.ckpt", 2048)
     keep = _weights(tmp_path, "m/model.fp16.safetensors", 2048)
     found = audit.find_superseded_checkpoints(roots=(tmp_path,))
-    found.append(audit.Candidate("unreferenced", keep, 2048, "review only", deletable=False))
+    found.append(
+        audit.Candidate("unreferenced", keep, 2048, "review only", deletable=False)
+    )
 
     audit.report(found, apply=True)
     assert not ckpt.exists()

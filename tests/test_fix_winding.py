@@ -90,28 +90,18 @@ def test_report_records_the_before_state():
     assert report["now_consistent"]
 
 
-def test_invert_fires_when_fix_normals_leaves_it_inside_out():
-    """The Flicker case: consistent winding, still negative volume.
+def test_an_open_inside_out_piece_is_turned_outward():
+    """One closed piece and one open inside-out piece. Both must end outward."""
+    import sys
 
-    Simulated with a stub because a watertight primitive cannot reproduce it -- trimesh
-    resolves those on its own. This is the branch that matters in production.
-    """
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    from repair_decode import summarise
 
-    class _Stub:
-        def __init__(self):
-            self.volume = -1.0
-            self.is_winding_consistent = False
-            self.inverted = False
-
-        def fix_normals(self):
-            self.is_winding_consistent = True   # consistent, but still inside-out
-
-        def invert(self):
-            self.inverted = True
-            self.volume = -self.volume
-
-    stub = _Stub()
-    report = fw.repair(stub)
-    assert stub.inverted
-    assert report["inverted"]
-    assert report["now_volume"] > 0
+    closed = trimesh.creation.box(extents=(1.0, 1.0, 1.0))
+    closed.apply_translation((3.0, 0.0, 0.0))
+    opened = trimesh.creation.box(extents=(1.0, 1.0, 1.0))
+    opened.invert()
+    opened.faces = opened.faces[:-1]
+    both = trimesh.util.concatenate([closed, opened])
+    fw.repair(both)
+    assert summarise(both)["inverted_components"] == 0

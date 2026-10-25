@@ -4,15 +4,21 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from scripts.feature_mask import rasterise_uv, select_faces
+from scripts.feature_mask import grow_mask, rasterise_uv, select_faces
 
 
 @pytest.fixture
 def two_triangles():
     """Two coplanar triangles, one at the origin and one far away on +X."""
     vertices = np.array(
-        [[0.0, 0.0, 0.0], [0.1, 0.0, 0.0], [0.0, 0.1, 0.0],
-         [5.0, 0.0, 0.0], [5.1, 0.0, 0.0], [5.0, 0.1, 0.0]]
+        [
+            [0.0, 0.0, 0.0],
+            [0.1, 0.0, 0.0],
+            [0.0, 0.1, 0.0],
+            [5.0, 0.0, 0.0],
+            [5.1, 0.0, 0.0],
+            [5.0, 0.1, 0.0],
+        ]
     )
     faces = np.array([[0, 1, 2], [3, 4, 5]])
     return vertices, faces
@@ -70,6 +76,16 @@ def test_dilate_grows_the_mask_without_shrinking_it():
 
     assert grown.sum() > tight.sum()
     assert np.all(grown[tight > 0] == 255), "dilation must not erase original texels"
+
+
+def test_dilate_does_not_wrap_onto_the_opposite_edge():
+    arr = np.zeros((8, 8), dtype=np.uint8)
+    arr[0, 0] = 255
+    grown = grow_mask(arr, 2)
+    assert grown[0, 1] == 255
+    assert grown[1, 0] == 255
+    assert grown[0, -1] == 0
+    assert grown[-1, 0] == 0
 
 
 def test_mask_is_single_channel_and_binary():

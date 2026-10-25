@@ -58,6 +58,33 @@ def weld_by_position(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
     )
 
 
+def repair_mesh(
+    mesh: trimesh.Trimesh, *, weld: float = 0.0, scale: float | None = None
+):
+    """Weld by position, then orient each piece, and return that mesh.
+
+    The caller exports this object. Stats printed afterwards must describe it.
+    UV seams are not welded into the file as if they were holes: the weld is
+    by position, which is the same weld `measure` uses.
+    """
+    import sys
+
+    repaired = mesh.copy()
+    if weld > 0:
+        if scale is None:
+            scale = float(np.ptp(repaired.vertices, axis=0).max()) or 1.0
+        step = scale * weld
+        repaired.vertices = np.round(repaired.vertices / step) * step
+    repaired = weld_by_position(repaired)
+    trimesh.repair.fix_winding(repaired)
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from repair_decode import flip_inward_components
+
+    flip_inward_components(repaired)
+    trimesh.repair.fill_holes(repaired)
+    return repaired
+
+
 def measure(mesh: trimesh.Trimesh) -> dict:
     """Structural stats, after welding coincident vertices by position."""
     welded = weld_by_position(mesh)
@@ -140,7 +167,9 @@ def main() -> int:
     if args.weld_sweep:
         print()
         print("=== weld sweep (tolerance as fraction of asset size)")
-        print(f"  {'tolerance':>10}  {'components':>12}  {'boundary':>12}  {'faces':>10}")
+        print(
+            f"  {'tolerance':>10}  {'components':>12}  {'boundary':>12}  {'faces':>10}"
+        )
         for fraction in (0.0, 0.0005, 0.001, 0.002, 0.004, 0.008):
             probe = mesh.copy()
             if fraction > 0:
@@ -157,19 +186,10 @@ def main() -> int:
             )
 
     if args.repair:
-        repaired = mesh.copy()
-        if args.weld > 0:
-            step = scale * args.weld
-            repaired.vertices = np.round(repaired.vertices / step) * step
-        repaired.merge_vertices()
-        repaired.update_faces(repaired.nondegenerate_faces())
-        repaired.remove_unreferenced_vertices()
-        trimesh.repair.fix_winding(repaired)
-        trimesh.repair.fix_inversion(repaired)
-        trimesh.repair.fix_normals(repaired)
-        trimesh.repair.fill_holes(repaired)
+        repaired = repair_mesh(mesh, weld=args.weld, scale=scale)
 
         print()
+        # These numbers are the mesh that is written, not a second weld of a copy.
         report("repaired", measure(repaired))
         output = args.repair.expanduser().resolve()
         output.parent.mkdir(parents=True, exist_ok=True)

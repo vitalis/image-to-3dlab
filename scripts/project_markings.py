@@ -38,7 +38,22 @@ import numpy as np
 import trimesh
 from PIL import Image
 
-from scripts.project_labels import crop_box, project
+from scripts.project_labels import AXES, crop_box, project
+
+
+def mirrored_vertices(vertices: np.ndarray, axis: str) -> np.ndarray:
+    """Reflect across the mesh midline on the view's horizontal axis.
+
+    World X = 0 is the wrong mirror for a mesh that does not sit on the origin,
+    and it is depth, not left-right, when the view looks along X.
+    """
+    horizontal = AXES[axis][0]
+    column = np.asarray(vertices)[:, horizontal]
+    mid = (float(column.min()) + float(column.max())) / 2.0
+    out = np.array(vertices, copy=True, dtype=float)
+    out[:, horizontal] = (2.0 * mid) - column
+    return out
+
 
 _LUMA = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
 
@@ -164,7 +179,9 @@ def strength_from_pair(
     target = float(np.median(body)) if body.size else float(high)
     headroom = target - original_lum
     weight = np.where(
-        np.abs(headroom) > 1e-3, (erased_lum - original_lum) / np.where(np.abs(headroom) > 1e-3, headroom, 1.0), 0.0
+        np.abs(headroom) > 1e-3,
+        (erased_lum - original_lum) / np.where(np.abs(headroom) > 1e-3, headroom, 1.0),
+        0.0,
     )
     return np.clip(weight, 0.0, 1.0).astype(np.float32)
 
@@ -193,7 +210,9 @@ def marking_ratio(
     return np.clip(original / np.maximum(erased, floor), 0.0, 1.0)
 
 
-def dark_core_strength(rgb: np.ndarray, low: float = 40.0, edge: float = 12.0) -> np.ndarray:
+def dark_core_strength(
+    rgb: np.ndarray, low: float = 40.0, edge: float = 12.0
+) -> np.ndarray:
     """Full strength for pixels *darker* than ``low`` -- the cores of the markings.
 
     Softening deliberately protects everything below ``low`` so it does not lighten eyes
@@ -277,57 +296,106 @@ def load_mesh(path: Path) -> trimesh.Trimesh:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("mesh", type=Path, help="the generated .glb to paint")
-    parser.add_argument("source", type=Path, help="the original artwork, markings intact")
+    parser.add_argument(
+        "source", type=Path, help="the original artwork, markings intact"
+    )
     parser.add_argument("output", type=Path)
     parser.add_argument("--axis", default="z", choices=("z", "x"))
-    parser.add_argument("--yaw", type=float, default=0.0,
-                        help="degrees to turn the projection, for a three-quarter source")
+    parser.add_argument(
+        "--yaw",
+        type=float,
+        default=0.0,
+        help="degrees to turn the projection, for a three-quarter source",
+    )
     parser.add_argument("--flip-h", action="store_true")
     parser.add_argument("--flip-v", action="store_true")
     parser.add_argument("--flip-depth", action="store_true")
-    parser.add_argument("--depth-buffer", type=int, default=0,
-                        help="bin count for the depth-buffer occlusion test (0 = ray cast)")
+    parser.add_argument(
+        "--depth-buffer",
+        type=int,
+        default=0,
+        help="bin count for the depth-buffer occlusion test (0 = ray cast)",
+    )
     parser.add_argument("--depth-tolerance", type=float, default=0.02)
-    parser.add_argument("--amount", type=float, default=1.0,
-                        help="how far to push the albedo toward the source marking colour")
+    parser.add_argument(
+        "--amount",
+        type=float,
+        default=1.0,
+        help="how far to push the albedo toward the source marking colour",
+    )
     parser.add_argument("--low", type=float, default=40.0)
     parser.add_argument("--high", type=float, default=150.0)
-    parser.add_argument("--erased", type=Path, default=None,
-                        help="the softened conditioning image the mesh was generated from. "
-                             "Strongly preferred: comparing it against the source recovers "
-                             "the exact marking mask, instead of guessing from darkness and "
-                             "mistaking the artwork's own shadows for paint")
-    parser.add_argument("--dilate", type=int, default=6,
-                        help="texels to bleed the paint into the gutter around each UV "
-                             "island. Zero leaves ragged, papery seams wherever the "
-                             "renderer filters across an island edge")
-    parser.add_argument("--no-dark-cores", action="store_true",
-                        help="do not repaint pixels darker than --low. Those are the cores "
-                             "of the markings, which softening spares to protect eyes and "
-                             "claws; without them the markings come back grey")
-    parser.add_argument("--mirror", action="store_true",
-                        help="also paint the far side by sampling the mirrored position; "
-                             "only valid for bilaterally symmetric subjects")
-    parser.add_argument("--validate", action="store_true",
-                        help="replace the albedo with the raw projected colours, to check "
-                             "the projection lines up before trusting a marking blend")
-    parser.add_argument("--dump-strength", type=Path, default=None,
-                        help="write the marking-strength atlas as a PNG, for inspection")
+    parser.add_argument(
+        "--erased",
+        type=Path,
+        default=None,
+        help="the softened conditioning image the mesh was generated from. "
+        "Strongly preferred: comparing it against the source recovers "
+        "the exact marking mask, instead of guessing from darkness and "
+        "mistaking the artwork's own shadows for paint",
+    )
+    parser.add_argument(
+        "--dilate",
+        type=int,
+        default=6,
+        help="texels to bleed the paint into the gutter around each UV "
+        "island. Zero leaves ragged, papery seams wherever the "
+        "renderer filters across an island edge",
+    )
+    parser.add_argument(
+        "--no-dark-cores",
+        action="store_true",
+        help="do not repaint pixels darker than --low. Those are the cores "
+        "of the markings, which softening spares to protect eyes and "
+        "claws; without them the markings come back grey",
+    )
+    parser.add_argument(
+        "--mirror",
+        action="store_true",
+        help="also paint the far side by sampling the mirrored position; "
+        "only valid for bilaterally symmetric subjects",
+    )
+    parser.add_argument(
+        "--validate",
+        action="store_true",
+        help="replace the albedo with the raw projected colours, to check "
+        "the projection lines up before trusting a marking blend",
+    )
+    parser.add_argument(
+        "--dump-strength",
+        type=Path,
+        default=None,
+        help="write the marking-strength atlas as a PNG, for inspection",
+    )
     args = parser.parse_args()
 
     mesh = load_mesh(args.mesh)
     source = Image.open(args.source).convert("RGBA")
 
     _, visible, u, v, _ = project(
-        mesh, source, args.axis, args.flip_h, args.flip_v, args.flip_depth,
-        args.depth_buffer, args.depth_tolerance, yaw=args.yaw,
+        mesh,
+        source,
+        args.axis,
+        args.flip_h,
+        args.flip_v,
+        args.flip_depth,
+        args.depth_buffer,
+        args.depth_tolerance,
+        yaw=args.yaw,
     )
     if args.mirror:
         mirrored = mesh.copy()
-        mirrored.vertices[:, 0] = -mirrored.vertices[:, 0]
+        mirrored.vertices = mirrored_vertices(mesh.vertices, args.axis)
         _, back_visible, back_u, back_v, _ = project(
-            mirrored, source, args.axis, args.flip_h, args.flip_v, args.flip_depth,
-            args.depth_buffer, args.depth_tolerance, yaw=args.yaw,
+            mirrored,
+            source,
+            args.axis,
+            args.flip_h,
+            args.flip_v,
+            args.flip_depth,
+            args.depth_buffer,
+            args.depth_tolerance,
+            yaw=args.yaw,
         )
         take = back_visible & ~visible
         u = np.where(take, back_u, u)
@@ -351,7 +419,9 @@ def main() -> int:
     alpha = np.array(crop.convert("RGBA"))[..., 3]
 
     if args.erased:
-        erased = np.array(Image.open(args.erased).convert("RGBA").crop(box).convert("RGB"))
+        erased = np.array(
+            Image.open(args.erased).convert("RGBA").crop(box).convert("RGB")
+        )
         ratio = marking_ratio(pixels, erased)
         source_strength = strength_from_pair(pixels, erased, args.high)
         if not args.no_dark_cores:
@@ -366,21 +436,30 @@ def main() -> int:
     # projected position rather than a colour averaged across an island boundary.
     baked, covered = dilate_into_gutter(baked, covered, args.dilate)
 
-    projected_colour = sample_image(pixels, baked[..., 0], baked[..., 1]).astype(np.float32)
-    on_subject = sample_image(alpha[..., None], baked[..., 0], baked[..., 1])[..., 0] > 204
+    projected_colour = sample_image(pixels, baked[..., 0], baked[..., 1]).astype(
+        np.float32
+    )
+    on_subject = (
+        sample_image(alpha[..., None], baked[..., 0], baked[..., 1])[..., 0] > 204
+    )
     seen = covered & (baked[..., 2] > 0.5) & on_subject
 
     if args.validate:
         painted = np.where(seen[..., None], projected_colour, albedo)
     else:
         if source_strength is not None:
-            strength = sample_image(
-                source_strength[..., None], baked[..., 0], baked[..., 1]
-            )[..., 0] * seen
+            strength = (
+                sample_image(source_strength[..., None], baked[..., 0], baked[..., 1])[
+                    ..., 0
+                ]
+                * seen
+            )
         else:
             strength = marking_strength(projected_colour, args.low, args.high) * seen
         if args.dump_strength:
-            Image.fromarray((strength * 255).astype(np.uint8), "L").save(args.dump_strength)
+            Image.fromarray((strength * 255).astype(np.uint8), "L").save(
+                args.dump_strength
+            )
         if ratio is not None:
             # Transfer the marking as a multiplier so the generated shading survives.
             projected_ratio = sample_image(ratio, baked[..., 0], baked[..., 1])
@@ -388,9 +467,13 @@ def main() -> int:
         else:
             target = projected_colour
         painted = blend_markings(albedo, target, strength, args.amount)
-        print(f"marking texels: {int((strength > 0.5).sum()):,} of {seen.sum():,} covered")
+        print(
+            f"marking texels: {int((strength > 0.5).sum()):,} of {seen.sum():,} covered"
+        )
 
-    mesh.visual.material.baseColorTexture = Image.fromarray(painted.astype(np.uint8), "RGB")
+    mesh.visual.material.baseColorTexture = Image.fromarray(
+        painted.astype(np.uint8), "RGB"
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     mesh.export(str(args.output))
     print(f"wrote {args.output}")

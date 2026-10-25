@@ -17,6 +17,8 @@ from pathlib import Path
 from PIL import Image
 
 MODEL_ID = "wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M"
+# The size the catalogue and the README already state. Not measured here.
+MODEL_SIZE = "~94 MB"
 MODEL_REVISION = "a2a8c6eaa2549ad66eb7c31b85022bf58273a26c"
 NEUTRAL_BACKGROUND = (240, 240, 240)
 HIGH_RISK_THRESHOLD = 0.85
@@ -77,7 +79,7 @@ def summarize_logits(flat_logits: list[float], dimensional_logits: list[float]) 
     }
 
 
-def classify(image_path: Path, *, local_files_only: bool = False) -> dict:
+def classify(image_path: Path, *, local_files_only: bool = True) -> dict:
     """Run the pinned TinyCLIP checkpoint on one local image."""
     import torch
     from transformers import CLIPModel, CLIPProcessor
@@ -85,18 +87,26 @@ def classify(image_path: Path, *, local_files_only: bool = False) -> dict:
     with Image.open(image_path) as source:
         image = prepare_image(source)
     prompts = [*FLAT_PROMPTS, *DIMENSIONAL_PROMPTS]
-    processor = CLIPProcessor.from_pretrained(
-        MODEL_ID,
-        revision=MODEL_REVISION,
-        local_files_only=local_files_only,
-        # This checkpoint ships tokenizer.json rather than vocab.json/merges.txt.
-        use_fast=True,
-    )
-    model = CLIPModel.from_pretrained(
-        MODEL_ID,
-        revision=MODEL_REVISION,
-        local_files_only=local_files_only,
-    ).eval()
+    try:
+        processor = CLIPProcessor.from_pretrained(
+            MODEL_ID,
+            revision=MODEL_REVISION,
+            local_files_only=local_files_only,
+            # This checkpoint ships tokenizer.json rather than vocab.json/merges.txt.
+            use_fast=True,
+        )
+        model = CLIPModel.from_pretrained(
+            MODEL_ID,
+            revision=MODEL_REVISION,
+            local_files_only=local_files_only,
+        ).eval()
+    except OSError as exc:
+        if local_files_only:
+            raise SystemExit(
+                f"{MODEL_ID} ({MODEL_SIZE}) is not on disk, so this check stopped. "
+                "Install it from Setup & Status, or pass --download."
+            ) from exc
+        raise
     inputs = processor(text=prompts, images=image, return_tensors="pt", padding=True)
     with torch.inference_mode():
         logits = model(**inputs).logits_per_image[0].float().cpu().tolist()
@@ -120,10 +130,19 @@ def main() -> int:
     parser.add_argument(
         "--local-files-only",
         action="store_true",
-        help="fail instead of downloading the pinned TinyCLIP checkpoint",
+        help="fail instead of downloading the pinned TinyCLIP checkpoint (this is the default)",
+    )
+    parser.add_argument(
+        "--download",
+        "--yes",
+        action="store_true",
+        dest="download",
+        help="allow the pinned TinyCLIP checkpoint to be fetched if it is not on disk",
     )
     args = parser.parse_args()
-    print(json.dumps(classify(args.image.resolve(), local_files_only=args.local_files_only)))
+    # Local files are the default. --download may fetch. --local-files-only still wins.
+    local_only = not args.download or args.local_files_only
+    print(json.dumps(classify(args.image.resolve(), local_files_only=local_only)))
     return 0
 
 

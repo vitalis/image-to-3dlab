@@ -23,8 +23,16 @@ SIDES = ("Left", "Right")
 # left out on purpose: hanging hands rest beside them, and their outlines (wide trousers,
 # bulky legs) pushed every hanging arm 20-50 degrees outward on walks and idles (2026-10-06,
 # the bald sensei). A hand brushing a thigh reads far better than arms held out like wings.
-BODY_ROLES = ("Spine1", "Spine2", "Chest", "Neck1", "Neck2", "Head",
-              "LeftShoulder", "RightShoulder")
+BODY_ROLES = (
+    "Spine1",
+    "Spine2",
+    "Chest",
+    "Neck1",
+    "Neck2",
+    "Head",
+    "LeftShoulder",
+    "RightShoulder",
+)
 ARM_ROLES = ("Arm", "ForeArm", "Hand")
 # How much of a bone's skin counts as its thickness. Below the maximum, so a stray vertex
 # (a spike of hair, a pauldron's rim) does not inflate the whole capsule.
@@ -37,7 +45,9 @@ TORSO_ROLES = ("Spine1", "Spine2", "Chest")
 ARM_PERCENTILE = 60
 
 
-def point_segment(p: np.ndarray, a: np.ndarray, b: np.ndarray) -> tuple[float, np.ndarray]:
+def point_segment(
+    p: np.ndarray, a: np.ndarray, b: np.ndarray
+) -> tuple[float, np.ndarray]:
     """(distance, closest point) from `p` to the segment a-b."""
     axis = b - a
     length2 = float(axis @ axis)
@@ -46,8 +56,13 @@ def point_segment(p: np.ndarray, a: np.ndarray, b: np.ndarray) -> tuple[float, n
     return float(np.linalg.norm(p - closest)), closest
 
 
-def skin_radii(points: np.ndarray, owners: list[str], segments: dict[str, tuple],
-               bones: list[str], percentile: float) -> dict[str, float]:
+def skin_radii(
+    points: np.ndarray,
+    owners: list[str],
+    segments: dict[str, tuple],
+    bones: list[str],
+    percentile: float,
+) -> dict[str, float]:
     """For each bone, how far its own vertices (those it mainly moves) sit from it."""
     owners_arr = np.asarray(owners)
     radii = {}
@@ -56,31 +71,46 @@ def skin_radii(points: np.ndarray, owners: list[str], segments: dict[str, tuple]
         if len(mine) == 0 or bone not in segments:
             continue
         a, b = segments[bone]
-        radii[bone] = float(np.percentile([point_segment(p, a, b)[0] for p in mine], percentile))
+        radii[bone] = float(
+            np.percentile([point_segment(p, a, b)[0] for p in mine], percentile)
+        )
     return radii
 
 
-def limit_head(radii: dict[str, float], head_bones: set[str], torso_bones: set[str]) -> dict[str, float]:
+def limit_head(
+    radii: dict[str, float], head_bones: set[str], torso_bones: set[str]
+) -> dict[str, float]:
     """The radii with each head bone no wider than HEAD_TO_TORSO x the widest torso bone."""
     torso = max((r for b, r in radii.items() if b in torso_bones), default=None)
     if torso is None:
         return dict(radii)
-    return {b: min(r, torso * HEAD_TO_TORSO) if b in head_bones else r for b, r in radii.items()}
+    return {
+        b: min(r, torso * HEAD_TO_TORSO) if b in head_bones else r
+        for b, r in radii.items()
+    }
 
 
 @dataclass
 class Proxy:
-    body: dict[str, float]       # rig bone -> capsule radius
-    arms: dict[str, dict]        # side -> {"upper", "fore", "hand", "radius": {bone: r}}
+    body: dict[str, float]  # rig bone -> capsule radius
+    arms: dict[str, dict]  # side -> {"upper", "fore", "hand", "radius": {bone: r}}
     side_shoulder: dict[str, str | None]
     margin: float
 
 
-def build_proxy(mapping: dict[str, str], points: np.ndarray, owners: list[str],
-                segments: dict[str, tuple], height: float) -> Proxy | None:
+def build_proxy(
+    mapping: dict[str, str],
+    points: np.ndarray,
+    owners: list[str],
+    segments: dict[str, tuple],
+    height: float,
+) -> Proxy | None:
     """The body outline for one rig, from its rest pose. None if it has no arms to fix."""
     by_role: dict[str, str] = {}
-    for bone, role in mapping.items():  # first bone wins: extras and stiff fingers share roles
+    for (
+        bone,
+        role,
+    ) in mapping.items():  # first bone wins: extras and stiff fingers share roles
         by_role.setdefault(role, bone)
     body_bones = [by_role[r] for r in BODY_ROLES if r in by_role]
     arms = {}
@@ -89,33 +119,55 @@ def build_proxy(mapping: dict[str, str], points: np.ndarray, owners: list[str],
         if None in bones:
             continue
         radius = skin_radii(points, owners, segments, bones, ARM_PERCENTILE)
-        arms[side] = {"upper": bones[0], "fore": bones[1], "hand": bones[2],
-                      "radius": {b: radius.get(b, 0.0) for b in bones}}
+        arms[side] = {
+            "upper": bones[0],
+            "fore": bones[1],
+            "hand": bones[2],
+            "radius": {b: radius.get(b, 0.0) for b in bones},
+        }
     if not arms:
         return None
-    body = limit_head(skin_radii(points, owners, segments, body_bones, BODY_PERCENTILE),
-                      head_bones={by_role["Head"]} if "Head" in by_role else set(),
-                      torso_bones={by_role[r] for r in TORSO_ROLES if r in by_role})
-    return Proxy(body=body,
-                 arms=arms,
-                 side_shoulder={s: by_role.get(f"{s}Shoulder") for s in SIDES},
-                 margin=0.01 * height)
+    body = limit_head(
+        skin_radii(points, owners, segments, body_bones, BODY_PERCENTILE),
+        head_bones={by_role["Head"]} if "Head" in by_role else set(),
+        torso_bones={by_role[r] for r in TORSO_ROLES if r in by_role},
+    )
+    return Proxy(
+        body=body,
+        arms=arms,
+        side_shoulder={s: by_role.get(f"{s}Shoulder") for s in SIDES},
+        margin=0.01 * height,
+    )
 
 
 def _test_points(seg: dict[str, tuple], arm: dict) -> list[tuple[np.ndarray, float]]:
     fore_a, fore_b = seg[arm["fore"]]
     hand_a, hand_b = seg[arm["hand"]]
     r = arm["radius"]
-    return [(fore_a, r[arm["fore"]]), ((fore_a + fore_b) / 2, r[arm["fore"]]),
-            (hand_a, r[arm["hand"]]), (hand_b, r[arm["hand"]])]
+    return [
+        (fore_a, r[arm["fore"]]),
+        ((fore_a + fore_b) / 2, r[arm["fore"]]),
+        (hand_a, r[arm["hand"]]),
+        (hand_b, r[arm["hand"]]),
+    ]
 
 
 def _rotation_between(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     a = a / np.linalg.norm(a)
     b = b / np.linalg.norm(b)
-    v, c = np.cross(a, b), float(a @ b)
+    v, c = np.cross(a, b), float(np.clip(a @ b, -1.0, 1.0))
     if c > 1 - 1e-12:
         return np.eye(3)
+    # Opposite directions make the usual formula divide by zero.
+    if c <= -1 + 1e-8:
+        helper = (
+            np.array([1.0, 0.0, 0.0])
+            if abs(float(a[0])) < 0.9
+            else np.array([0.0, 1.0, 0.0])
+        )
+        axis = helper - (helper @ a) * a
+        axis = axis / np.linalg.norm(axis)
+        return 2.0 * np.outer(axis, axis) - np.eye(3)
     vx = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
     return np.eye(3) + vx + vx @ vx / (1 + c)
 
@@ -128,7 +180,9 @@ def _sideways(direction: np.ndarray, along: np.ndarray) -> np.ndarray:
     return side / n if n > 1e-6 else np.zeros(3)
 
 
-def arm_swing(seg: dict[str, tuple], proxy: Proxy, side: str, iterations: int = 10) -> np.ndarray:
+def arm_swing(
+    seg: dict[str, tuple], proxy: Proxy, side: str, iterations: int = 10
+) -> np.ndarray:
     """Rotation (3x3, about the shoulder) that takes one arm out of the body on this frame.
 
     `seg` maps rig bones to their posed (head, tail) in one shared space. Identity when
@@ -136,8 +190,11 @@ def arm_swing(seg: dict[str, tuple], proxy: Proxy, side: str, iterations: int = 
     """
     arm = proxy.arms[side]
     pivot = seg[arm["upper"]][0]
-    capsules = [(seg[b][0], seg[b][1], r) for b, r in proxy.body.items()
-                if b != proxy.side_shoulder.get(side) and b in seg]
+    capsules = [
+        (seg[b][0], seg[b][1], r)
+        for b, r in proxy.body.items()
+        if b != proxy.side_shoulder.get(side) and b in seg
+    ]
     points = _test_points(seg, arm)
     total = np.eye(3)
     for _ in range(iterations):
@@ -152,8 +209,12 @@ def arm_swing(seg: dict[str, tuple], proxy: Proxy, side: str, iterations: int = 
                     # nothing, so fall back to the way the shoulder sits off the body.
                     away = _sideways(p - closest, p - pivot)
                     if not away.any():
-                        away = _sideways(pivot - point_segment(pivot, a, b)[1], p - pivot)
-                    if not away.any():  # shoulder on that line too: turn across the body axis
+                        away = _sideways(
+                            pivot - point_segment(pivot, a, b)[1], p - pivot
+                        )
+                    if (
+                        not away.any()
+                    ):  # shoulder on that line too: turn across the body axis
                         away = _sideways(np.cross(b - a, p - pivot), p - pivot)
                     if away.any():
                         worst, push = depth, (p, away)
@@ -186,7 +247,9 @@ def _exp(v: np.ndarray) -> np.ndarray:
 
 def swing_degrees(rotation: np.ndarray) -> float:
     """How far a swing turns the arm, in degrees."""
-    return float(np.degrees(np.arccos(np.clip((np.trace(rotation) - 1) / 2, -1.0, 1.0))))
+    return float(
+        np.degrees(np.arccos(np.clip((np.trace(rotation) - 1) / 2, -1.0, 1.0)))
+    )
 
 
 def smooth_swings(swings: list[np.ndarray], radius: int = 4) -> list[np.ndarray]:
@@ -198,8 +261,13 @@ def smooth_swings(swings: list[np.ndarray], radius: int = 4) -> list[np.ndarray]
     out = []
     for t in range(len(swings)):
         lo, hi = max(0, t - radius), min(len(swings), t + radius + 1)
-        w = weights[lo - t + radius:hi - t + radius]
+        w = weights[lo - t + radius : hi - t + radius]
         blended = (vectors[lo:hi] * w[:, None]).sum(axis=0) / w.sum()
-        out.append(_exp(blended if np.linalg.norm(blended) >= np.linalg.norm(vectors[t])
-                        else vectors[t]))
+        out.append(
+            _exp(
+                blended
+                if np.linalg.norm(blended) >= np.linalg.norm(vectors[t])
+                else vectors[t]
+            )
+        )
     return out

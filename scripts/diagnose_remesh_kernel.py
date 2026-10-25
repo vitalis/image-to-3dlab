@@ -45,6 +45,17 @@ import argparse
 import sys
 
 
+WATCHDOG_NOTE = (
+    "The macOS GPU watchdog can kill a long Metal kernel and take the display down. "
+    "Set MTL_CAPTURE_ENABLED=1 before any Metal dispatch, or run headless."
+)
+
+
+def sphere_enabled(*, sphere: bool, skip_sphere: bool) -> bool:
+    """The sphere remesh is opt-in. It is the kernel that hung the machine."""
+    return bool(sphere) and not skip_sphere
+
+
 def summarise_lookup(found, expected_count: int) -> dict:
     """Miss statistics for a hashmap round-trip.
 
@@ -83,7 +94,9 @@ def test_hashmap(resolution: int, count: int) -> dict:
     # Deduplicate on CPU. torch.unique(dim=0) on MPS stalls indefinitely at this size --
     # 0% CPU, no output, no error -- which is a hang in the harness, not in the kernel.
     coords = torch.unique(
-        torch.randint(0, resolution, (count, 3), dtype=torch.int32, generator=generator),
+        torch.randint(
+            0, resolution, (count, 3), dtype=torch.int32, generator=generator
+        ),
         dim=0,
     ).to(device)
     n = coords.shape[0]
@@ -92,11 +105,13 @@ def test_hashmap(resolution: int, count: int) -> dict:
     batched = torch.cat([torch.zeros_like(coords[:, :1]), coords], dim=1)
     # Same allocation the real path uses: capacity 2*N, keys pre-filled with the sentinel.
     hashmap = _init_hashmap(resolution, 2 * n, device)
-    _C.hashmap_insert_3d_idx_as_val(*hashmap, batched, resolution, resolution, resolution)
-    print('  [inserted]', flush=True)
+    _C.hashmap_insert_3d_idx_as_val(
+        *hashmap, batched, resolution, resolution, resolution
+    )
+    print("  [inserted]", flush=True)
 
     found = _C.hashmap_lookup_3d(*hashmap, batched, resolution, resolution, resolution)
-    print('  [looked up]', flush=True)
+    print("  [looked up]", flush=True)
     stats = summarise_lookup(found, n)
     stats["resolution"] = resolution
     stats["quad_survival"] = quad_survival(stats["miss_rate"])
@@ -119,9 +134,14 @@ def test_sphere(resolution: int) -> dict:
     faces = torch.tensor(sphere.faces, dtype=torch.int32, device="mps")
 
     out_v, out_f = remesh_narrow_band_dc(
-        vertices, faces,
+        vertices,
+        faces,
         center=torch.zeros(3, device="mps"),
-        scale=1.2, resolution=resolution, band=1, project_back=0.0, verbose=False,
+        scale=1.2,
+        resolution=resolution,
+        band=1,
+        project_back=0.0,
+        verbose=False,
     )
     result = trimesh.Trimesh(
         vertices=out_v.cpu().numpy(), faces=out_f.cpu().numpy(), process=False
@@ -140,9 +160,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--resolution", type=int, default=256)
     parser.add_argument("--keys", type=int, default=200_000)
+    parser.add_argument(
+        "--sphere",
+        action="store_true",
+        help="also remesh a sphere; this can hang the GPU watchdog",
+    )
     parser.add_argument("--skip-sphere", action="store_true")
     args = parser.parse_args()
 
+    print(WATCHDOG_NOTE)
     print("=" * 70)
     print("TEST 1 — hashmap round-trip (insert known keys, look the same keys up)")
     print("=" * 70)
@@ -151,15 +177,21 @@ def main() -> int:
         for key, value in stats.items():
             print(f"  {key:16s} {value}")
         if stats["missing"]:
-            print(f"\n  ** {stats['miss_rate']:.1%} of keys not found. With four lookups per")
-            print(f"  ** quad that leaves {stats['quad_survival']:.1%} of faces — a wireframe.")
+            print(
+                f"\n  ** {stats['miss_rate']:.1%} of keys not found. With four lookups per"
+            )
+            print(
+                f"  ** quad that leaves {stats['quad_survival']:.1%} of faces — a wireframe."
+            )
         else:
-            print("\n  Hashmap is clean. The defect is downstream: look at "
-                  "simple_dual_contour's out_intersected.")
+            print(
+                "\n  Hashmap is clean. The defect is downstream: look at "
+                "simple_dual_contour's out_intersected."
+            )
     except Exception as exc:
         print(f"  FAILED: {type(exc).__name__}: {exc}")
 
-    if args.skip_sphere:
+    if not sphere_enabled(sphere=args.sphere, skip_sphere=args.skip_sphere):
         return 0
 
     print()
@@ -170,7 +202,11 @@ def main() -> int:
         stats = test_sphere(args.resolution)
         for key, value in stats.items():
             print(f"  {key:16s} {value}")
-        ratio = stats["volume"] / stats["expected_volume"] if stats["expected_volume"] else 0
+        ratio = (
+            stats["volume"] / stats["expected_volume"]
+            if stats["expected_volume"]
+            else 0
+        )
         print(f"\n  volume ratio: {ratio:.4f}  (1.0 = correct solid, ~0 = cage)")
     except Exception as exc:
         print(f"  FAILED: {type(exc).__name__}: {exc}")

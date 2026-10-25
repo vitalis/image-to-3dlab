@@ -6,6 +6,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "classify_trellis_input.py"
@@ -66,3 +67,27 @@ def test_classifier_uses_checkpoint_fast_tokenizer():
 def test_high_risk_threshold_is_conservative():
     assert advisor.HIGH_RISK_THRESHOLD == 0.85
     assert advisor.LOW_RISK_THRESHOLD == 0.35
+
+
+def test_the_default_does_not_download_tinyclip(tmp_path, monkeypatch):
+    import sys
+    import types
+
+    seen = []
+
+    class Refuse:
+        @staticmethod
+        def from_pretrained(*_args, **kwargs):
+            seen.append(kwargs)
+            raise OSError("not on disk")
+
+    fake = types.ModuleType("transformers")
+    fake.CLIPProcessor = Refuse
+    fake.CLIPModel = Refuse
+    monkeypatch.setitem(sys.modules, "torch", types.ModuleType("torch"))
+    monkeypatch.setitem(sys.modules, "transformers", fake)
+    image = tmp_path / "picture.png"
+    Image.new("RGB", (8, 8), (255, 0, 0)).save(image)
+    with pytest.raises(SystemExit, match=r"~94 MB"):
+        advisor.classify(image)
+    assert seen and all(call.get("local_files_only") is True for call in seen)

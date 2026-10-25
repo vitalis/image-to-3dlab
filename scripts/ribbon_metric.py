@@ -40,7 +40,9 @@ def boundary_stats(faces: np.ndarray) -> tuple[float, float]:
     edges = np.sort(
         np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]]), axis=1
     )
-    _, inverse, counts = np.unique(edges, axis=0, return_inverse=True, return_counts=True)
+    _, inverse, counts = np.unique(
+        edges, axis=0, return_inverse=True, return_counts=True
+    )
     on_boundary = counts == 1
     # edges were built face-major, three per face, so this reshape re-groups them
     per_face = on_boundary[inverse].reshape(3, -1).T
@@ -68,7 +70,8 @@ def measure(path: Path) -> dict:
     mesh = trimesh.Trimesh(
         vertices=np.asarray(geom.vertices), faces=np.asarray(geom.faces), process=False
     )
-    mesh.merge_vertices()
+    # UV seams are not tears. Merge through them, or a textured closed mesh fails.
+    mesh.merge_vertices(merge_tex=True, merge_norm=True)
     pct_edges, pct_faces = boundary_stats(np.asarray(mesh.faces))
     return {
         "faces": len(mesh.faces),
@@ -81,8 +84,12 @@ def measure(path: Path) -> dict:
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("meshes", type=Path, nargs="+")
-    p.add_argument("--gate", type=float, default=10.0,
-                   help="percent of faces touching a boundary above which to refuse (default: 10)")
+    p.add_argument(
+        "--gate",
+        type=float,
+        default=10.0,
+        help="percent of faces touching a boundary above which to refuse (default: 10)",
+    )
     args = p.parse_args()
 
     worst = 0.0
@@ -90,9 +97,11 @@ def main() -> int:
         r = measure(path)
         worst = max(worst, r["pct_faces_touching_boundary"])
         print(f"{path.name}")
-        print(f"   faces {r['faces']:>9,}   boundary edges {r['pct_boundary_edges']:5.1f}%"
-              f"   FACES TOUCHING BOUNDARY {r['pct_faces_touching_boundary']:5.1f}%"
-              f"   {verdict(r['pct_faces_touching_boundary'], args.gate)}")
+        print(
+            f"   faces {r['faces']:>9,}   boundary edges {r['pct_boundary_edges']:5.1f}%"
+            f"   FACES TOUCHING BOUNDARY {r['pct_faces_touching_boundary']:5.1f}%"
+            f"   {verdict(r['pct_faces_touching_boundary'], args.gate)}"
+        )
     return 0 if worst < args.gate else 1
 
 

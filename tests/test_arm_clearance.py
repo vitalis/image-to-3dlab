@@ -17,8 +17,14 @@ V = np.array
 def _proxy(chest_radius=0.15):
     return ac.Proxy(
         body={"chest": chest_radius, "head": 0.1},
-        arms={"Left": {"upper": "uarm", "fore": "farm", "hand": "hand",
-                       "radius": {"uarm": 0.04, "farm": 0.035, "hand": 0.03}}},
+        arms={
+            "Left": {
+                "upper": "uarm",
+                "fore": "farm",
+                "hand": "hand",
+                "radius": {"uarm": 0.04, "farm": 0.035, "hand": 0.03},
+            }
+        },
         side_shoulder={"Left": None, "Right": None},
         margin=0.01,
     )
@@ -53,6 +59,13 @@ def _swing_segments(seg, proxy, swing):
     return moved
 
 
+def test_opposite_directions_stay_a_real_half_turn():
+    turned = ac._rotation_between(np.array([1.0, 0.0, 0.0]), np.array([-1.0, 0.0, 0.0]))
+    assert np.isfinite(turned).all()
+    landed = turned @ np.array([1.0, 0.0, 0.0])
+    assert landed == pytest.approx([-1.0, 0.0, 0.0])
+
+
 def test_point_segment_clamps_to_the_ends():
     d, c = ac.point_segment(V([2.0, 1, 0]), V([0.0, 0, 0]), V([1.0, 0, 0]))
     assert np.allclose(c, [1, 0, 0]) and d == pytest.approx(np.sqrt(2))
@@ -61,7 +74,9 @@ def test_point_segment_clamps_to_the_ends():
 def test_a_forearm_through_the_chest_is_swung_clear():
     """The knight's punch: the forearm cuts across the chest plate."""
     proxy = _proxy()
-    seg = _segments(elbow=[0.25, 0.15, 1.3], wrist=[0.02, 0.1, 1.3], tip=[-0.05, 0.12, 1.3])
+    seg = _segments(
+        elbow=[0.25, 0.15, 1.3], wrist=[0.02, 0.1, 1.3], tip=[-0.05, 0.12, 1.3]
+    )
     assert _clearance(seg, proxy) < 0
     swing = ac.arm_swing(seg, proxy, "Left")
     assert _clearance(_swing_segments(seg, proxy, swing), proxy) > -1e-3
@@ -69,7 +84,9 @@ def test_a_forearm_through_the_chest_is_swung_clear():
 
 def test_a_hand_in_the_face_is_swung_clear():
     proxy = _proxy()
-    seg = _segments(elbow=[0.3, 0.15, 1.45], wrist=[0.08, 0.12, 1.62], tip=[0.02, 0.1, 1.66])
+    seg = _segments(
+        elbow=[0.3, 0.15, 1.45], wrist=[0.08, 0.12, 1.62], tip=[0.02, 0.1, 1.66]
+    )
     assert _clearance(seg, proxy) < 0
     swing = ac.arm_swing(seg, proxy, "Left")
     assert _clearance(_swing_segments(seg, proxy, swing), proxy) > -1e-3
@@ -86,15 +103,30 @@ def test_skin_radii_ignore_a_few_stray_vertices():
     angle = rng.uniform(0, 2 * np.pi, 200)
     ring = np.c_[0.1 * np.cos(angle), 0.1 * np.sin(angle), rng.uniform(0, 1, 200)]
     points = np.r_[ring, [[2.0, 0, 0.5]]]  # one stray vertex far out
-    radii = ac.skin_radii(points, ["bone"] * len(points), {"bone": (V([0.0, 0, 0]), V([0.0, 0, 1]))},
-                          ["bone"], 85)
+    radii = ac.skin_radii(
+        points,
+        ["bone"] * len(points),
+        {"bone": (V([0.0, 0, 0]), V([0.0, 0, 1]))},
+        ["bone"],
+        85,
+    )
     assert radii["bone"] == pytest.approx(0.1, abs=1e-6)
 
 
 def test_build_proxy_finds_body_and_arm_bones_by_role():
-    mapping = {"b0": "Hips", "b1": "Chest", "b2": "Head", "b3": "LeftArm", "b4": "LeftForeArm",
-               "b5": "LeftHand", "b6": "LeftShoulder", "b7": "LeftLeg"}
-    segments = {b: (V([0.0, 0, i]), V([0.0, 0, i + 0.5])) for i, b in enumerate(mapping)}
+    mapping = {
+        "b0": "Hips",
+        "b1": "Chest",
+        "b2": "Head",
+        "b3": "LeftArm",
+        "b4": "LeftForeArm",
+        "b5": "LeftHand",
+        "b6": "LeftShoulder",
+        "b7": "LeftLeg",
+    }
+    segments = {
+        b: (V([0.0, 0, i]), V([0.0, 0, i + 0.5])) for i, b in enumerate(mapping)
+    }
     points = np.array([[0.05, 0, i + 0.2] for i in range(len(mapping))])
     proxy = ac.build_proxy(mapping, points, list(mapping), segments, height=1.8)
     # torso, neck, head and shoulders only: hanging hands rest beside the hips and thighs,
@@ -131,9 +163,15 @@ def test_hair_or_a_helmet_does_not_widen_the_head_past_the_torso():
     """Spiky hair made a fighter's head 1.5x a plain head, so guard fists by the chin were
     flung out beside it, hands up as if held at gunpoint (2026-10-07). The head counts as
     no wider than the torso (plus a little); a plain head is left alone."""
-    capped = ac.limit_head({"spine": 0.08, "chest": 0.083, "head": 0.137, "neck": 0.05},
-                           head_bones={"head"}, torso_bones={"spine", "chest"})
+    capped = ac.limit_head(
+        {"spine": 0.08, "chest": 0.083, "head": 0.137, "neck": 0.05},
+        head_bones={"head"},
+        torso_bones={"spine", "chest"},
+    )
     assert capped["head"] == pytest.approx(0.083 * ac.HEAD_TO_TORSO)
     assert capped["chest"] == 0.083 and capped["neck"] == 0.05
     plain = {"spine": 0.075, "chest": 0.089, "head": 0.09}
-    assert ac.limit_head(plain, head_bones={"head"}, torso_bones={"spine", "chest"}) == plain
+    assert (
+        ac.limit_head(plain, head_bones={"head"}, torso_bones={"spine", "chest"})
+        == plain
+    )

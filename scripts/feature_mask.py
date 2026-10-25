@@ -37,7 +37,9 @@ def select_faces(
     if radius <= 0:
         raise ValueError("radius must be positive")
     centroids = vertices[faces].mean(axis=1)
-    inside = np.linalg.norm(centroids - np.asarray(centre, dtype=float), axis=1) <= radius
+    inside = (
+        np.linalg.norm(centroids - np.asarray(centre, dtype=float), axis=1) <= radius
+    )
     if normals is not None and facing is not None:
         inside &= normals @ np.asarray(facing, dtype=float) > 0
     return inside
@@ -61,34 +63,66 @@ def rasterise_uv(
         ]
         draw.polygon(pts, fill=255)
     if dilate > 0:
-        arr = np.asarray(img)
-        grown = arr.copy()
-        for shift in range(1, dilate + 1):
-            for axis in (0, 1):
-                grown = np.maximum(grown, np.roll(arr, shift, axis=axis))
-                grown = np.maximum(grown, np.roll(arr, -shift, axis=axis))
-        img = Image.fromarray(grown, mode="L")
+        img = Image.fromarray(grow_mask(np.asarray(img), dilate), mode="L")
     return img
+
+
+def grow_mask(arr: np.ndarray, dilate: int) -> np.ndarray:
+    """Widen a mask by `dilate` texels without wrapping onto the opposite edge.
+
+    `np.roll` copies a texel on the left edge onto the right edge. Padding with
+    zeros and cropping does not.
+    """
+    if dilate <= 0:
+        return arr
+    grown = arr.copy()
+    for shift in range(1, dilate + 1):
+        for axis in (0, 1):
+            for sign in (shift, -shift):
+                moved = np.zeros_like(arr)
+                if axis == 0:
+                    if sign > 0:
+                        moved[sign:, :] = arr[:-sign, :]
+                    else:
+                        moved[:sign, :] = arr[-sign:, :]
+                else:
+                    if sign > 0:
+                        moved[:, sign:] = arr[:, :-sign]
+                    else:
+                        moved[:, :sign] = arr[:, -sign:]
+                grown = np.maximum(grown, moved)
+    return grown
 
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("asset", type=Path)
     p.add_argument("output", type=Path, help="mask PNG to write")
-    p.add_argument("--centre", type=float, nargs=3, required=True,
-                   help="feature centre in mesh-local coordinates")
+    p.add_argument(
+        "--centre",
+        type=float,
+        nargs=3,
+        required=True,
+        help="feature centre in mesh-local coordinates",
+    )
     p.add_argument("--radius", type=float, required=True)
     p.add_argument("--size", type=int, default=2048)
     p.add_argument("--dilate", type=int, default=2)
-    p.add_argument("--front-only", action="store_true",
-                   help="keep only faces whose normal points along --facing")
+    p.add_argument(
+        "--front-only",
+        action="store_true",
+        help="keep only faces whose normal points along --facing",
+    )
     p.add_argument("--facing", type=float, nargs=3, default=(0.0, -1.0, 0.0))
     args = p.parse_args()
 
     scene = trimesh.load(args.asset, process=False)
     mesh = next(iter(scene.geometry.values()))
     selected = select_faces(
-        mesh.vertices, mesh.faces, np.array(args.centre), args.radius,
+        mesh.vertices,
+        mesh.faces,
+        np.array(args.centre),
+        args.radius,
         mesh.face_normals if args.front_only else None,
         args.facing if args.front_only else None,
     )
@@ -97,8 +131,10 @@ def main() -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     mask.save(args.output)
     covered = float(np.asarray(mask).mean() / 255.0)
-    print(f"{int(selected.sum())} of {len(mesh.faces)} faces -> "
-          f"{covered * 100:.3f}% of the atlas; wrote {args.output}")
+    print(
+        f"{int(selected.sum())} of {len(mesh.faces)} faces -> "
+        f"{covered * 100:.3f}% of the atlas; wrote {args.output}"
+    )
     return 0
 
 

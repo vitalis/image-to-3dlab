@@ -52,10 +52,21 @@ LOCAL_WEIGHT_ROOTS = (
 # Searched for a cache entry's repo id. Deliberately runtime code only: `tests/` asserts
 # string literals and `docs/` discusses candidates we evaluated and rejected, so grepping
 # either reports a 43 GB dead cache as "referenced".
-SOURCE_PATHS = ("scripts", "viewer", "hunyuan_mlx", "image_to_3dlab", "workflows",
-                "pipeline.py")
+SOURCE_PATHS = (
+    "scripts",
+    "viewer",
+    "hunyuan_mlx",
+    "image_to_3dlab",
+    "workflows",
+    "pipeline.py",
+)
 
 RULES = ("ckpt", "cached", "unreferenced")
+
+
+# Name and size are enough for a multi-gigabyte weight. Anything smaller is hashed
+# before it is deleted, so a same-size stand-in is not treated as the same file.
+HASH_BELOW = 300 * 1024 * 1024
 
 
 @dataclass
@@ -65,6 +76,7 @@ class Candidate:
     bytes_: int
     reason: str
     deletable: bool = True
+    files: tuple = ()
 
 
 def directory_size(path: Path) -> int:
@@ -95,10 +107,14 @@ def find_superseded_checkpoints(roots=LOCAL_WEIGHT_ROOTS) -> list[Candidate]:
         for ckpt in root.rglob("*.ckpt"):
             converted = ckpt.with_suffix(".safetensors")
             if converted.is_file() and not ckpt.is_symlink():
-                found.append(Candidate(
-                    "ckpt", ckpt, directory_size(ckpt),
-                    f"converted already: {converted.name} ({human_bytes(directory_size(converted))})",
-                ))
+                found.append(
+                    Candidate(
+                        "ckpt",
+                        ckpt,
+                        directory_size(ckpt),
+                        f"converted already: {converted.name} ({human_bytes(directory_size(converted))})",
+                    )
+                )
     return found
 
 
@@ -129,7 +145,9 @@ def cache_repos(hub: Path = HF_HUB_DIR) -> list[tuple[str, Path]]:
     return out
 
 
-def find_cached_duplicates(hub: Path = HF_HUB_DIR, roots=LOCAL_WEIGHT_ROOTS) -> list[Candidate]:
+def find_cached_duplicates(
+    hub: Path = HF_HUB_DIR, roots=LOCAL_WEIGHT_ROOTS
+) -> list[Candidate]:
     """Cache entries whose payload also exists as real files in the repo.
 
     Matched on name and exact byte size rather than a hash: these are multi-gigabyte
@@ -152,7 +170,13 @@ def find_cached_duplicates(hub: Path = HF_HUB_DIR, roots=LOCAL_WEIGHT_ROOTS) -> 
         # By bytes, not by file count. A snapshot is mostly small source files wrapped
         # around a couple of huge weights, so "half the files" never fires on the very
         # entries worth reclaiming.
-        matched_bytes = sum(_resolved_size(f) for f in matched)
+        confirmed = []
+        for item in matched:
+            blob = item.resolve() if item.is_symlink() else item
+            local_path = local[(item.name, _resolved_size(item))]
+            if _same_payload(blob, local_path):
+                confirmed.append((blob, item.name))
+        matched_bytes = sum(_resolved_size(blob) for blob, _name in confirmed)
         total = directory_size(blobs) if blobs.is_dir() else directory_size(path)
         # Surface anything meaningfully duplicated, but see `complete` below before
         # offering to delete. A conversion changes the file name (`.bin` becomes
@@ -160,18 +184,22 @@ def find_cached_duplicates(hub: Path = HF_HUB_DIR, roots=LOCAL_WEIGHT_ROOTS) -> 
         # threshold hides the very entries worth looking at.
         if total <= 0 or matched_bytes < GB:
             continue
-        biggest = max(matched, key=_resolved_size)
-        example = _short(local[(biggest.name, _resolved_size(biggest))])
-        # Only offer to delete when essentially everything is duplicated. A partial match
-        # means the cache still holds bytes that exist nowhere else.
-        complete = matched_bytes >= total * 0.9
-        found.append(Candidate(
-            "cached", path, total,
-            f"{human_bytes(matched_bytes)} of {human_bytes(total)} also real in the repo"
-            f" ({len(matched)} files, e.g. {example})"
-            + ("" if complete else "; PARTIAL, review before deleting"),
-            deletable=complete,
-        ))
+        biggest, biggest_name = max(confirmed, key=lambda pair: _resolved_size(pair[0]))
+        example = _short(local[(biggest_name, _resolved_size(biggest))])
+        # Every byte in the cache copy has to match. 90% still leaves unique weights.
+        complete = matched_bytes >= total
+        found.append(
+            Candidate(
+                "cached",
+                path,
+                total,
+                f"{human_bytes(matched_bytes)} of {human_bytes(total)} also real in the repo"
+                f" ({len(confirmed)} files, e.g. {example})"
+                + ("" if complete else "; PARTIAL, review before deleting"),
+                deletable=complete,
+                files=tuple(blob for blob, _name in confirmed) if complete else (),
+            )
+        )
     return found
 
 
@@ -181,11 +209,15 @@ def find_unreferenced(hub: Path = HF_HUB_DIR, repo: Path = REPO) -> list[Candida
     for repo_id, path in cache_repos(hub):
         if _mentioned(repo_id, repo):
             continue
-        found.append(Candidate(
-            "unreferenced", path, directory_size(path),
-            f"'{repo_id}' appears in no tracked source file",
-            deletable=False,
-        ))
+        found.append(
+            Candidate(
+                "unreferenced",
+                path,
+                directory_size(path),
+                f"'{repo_id}' appears in no tracked source file",
+                deletable=False,
+            )
+        )
     return found
 
 
@@ -195,6 +227,30 @@ def _short(path: Path) -> str:
         return str(path.relative_to(REPO))
     except ValueError:
         return str(path)
+
+
+def _same_payload(cache_file: Path, local_file: Path) -> bool:
+    """Name and size already matched. Hash the small ones before deleting them."""
+    import hashlib
+
+    try:
+        size = cache_file.stat().st_size
+    except OSError:
+        return False
+    if size >= HASH_BELOW:
+        return True
+
+    def digest(path: Path) -> bytes:
+        hasher = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                hasher.update(chunk)
+        return hasher.digest()
+
+    try:
+        return digest(cache_file) == digest(local_file)
+    except OSError:
+        return False
 
 
 def _resolved_size(path: Path) -> int:
@@ -208,7 +264,10 @@ def _mentioned(needle: str, repo: Path) -> bool:
     try:
         result = subprocess.run(
             ["git", "grep", "-lF", needle, "--", *SOURCE_PATHS],
-            cwd=repo, capture_output=True, text=True, check=False,
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=False,
         )
     except OSError:
         return True  # No git: assume referenced rather than propose a deletion.
@@ -251,8 +310,10 @@ def report(found: list[Candidate], apply: bool) -> int:
     print(f"\nreclaimable: {human_bytes(reclaimable)}")
     if review:
         print(f"needs review (not deleted): {human_bytes(review)}")
-    print("note: everything under the Hugging Face cache is re-downloadable, so the cost "
-          "of deleting one is a re-fetch, not a loss. Files under the repo are not.")
+    print(
+        "note: everything under the Hugging Face cache is re-downloadable, so the cost "
+        "of deleting one is a re-fetch, not a loss. Files under the repo are not."
+    )
 
     if not apply:
         print("\ndry run. re-run with --apply to delete the reclaimable entries.")
@@ -262,11 +323,13 @@ def report(found: list[Candidate], apply: bool) -> int:
     for c in found:
         if not c.deletable:
             continue
+        targets = c.files or (c.path,)
         try:
-            if c.path.is_dir():
-                shutil.rmtree(c.path)
-            else:
-                c.path.unlink()
+            for path in targets:
+                if path.is_dir():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
             freed += c.bytes_
             print(f"removed {c.path}")
         except OSError as exc:
@@ -277,12 +340,24 @@ def report(found: list[Candidate], apply: bool) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--apply", action="store_true",
-                        help="delete the reclaimable entries; without it this only reports")
-    parser.add_argument("--rule", action="append", choices=RULES, dest="rules",
-                        help="run one rule only; repeatable (default: all)")
-    parser.add_argument("--hf-cache", type=Path, default=HF_HUB_DIR,
-                        help="Hugging Face hub cache to audit")
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="delete the reclaimable entries; without it this only reports",
+    )
+    parser.add_argument(
+        "--rule",
+        action="append",
+        choices=RULES,
+        dest="rules",
+        help="run one rule only; repeatable (default: all)",
+    )
+    parser.add_argument(
+        "--hf-cache",
+        type=Path,
+        default=HF_HUB_DIR,
+        help="Hugging Face hub cache to audit",
+    )
     args = parser.parse_args()
     rules = tuple(args.rules) if args.rules else RULES
     return report(collect(rules, args.hf_cache), args.apply)

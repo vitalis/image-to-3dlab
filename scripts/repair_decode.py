@@ -86,7 +86,6 @@ def repair(vertices, faces):
 
     So orientation has to be decided per component, by that component's own signed volume.
     """
-    import numpy as np
     import trimesh
 
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
@@ -95,18 +94,29 @@ def repair(vertices, faces):
 
     # Step 1: make each component internally consistent so a component-wide flip is meaningful.
     trimesh.repair.fix_winding(mesh)
+    # Step 2: flip whole components that enclose negative volume, open ones included.
+    flip_inward_components(mesh)
+    return mesh, before, summarise(mesh)
 
-    # Step 2: flip whole components that enclose negative volume.
+
+def flip_inward_components(mesh) -> int:
+    """Flip each component whose own signed volume is negative.
+
+    An open piece is included. A global volume test skips it, and the positives
+    and negatives of many pieces cancel. Returns how many faces flipped.
+    """
+    import numpy as np
+
     labels, count = component_labels(mesh)
     verts, faces_arr = mesh.vertices, mesh.faces
     a, b, c = verts[faces_arr[:, 0]], verts[faces_arr[:, 1]], verts[faces_arr[:, 2]]
     per_face = np.einsum("ij,ij->i", a, np.cross(b, c)) / 6.0
     per_component = np.bincount(labels, weights=per_face, minlength=count)
-
     flip = per_component[labels] < 0
-    if flip.any():
-        mesh.faces[flip] = mesh.faces[flip][:, ::-1]
-    return mesh, before, summarise(mesh)
+    count_flipped = int(flip.sum())
+    if count_flipped:
+        mesh.faces[flip] = np.ascontiguousarray(mesh.faces[flip][:, ::-1])
+    return count_flipped
 
 
 def main() -> int:

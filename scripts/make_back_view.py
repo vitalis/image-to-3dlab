@@ -34,11 +34,19 @@ DEFAULT_SEED = 3
 VISION_GB = 0.75
 
 
+def ensure_matte() -> str:
+    """Stop before rembg when the remover file is not already on disk."""
+    return matte.refuse_missing_model()
+
+
 def reference_for(front: Path, destination: Path) -> Path:
     """Write the front's cut-out on plain grey, cutting it out first unless it already is."""
     with Image.open(front) as opened:
-        cut = opened.convert("RGBA") if matte.is_matted(opened) else matte.cut_out(
-            opened.convert("RGB"))[0]
+        if matte.is_matted(opened):
+            cut = opened.convert("RGBA")
+        else:
+            ensure_matte()
+            cut = matte.cut_out(opened.convert("RGB"))[0]
     back_view.reference_on_grey(cut).save(destination)
     return destination
 
@@ -46,16 +54,31 @@ def reference_for(front: Path, destination: Path) -> Path:
 def missing_vision_message() -> str:
     directory, filename = image_api.VISION_FILE
     repo = directory.removeprefix("models--").replace("--", "/")
-    return (f"The back picture needs Qwen's vision projector, {filename} ({VISION_GB} GB),\n"
-            f"from {repo}. Fetch it with:\n"
-            f"    python scripts/bootstrap_qwen_image.py --vision")
+    return (
+        f"The back picture needs Qwen's vision projector, {filename} ({VISION_GB} GB),\n"
+        f"from {repo}. Fetch it with:\n"
+        f"    python scripts/bootstrap_qwen_image.py --vision"
+    )
 
 
-def command_for(reference: Path, back: Path, seed: int, weights: dict[str, Path],
-                vision: Path, binary: Path = image_api.BINARY) -> list[str]:
+def command_for(
+    reference: Path,
+    back: Path,
+    seed: int,
+    weights: dict[str, Path],
+    vision: Path,
+    binary: Path = image_api.BINARY,
+) -> list[str]:
     settings = image_api.clean_settings({"seed": seed})
-    return image_api.build_command(back_view.BACK_PROMPT, settings, back, weights,
-                                   binary=binary, reference=reference, vision=vision)
+    return image_api.build_command(
+        back_view.BACK_PROMPT,
+        settings,
+        back,
+        weights,
+        binary=binary,
+        reference=reference,
+        vision=vision,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -72,16 +95,24 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     weights = image_api.resolve_weights()
     args.back.parent.mkdir(parents=True, exist_ok=True)
-    reference = reference_for(args.front, args.back.with_name(f"{args.back.stem}__reference.png"))
+    reference = reference_for(
+        args.front, args.back.with_name(f"{args.back.stem}__reference.png")
+    )
     command = command_for(reference, args.back, args.seed, weights, vision)
     started = time.time()
-    result = subprocess.run(command, capture_output=True, text=True, cwd=str(REPO), check=False)
+    result = subprocess.run(
+        command, capture_output=True, text=True, cwd=str(REPO), check=False
+    )
     if result.returncode or not args.back.exists():
         print((result.stdout + result.stderr)[-1500:])
         return 1
     seconds = time.time() - started
-    record = image_api.provenance(back_view.BACK_PROMPT, image_api.clean_settings(
-        {"seed": args.seed}), seconds, args.back)
+    record = image_api.provenance(
+        back_view.BACK_PROMPT,
+        image_api.clean_settings({"seed": args.seed}),
+        seconds,
+        args.back,
+    )
     record["reference"] = {"front": str(args.front), "mode": "edit (back view)"}
     args.back.with_suffix(".provenance.json").write_text(json.dumps(record, indent=2))
     print(f"[back-view] {seconds:.0f}s -> {args.back}", flush=True)
