@@ -25,21 +25,47 @@ HISTORY_NAME = ".activity.jsonl"
 TERMINAL = {"done", "error", "cancelled"}
 STALL_SECONDS = 180
 STEPS = ("picture", "back", "model", "finished", "split", "rigged", "animated")
-LABELS = {"picture": "Picture", "back": "Back picture", "model": "3D model", "finished": "Finish",
-          "split": "Split into props", "rigged": "Rig", "animated": "Animate", "skin": "Skin"}
-KIND = {"picture": "image", "back": "image", "model": "generate", "finished": "finish", "split": "props",
-        "rigged": "animate", "animated": "animate"}
+LABELS = {
+    "picture": "Picture",
+    "back": "Back picture",
+    "model": "3D model",
+    "finished": "Finish",
+    "split": "Split into props",
+    "rigged": "Rig",
+    "animated": "Animate",
+    "skin": "Skin",
+}
+KIND = {
+    "picture": "image",
+    "back": "image",
+    "model": "generate",
+    "finished": "finish",
+    "split": "props",
+    "rigged": "animate",
+    "animated": "animate",
+}
 # The Finish choices a plan may carry (the same ones the Steps panel's Finish sends).
 MOVE_KEYS = ("speed", "arm_spread")
 # Every Detail choice the studio and agents offer must be able to pass (mcp_server.FINISH_DETAILS):
 # "high" and "hero" were dropped here, so an agent asking for them got a plain Finish.
-FINISH_KEYS = ("faces", "keep_mesh", "skip_photo", "skip_edge_fade", "skip_nudge", "texture_size",
-               "high_detail", "hero")
+FINISH_KEYS = (
+    "faces",
+    "keep_mesh",
+    "skip_photo",
+    "skip_edge_fade",
+    "skip_nudge",
+    "texture_size",
+    "high_detail",
+    "hero",
+)
 # Only Pixal3D builds from a front and a back picture.
 FRONT_BACK_ENGINES = {"pixal3d"}
 # Steps that run headless Blender; a plan with one is checked for Blender before anything runs.
 NEEDS_BLENDER = {"finished", "split"}
-NOISE = re.compile(r"\[(VERBOSE|DEBUG)\]|ggml_|kernel_|compile_pipeline|th_max|^\s*[|\-=]*\s*$|^\s*0x[0-9a-f]+", re.IGNORECASE)
+NOISE = re.compile(
+    r"\[(VERBOSE|DEBUG)\]|ggml_|kernel_|compile_pipeline|th_max|^\s*[|\-=]*\s*$|^\s*0x[0-9a-f]+",
+    re.IGNORECASE,
+)
 
 # request(method, path, body, content_type, headers=None) -> (http status, parsed JSON)
 Request = Callable[..., tuple[int, dict[str, Any]]]
@@ -48,7 +74,9 @@ Request = Callable[..., tuple[int, dict[str, Any]]]
 def readable_log(text: str, count: int = 4) -> str:
     """The last `count` log lines worth showing a person (engine chatter dropped)."""
     lines = [line.rstrip() for line in str(text or "").split("\n")]
-    return "\n".join([line for line in lines if line and not NOISE.search(line)][-count:])
+    return "\n".join(
+        [line for line in lines if line and not NOISE.search(line)][-count:]
+    )
 
 
 def plain_error(message: str) -> str:
@@ -59,11 +87,26 @@ def plain_error(message: str) -> str:
     if re.search(r"Install Blender|blender\.org", text):
         return text
     rules = [
-        (r"memory|MemoryError|out of memory|Killed", "This Mac ran out of memory. Close other big apps and try again, or pick a lower detail or texture size."),
-        (r"not installed|is not installed/ready|needs_setup", "This engine is not installed yet. Install it from Setup, then try again."),
-        (r"is running; wait|wait for it to finish|already being", "Another job is running. This one can start when it finishes."),
-        (r"humanoid|map.*SOMA|could not map", "This doesn't look like a humanoid, so the preset moves can't fit it. You can still download the rig and animate it in Blender."),
-        (r"Blender", 'Blender stopped with an error. The log has the details; "Copy details" makes it easy to report.'),
+        (
+            r"memory|MemoryError|out of memory|Killed",
+            "This Mac ran out of memory. Close other big apps and try again, or pick a lower detail or texture size.",
+        ),
+        (
+            r"not installed|is not installed/ready|needs_setup",
+            "This engine is not installed yet. Install it from Setup, then try again.",
+        ),
+        (
+            r"is running; wait|wait for it to finish|already being",
+            "Another job is running. This one can start when it finishes.",
+        ),
+        (
+            r"humanoid|map.*SOMA|could not map",
+            "This doesn't look like a humanoid, so the preset moves can't fit it. You can still download the rig and animate it in Blender.",
+        ),
+        (
+            r"Blender",
+            'Blender stopped with an error. The log has the details; "Copy details" makes it easy to report.',
+        ),
     ]
     for pattern, words in rules:
         if re.search(pattern, text, re.IGNORECASE):
@@ -71,16 +114,24 @@ def plain_error(message: str) -> str:
     return text or "The step stopped without saying why. The log has the details."
 
 
-def multipart(fields: dict[str, str], files: dict[str, tuple[str, bytes]]) -> tuple[bytes, str]:
+def multipart(
+    fields: dict[str, str], files: dict[str, tuple[str, bytes]]
+) -> tuple[bytes, str]:
     """A multipart/form-data body, as a browser's FormData would send it."""
     boundary = f"----assetfurnace{uuid.uuid4().hex}"
     parts: list[bytes] = []
     for name, value in fields.items():
-        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
+        parts.append(
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode()
+        )
     for name, (filename, data) in files.items():
         safe = filename.replace('"', "")
-        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"; filename="{safe}"\r\n'
-                     f"Content-Type: application/octet-stream\r\n\r\n".encode() + data + b"\r\n")
+        parts.append(
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"; filename="{safe}"\r\n'
+            f"Content-Type: application/octet-stream\r\n\r\n".encode()
+            + data
+            + b"\r\n"
+        )
     parts.append(f"--{boundary}--\r\n".encode())
     return b"".join(parts), f"multipart/form-data; boundary={boundary}"
 
@@ -95,14 +146,24 @@ class Chain:
     prompt: str | None = None
     engine: str | None = None
     first_move: str | None = None
-    picture_settings: dict[str, Any] = field(default_factory=dict)  # size, steps, seed (the image job checks them)
-    model_seed: int | None = None                                    # a fresh 3D try each time; None = engine default
-    keep_everything: bool = False                                    # the 3D step keeps its textures, meshes, caches
-    finish_settings: dict[str, Any] = field(default_factory=dict)    # detail and Pixel Match (the finish job checks them)
-    move_settings: dict[str, Any] = field(default_factory=dict)      # speed, arm_spread (the animate job checks them)
-    made: dict[str, str | None] = field(default_factory=dict)       # picture/model/finished/rigged paths
-    upload: tuple[str, bytes] | None = None                          # (file name, bytes) when the user gave a file
-    client: str | None = None                                        # "agent" when the MCP server asked for it
+    picture_settings: dict[str, Any] = field(
+        default_factory=dict
+    )  # size, steps, seed (the image job checks them)
+    model_seed: int | None = None  # a fresh 3D try each time; None = engine default
+    keep_everything: bool = False  # the 3D step keeps its textures, meshes, caches
+    finish_settings: dict[str, Any] = field(
+        default_factory=dict
+    )  # detail and Pixel Match (the finish job checks them)
+    move_settings: dict[str, Any] = field(
+        default_factory=dict
+    )  # speed, arm_spread (the animate job checks them)
+    made: dict[str, str | None] = field(
+        default_factory=dict
+    )  # picture/model/finished/rigged paths
+    upload: tuple[str, bytes] | None = (
+        None  # (file name, bytes) when the user gave a file
+    )
+    client: str | None = None  # "agent" when the MCP server asked for it
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     status: str = "running"
     current: str | None = None
@@ -116,28 +177,50 @@ class Chain:
     step_started: float = field(default_factory=time.time)
     last_change: float = field(default_factory=time.time)
     cancel_requested: bool = False
-    job: tuple[str, str] | None = None                               # (kind, job id) of the running step
-    note: str = ""                                                   # why a run ended early, calmly
-    step_seconds: dict[str, float] = field(default_factory=dict)      # how long each finished step took
+    job: tuple[str, str] | None = None  # (kind, job id) of the running step
+    note: str = ""  # why a run ended early, calmly
+    step_seconds: dict[str, float] = field(
+        default_factory=dict
+    )  # how long each finished step took
 
     def to_dict(self, now: float | None = None) -> dict[str, Any]:
         now = time.time() if now is None else now
         return {
-            "id": self.id, "title": self.title, "want": self.want, "steps": self.steps, "status": self.status,
-            "current": self.current, "done": self.done, "percent": self.percent, "message": self.message,
-            "log": self.log, "full_log": self.full_log[-4000:], "error": self.error,
-            "made": {k: v for k, v in self.made.items() if v}, "first_move": self.first_move, "note": self.note,
+            "id": self.id,
+            "title": self.title,
+            "want": self.want,
+            "steps": self.steps,
+            "status": self.status,
+            "current": self.current,
+            "done": self.done,
+            "percent": self.percent,
+            "message": self.message,
+            "log": self.log,
+            "full_log": self.full_log[-4000:],
+            "error": self.error,
+            "made": {k: v for k, v in self.made.items() if v},
+            "first_move": self.first_move,
+            "note": self.note,
             "step_seconds": dict(self.step_seconds),
-            "elapsed": round(now - self.started, 1), "step_elapsed": round(now - self.step_started, 1),
-            "stalled": self.status == "running" and now - self.last_change > STALL_SECONDS,
+            "elapsed": round(now - self.started, 1),
+            "step_elapsed": round(now - self.step_started, 1),
+            "stalled": self.status == "running"
+            and now - self.last_change > STALL_SECONDS,
         }
 
 
 class ChainRunner:
     """One plan at a time (the jobs underneath refuse to overlap anyway)."""
 
-    def __init__(self, output: Path, request: Request | None = None, *, poll: float = 1.2,
-                 now: Callable[[], float] = time.time, sleep: Callable[[float], None] = time.sleep):
+    def __init__(
+        self,
+        output: Path,
+        request: Request | None = None,
+        *,
+        poll: float = 1.2,
+        now: Callable[[], float] = time.time,
+        sleep: Callable[[float], None] = time.sleep,
+    ):
         self.output = output
         self.request = request
         self.poll, self.now, self.sleep = poll, now, sleep
@@ -151,13 +234,20 @@ class ChainRunner:
     def submit(self, chain: Chain, *, background: bool = True) -> Chain:
         with self.lock:
             if self.running() is not None:
-                raise RuntimeError("something is already being made; wait for it to finish")
+                raise RuntimeError(
+                    "something is already being made; wait for it to finish"
+                )
             bad = [s for s in chain.steps if s not in STEPS]
             if bad or not chain.steps:
                 raise ValueError(f"unknown steps: {bad or 'none'}")
             self.chains[chain.id] = chain
         if background:
-            threading.Thread(target=self.run, args=(chain,), daemon=True, name=f"chain-{chain.id[:8]}").start()
+            threading.Thread(
+                target=self.run,
+                args=(chain,),
+                daemon=True,
+                name=f"chain-{chain.id[:8]}",
+            ).start()
         else:
             self.run(chain)
         return chain
@@ -176,7 +266,9 @@ class ChainRunner:
         return True
 
     def recent(self, limit: int = 10) -> list[Chain]:
-        return sorted(self.chains.values(), key=lambda c: c.started, reverse=True)[:limit]
+        return sorted(self.chains.values(), key=lambda c: c.started, reverse=True)[
+            :limit
+        ]
 
     # ------------------------------------------------------------------ the run
     def run(self, chain: Chain) -> None:
@@ -185,9 +277,17 @@ class ChainRunner:
                 chain.status = "cancelled"
                 break
             if step == "animated" and chain.note:
-                chain.status, chain.current = "done", None  # the rig does not fit the moves: a calm stop
+                chain.status, chain.current = (
+                    "done",
+                    None,
+                )  # the rig does not fit the moves: a calm stop
                 break
-            chain.current, chain.percent, chain.message, chain.log = step, None, "Starting…", ""
+            chain.current, chain.percent, chain.message, chain.log = (
+                step,
+                None,
+                "Starting…",
+                "",
+            )
             chain.step_started = chain.last_change = self.now()
             ok = self._run_step(chain, step)
             if not ok:
@@ -210,11 +310,16 @@ class ChainRunner:
         while True:
             try:
                 _, payload = self.request("GET", status_url, None, None)
-            except (OSError, ValueError):  # a missed poll is not a failure; the next one catches up
+            except (
+                OSError,
+                ValueError,
+            ):  # a missed poll is not a failure; the next one catches up
                 self.sleep(self.poll)
                 continue
             event = payload.get("last_event") or {}
-            key = json.dumps(event, sort_keys=True) + str(len(payload.get("log_tail") or ""))
+            key = json.dumps(event, sort_keys=True) + str(
+                len(payload.get("log_tail") or "")
+            )
             if key != last_key:
                 last_key, chain.last_change = key, self.now()
             chain.percent = _percent(event)
@@ -226,17 +331,35 @@ class ChainRunner:
             self.sleep(self.poll)
         status = payload.get("status")
         if status != "done":
-            why = ("Cancelled. Everything finished before this step is kept." if status == "cancelled"
-                   else plain_error(payload.get("error") or event.get("message") or payload.get("log_tail") or ""))
+            why = (
+                "Cancelled. Everything finished before this step is kept."
+                if status == "cancelled"
+                else plain_error(
+                    payload.get("error")
+                    or event.get("message")
+                    or payload.get("log_tail")
+                    or ""
+                )
+            )
             if status == "cancelled":
                 chain.cancel_requested = True
-            return self._fail(chain, step, why, payload.get("log_tail") or "", started, status)
+            return self._fail(
+                chain, step, why, payload.get("log_tail") or "", started, status
+            )
         self._record(chain, step, payload)
         chain.step_seconds[step] = round(self.now() - started, 1)
         self._history(chain, step, "done", started, chain.message, chain.full_log)
         return True
 
-    def _fail(self, chain: Chain, step: str, why: str, log: str, started: float, status: str = "error") -> bool:
+    def _fail(
+        self,
+        chain: Chain,
+        step: str,
+        why: str,
+        log: str,
+        started: float,
+        status: str = "error",
+    ) -> bool:
         chain.status = "cancelled" if status == "cancelled" else "error"
         chain.error, chain.full_log, chain.log = why, log, readable_log(log, 12)
         self._history(chain, step, chain.status, started, why, log)
@@ -255,9 +378,13 @@ class ChainRunner:
         elif step == "rigged":
             chain.made["rigged"] = event.get("path")
             if event.get("humanoid") is False:
-                chain.note = event.get("message") or "This rig does not fit the preset moves."
+                chain.note = (
+                    event.get("message") or "This rig does not fit the preset moves."
+                )
         elif step == "animated":
-            chain.made["animated"] = event.get("path")  # the move's own GLB, so an agent can hand it over
+            chain.made["animated"] = event.get(
+                "path"
+            )  # the move's own GLB, so an agent can hand it over
 
     # ------------------------------------------------------------------ starting each step
     def _file(self, relative: str) -> tuple[str, bytes]:
@@ -277,7 +404,9 @@ class ChainRunner:
         """An uploaded picture, saved under output/images/uploads/ so other jobs can read it by
         path (the back job does). Recorded as the chain's picture from then on."""
         name, data = chain.upload
-        stem = re.sub(r"[^a-z0-9]+", "-", Path(name).stem.lower()).strip("-") or "upload"
+        stem = (
+            re.sub(r"[^a-z0-9]+", "-", Path(name).stem.lower()).strip("-") or "upload"
+        )
         relative = f"images/uploads/{chain.id[:8]}__{stem}{Path(name).suffix.lower() or '.png'}"
         path = self.output / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -287,16 +416,30 @@ class ChainRunner:
 
     def _start(self, chain: Chain, step: str) -> tuple[str, dict[str, Any]]:
         kind = KIND[step]
-        self._client = chain.client   # each step is counted as the chain's asker's, not the studio's
+        self._client = (
+            chain.client
+        )  # each step is counted as the chain's asker's, not the studio's
         if step == "picture":
-            body = json.dumps({"prompt": chain.prompt or chain.title, "settings": chain.picture_settings}).encode()
+            body = json.dumps(
+                {
+                    "prompt": chain.prompt or chain.title,
+                    "settings": chain.picture_settings,
+                }
+            ).encode()
             return kind, self._post("/api/image", body, "application/json")
         if step == "back":
-            front = chain.made.get("picture") or (self._kept_upload(chain) if chain.upload else None)
+            front = chain.made.get("picture") or (
+                self._kept_upload(chain) if chain.upload else None
+            )
             if not front:
-                raise ValueError("the back picture needs a front picture, and there is none yet")
-            return kind, self._post("/api/image/back", json.dumps({"picture": front}).encode(),
-                                    "application/json")
+                raise ValueError(
+                    "the back picture needs a front picture, and there is none yet"
+                )
+            return kind, self._post(
+                "/api/image/back",
+                json.dumps({"picture": front}).encode(),
+                "application/json",
+            )
         if step == "model":
             settings = {"backend": chain.engine} if chain.engine else {}
             if chain.model_seed is not None:
@@ -311,8 +454,13 @@ class ChainRunner:
         if step == "finished":
             if not chain.made.get("model"):
                 raise ValueError("Finish needs a 3D model, and there is none yet")
-            body, ctype = multipart({"settings": json.dumps(chain.finish_settings)},
-                                    {"asset": self._file(chain.made["model"]), "image": self._picture(chain)})
+            body, ctype = multipart(
+                {"settings": json.dumps(chain.finish_settings)},
+                {
+                    "asset": self._file(chain.made["model"]),
+                    "image": self._picture(chain),
+                },
+            )
             return kind, self._post("/api/finish", body, ctype)
         if step == "rigged":
             source = chain.made.get("finished") or chain.made.get("model")
@@ -326,13 +474,20 @@ class ChainRunner:
         if step == "animated":
             if not chain.made.get("rigged") or not chain.first_move:
                 raise ValueError("Animate needs a rigged model and a move")
-            body = json.dumps({"model": chain.made["rigged"], "preset": chain.first_move,
-                               **chain.move_settings}).encode()
+            body = json.dumps(
+                {
+                    "model": chain.made["rigged"],
+                    "preset": chain.first_move,
+                    **chain.move_settings,
+                }
+            ).encode()
             return kind, self._post("/api/animate/play", body, "application/json")
         if step == "split":
             if not chain.made.get("model"):
                 raise ValueError("Splitting needs the prop sheet's 3D model")
-            body, ctype = multipart({"generated": chain.made["model"], "settings": "{}"}, {})
+            body, ctype = multipart(
+                {"generated": chain.made["model"], "settings": "{}"}, {}
+            )
             return kind, self._post("/api/props", body, ctype)
         raise ValueError(f"unknown step {step}")
 
@@ -345,14 +500,32 @@ class ChainRunner:
         return payload
 
     # ------------------------------------------------------------------ history
-    def _history(self, chain: Chain, step: str, result: str, started: float, note: str, log: str) -> None:
-        record = {"time": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(self.now())), "chain": chain.id,
-                  "title": chain.title, "prompt": chain.prompt, "want": chain.want, "step": step, "result": result,
-                  "seconds": round(self.now() - started, 1), "note": note,
-                  "made": chain.made.get({"picture": "picture", "back": "back", "model": "model",
-                                          "finished": "finished", "rigged": "rigged",
-                                          "animated": "animated"}.get(step, ""), None),
-                  "log": str(log or "")[-3000:]}
+    def _history(
+        self, chain: Chain, step: str, result: str, started: float, note: str, log: str
+    ) -> None:
+        record = {
+            "time": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(self.now())),
+            "chain": chain.id,
+            "title": chain.title,
+            "prompt": chain.prompt,
+            "want": chain.want,
+            "step": step,
+            "result": result,
+            "seconds": round(self.now() - started, 1),
+            "note": note,
+            "made": chain.made.get(
+                {
+                    "picture": "picture",
+                    "back": "back",
+                    "model": "model",
+                    "finished": "finished",
+                    "rigged": "rigged",
+                    "animated": "animated",
+                }.get(step, ""),
+                None,
+            ),
+            "log": str(log or "")[-3000:],
+        }
         append_history(self.output, record)
 
 
@@ -362,7 +535,9 @@ def _percent(event: dict[str, Any]) -> float | None:
             value = float(event[key])
         except (KeyError, TypeError, ValueError):
             continue
-        return max(0.0, min(100.0, value * 100 if key == "progress" and value <= 1 else value))
+        return max(
+            0.0, min(100.0, value * 100 if key == "progress" and value <= 1 else value)
+        )
     return None
 
 
@@ -399,10 +574,20 @@ def local_request(base: str, token: str | None = None) -> Request:
     import urllib.error
     import urllib.request
 
-    def request(method: str, path: str, body: bytes | None, content_type: str | None,
-                headers: dict[str, str] | None = None):
-        sent = {"X-AssetFurnace-Request": "plan", **({"Authorization": f"Bearer {token}"} if token else {})}
-        req = urllib.request.Request(base + path, data=body, method=method, headers={**sent, **(headers or {})})
+    def request(
+        method: str,
+        path: str,
+        body: bytes | None,
+        content_type: str | None,
+        headers: dict[str, str] | None = None,
+    ):
+        sent = {
+            "X-AssetFurnace-Request": "plan",
+            **({"Authorization": f"Bearer {token}"} if token else {}),
+        }
+        req = urllib.request.Request(
+            base + path, data=body, method=method, headers={**sent, **(headers or {})}
+        )
         if content_type:
             req.add_header("Content-Type", content_type)
         try:
@@ -413,14 +598,17 @@ def local_request(base: str, token: str | None = None) -> Request:
                 return exc.code, json.loads(exc.read() or b"{}")
             except ValueError:
                 return exc.code, {"error": f"{path} answered {exc.code}"}
+
     return request
 
 
 def chain_from_form(form: dict[str, dict[str, Any]]) -> Chain:
     """A plan as the studio sends it (multipart: text fields plus an optional uploaded file)."""
+
     def text(name: str) -> str | None:
         value = (form.get(name) or {}).get("value")
         return str(value).strip() if value not in (None, "") else None
+
     try:
         steps = json.loads(text("steps") or "[]")
         made = json.loads(text("made") or "{}")
@@ -431,14 +619,33 @@ def chain_from_form(form: dict[str, dict[str, Any]]) -> Chain:
         raise ValueError(f"the plan is not readable: {exc}") from exc
     upload = form.get("file")
     return Chain(
-        title=text("title") or "Untitled", steps=[str(s) for s in steps], want=text("want") or "character",
-        prompt=text("prompt"), engine=text("engine"), first_move=text("first_move"),
-        picture_settings={k: picture[k] for k in ("width", "height", "steps", "seed") if k in picture}
-        if isinstance(picture, dict) else {},
-        model_seed=int(text("model_seed")) if (text("model_seed") or "").isdigit() else None,
+        title=text("title") or "Untitled",
+        steps=[str(s) for s in steps],
+        want=text("want") or "character",
+        prompt=text("prompt"),
+        engine=text("engine"),
+        first_move=text("first_move"),
+        picture_settings={
+            k: picture[k] for k in ("width", "height", "steps", "seed") if k in picture
+        }
+        if isinstance(picture, dict)
+        else {},
+        model_seed=int(text("model_seed"))
+        if (text("model_seed") or "").isdigit()
+        else None,
         keep_everything=text("keep_everything") in ("1", "true"),
-        finish_settings={k: finish[k] for k in FINISH_KEYS if k in finish} if isinstance(finish, dict) else {},
-        move_settings={k: move[k] for k in MOVE_KEYS if k in move} if isinstance(move, dict) else {},
-        made={k: str(v) for k, v in made.items() if k in ("picture", "back", "model", "finished", "rigged") and v},
-        upload=(upload.get("filename") or "upload", upload["data"]) if upload and upload.get("filename") and upload.get("data") else None,
+        finish_settings={k: finish[k] for k in FINISH_KEYS if k in finish}
+        if isinstance(finish, dict)
+        else {},
+        move_settings={k: move[k] for k in MOVE_KEYS if k in move}
+        if isinstance(move, dict)
+        else {},
+        made={
+            k: str(v)
+            for k, v in made.items()
+            if k in ("picture", "back", "model", "finished", "rigged") and v
+        },
+        upload=(upload.get("filename") or "upload", upload["data"])
+        if upload and upload.get("filename") and upload.get("data")
+        else None,
     )

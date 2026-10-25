@@ -547,8 +547,11 @@ def test_a_plan_with_finish_is_refused_up_front_when_blender_is_missing(
 
     def post(steps):
         body, ctype = aa.multipart({"title": "knight", "steps": json.dumps(steps)}, {})
-        request = urllib.request.Request(f"http://127.0.0.1:{server.server_port}/api/chains", data=body,
-                                         headers={"Content-Type": ctype, "X-AssetFurnace-Request": "studio"})
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{server.server_port}/api/chains",
+            data=body,
+            headers={"Content-Type": ctype, "X-AssetFurnace-Request": "studio"},
+        )
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 return response.status, json.loads(response.read())
@@ -567,6 +570,108 @@ def test_a_plan_with_finish_is_refused_up_front_when_blender_is_missing(
             post(["picture", "model"])[0] == 202 and len(started) == 1
         )  # no Blender needed
     finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_a_plan_calls_its_own_jobs_with_the_studio_token(tmp_path, monkeypatch):
+    """Create posts to this same server. That post must carry the studio token.
+
+    Without it the token check answers 403, the step dies, and cancel reports
+    success while the job keeps running.
+    """
+    import http.server
+    import threading
+    import time
+    import urllib.request
+    from urllib.parse import urlparse
+
+    from viewer import generate_api as api
+
+    monkeypatch.setattr(api, "OUTPUT_ROOT", tmp_path)
+    api.Handler.studio_token = "test-token"
+    api.Handler._chain_runner = None
+    state = {"posts": [], "cancels": [], "cancelled": False}
+    original_get = api.Handler.do_GET
+
+    def create_image(self):
+        state["posts"].append(self.headers.get("Authorization"))
+        self._send_json(
+            202,
+            {
+                "job_id": "pic1",
+                "status": "running",
+                "status_url": "/api/image/pic1/status",
+            },
+        )
+
+    def cancel_image(self, job_id):
+        state["cancels"].append(self.headers.get("Authorization"))
+        state["cancelled"] = True
+        self._send_json(202, {"job_id": job_id, "status": "cancelling"})
+
+    def do_get(self):
+        if urlparse(self.path).path == "/api/image/pic1/status":
+            name = "cancelled" if state["cancelled"] else "running"
+            self._send_json(
+                200,
+                {
+                    "status": name,
+                    "job_id": "pic1",
+                    "last_event": {"message": name},
+                    "log_tail": "",
+                },
+            )
+            return
+        return original_get(self)
+
+    monkeypatch.setattr(api.Handler, "_create_image_job", create_image)
+    monkeypatch.setattr(api.Handler, "_cancel_image_job", cancel_image)
+    monkeypatch.setattr(api.Handler, "do_GET", do_get)
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), api.Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_port}"
+
+    def post(path, body, content_type):
+        request = urllib.request.Request(
+            base + path,
+            data=body,
+            headers={
+                "Content-Type": content_type,
+                "X-AssetFurnace-Request": "studio",
+                "Authorization": "Bearer test-token",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.status, json.loads(response.read())
+
+    try:
+        status, payload = aa.local_request(base, "test-token")(
+            "POST", "/api/image", b'{"prompt":"knight"}', "application/json"
+        )
+        assert status != 403, payload
+        assert state["posts"] == ["Bearer test-token"]
+
+        body, content_type = aa.multipart(
+            {"title": "knight", "steps": json.dumps(["picture"])}, {}
+        )
+        accepted, chain = post("/api/chains", body, content_type)
+        assert accepted == 202, chain
+        deadline = time.time() + 8
+        while time.time() < deadline and len(state["posts"]) < 2:
+            time.sleep(0.05)
+        assert state["posts"] == ["Bearer test-token", "Bearer test-token"]
+
+        cancelled, result = post(
+            f"/api/chains/{chain['id']}/cancel", b"{}", "application/json"
+        )
+        assert cancelled == 200 and result["cancelled"] is True
+        while time.time() < deadline and not state["cancels"]:
+            time.sleep(0.05)
+        assert state["cancels"] == ["Bearer test-token"]
+    finally:
+        api.Handler.studio_token = None
+        api.Handler._chain_runner = None
         server.shutdown()
         server.server_close()
 
