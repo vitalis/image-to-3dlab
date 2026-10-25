@@ -90,6 +90,25 @@ def test_report_records_the_before_state():
     assert report["now_consistent"]
 
 
+def test_a_seamed_box_away_from_the_origin_keeps_its_faces():
+    """A UV seam is not its own piece. A correct box moved off the origin stays correct."""
+    import numpy as np
+
+    box = trimesh.creation.box(extents=(1.0, 1.0, 1.0))
+    vertices = box.vertices[box.faces].reshape(-1, 3)
+    faces = np.arange(len(vertices), dtype=np.int64).reshape(-1, 3)
+    mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+    mesh.visual = trimesh.visual.TextureVisuals(uv=np.zeros((len(vertices), 2)))
+    mesh.apply_translation((5.0, 2.0, -3.0))
+    before = mesh.faces.copy()
+    count = len(mesh.vertices)
+    fw.repair(mesh)
+    assert abs(float(mesh.volume) - 1.0) < 1e-6
+    assert len(mesh.vertices) == count
+    assert not np.all(mesh.faces == before[:, ::-1], axis=1).any()
+    assert mesh.visual.uv.shape == (count, 2)
+
+
 def test_an_open_inside_out_piece_is_turned_outward():
     """One closed piece and one open inside-out piece. Both must end outward."""
     import sys

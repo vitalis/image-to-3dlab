@@ -45,24 +45,26 @@ def needs_inverting(volume: float) -> bool:
 def repair(mesh) -> dict:
     """Make each piece consistent and outward, including an open piece.
 
-    A single global flip skips an open component, and the volumes of many
-    pieces cancel. Returns what changed.
+    Pieces are decided on a position weld, then the flip is applied to the
+    original faces. A UV seam is not a piece, and the welded vertices are not
+    what gets written. Returns what changed.
     """
     import sys
 
-    import trimesh
+    import numpy as np
 
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from repair_decode import flip_inward_components
+    from repair_decode import faces_to_reverse
 
     before_consistent = bool(mesh.is_winding_consistent)
     before_volume = float(mesh.volume)
-    trimesh.repair.fix_winding(mesh)
-    flipped = flip_inward_components(mesh)
+    reverse = faces_to_reverse(mesh.vertices, mesh.faces)
+    if reverse.any():
+        mesh.faces[reverse] = np.ascontiguousarray(mesh.faces[reverse][:, ::-1])
     return {
         "was_consistent": before_consistent,
         "was_volume": before_volume,
-        "inverted": flipped > 0,
+        "inverted": bool(reverse.any()),
         "now_consistent": bool(mesh.is_winding_consistent),
         "now_volume": float(mesh.volume),
     }

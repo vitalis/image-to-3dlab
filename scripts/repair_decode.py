@@ -99,6 +99,52 @@ def repair(vertices, faces):
     return mesh, before, summarise(mesh)
 
 
+def faces_to_reverse(vertices, faces):
+    """Original faces that should flip so each welded piece faces outward.
+
+    A UV seam splits a vertex, so the unwelded mesh treats each island as its
+    own piece. The island's signed volume is a cone to the origin. The weld is
+    only for that decision. The returned mask addresses the faces that were
+    passed in, and a face that collapses under the weld is left as it was.
+    """
+    import numpy as np
+    import trimesh
+
+    from remove_loose_parts import _weld_index
+
+    vertices = np.asarray(vertices, dtype=np.float64)
+    faces = np.asarray(faces)
+    if len(faces) == 0:
+        return np.zeros(0, dtype=bool)
+    inverse = _weld_index(vertices)
+    welded = inverse[faces]
+    keep = (
+        (welded[:, 0] != welded[:, 1])
+        & (welded[:, 1] != welded[:, 2])
+        & (welded[:, 0] != welded[:, 2])
+    )
+    original = np.flatnonzero(keep)
+    mask = np.zeros(len(faces), dtype=bool)
+    if len(original) == 0:
+        return mask
+    positions = np.zeros((int(inverse.max()) + 1, 3), dtype=np.float64)
+    positions[inverse] = vertices
+    decision = trimesh.Trimesh(
+        vertices=positions, faces=np.array(welded[keep], copy=True), process=False
+    )
+    before = decision.faces.copy()
+    trimesh.repair.fix_winding(decision)
+    flip_inward_components(decision)
+    opposite = before[:, ::-1]
+    reversed_rows = np.zeros(len(before), dtype=bool)
+    for shift in range(3):
+        reversed_rows |= np.all(
+            decision.faces == np.roll(opposite, shift, axis=1), axis=1
+        )
+    mask[original[reversed_rows]] = True
+    return mask
+
+
 def flip_inward_components(mesh) -> int:
     """Flip each component whose own signed volume is negative.
 
