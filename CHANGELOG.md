@@ -73,6 +73,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The 2.1 checkpoint conversion no longer unpickles.** A safe load that fails stops. The `.ckpt` is deleted only after the safetensors file opens and has the shape tensors.
 
 ### Fixed
+- **A winding repair that fails leaves the finished file as it was.** The repair writes a temporary file and replaces the model only after that write finishes.
+- **Smooth leaves a loose piece where it is** when the brush covers that piece and nothing around it. A smooth that does not settle does not write the file.
 - **Winding repair no longer flips a textured box that was already facing out.** A UV seam is not treated as a separate piece. The file keeps its own vertices.
 - **Staging and joint-marker spawn use their own Blender scene.** They no longer delete every object in the open file. The Blender agent leaves existing objects unless a clear is asked for, and a clear or a delete only removes objects that are in the current scene and nowhere else.
 - **A Create plan sends the studio token** when it starts or cancels a job on this same server. Without it every plan stopped at the first step, and cancel said it had stopped a job that kept running.

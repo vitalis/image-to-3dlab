@@ -109,6 +109,9 @@ def _repair_winding(path: Path) -> tuple[bool, bool]:
     Best-effort -- a mesh that cannot be loaded is left untouched rather than failing a
     16-minute generation at its last step.
     """
+    import tempfile
+
+    temporary = None
     try:
         import trimesh
 
@@ -118,13 +121,20 @@ def _repair_winding(path: Path) -> tuple[bool, bool]:
         inverted = float(mesh.volume) < 0.0
         if inverted:
             mesh.invert()
-        mesh.export(str(path))
+        handle, name = tempfile.mkstemp(suffix=".glb", dir=path.parent)
+        os.close(handle)
+        temporary = Path(name)
+        mesh.export(str(temporary))
+        os.replace(temporary, path)
+        temporary = None
         print(
             f"  [image-to-3dlab] winding repaired: volume {volume_before:+.5f} -> "
             f"{float(mesh.volume):+.5f}{' (inverted)' if inverted else ''}"
         )
         return True, inverted
     except Exception as exc:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
         print(f"  [image-to-3dlab] winding repair skipped: {exc}")
         return False, False
 

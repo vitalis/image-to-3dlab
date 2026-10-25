@@ -129,15 +129,56 @@ def _even_patch(rim: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
     return interior, triangles
 
 
-def _fair(positions: np.ndarray, faces: np.ndarray, free: np.ndarray) -> np.ndarray:
+
+def _tied_to_the_rest(positions: np.ndarray, faces: np.ndarray, free: np.ndarray) -> np.ndarray:
+    """Free vertices whose piece also has a vertex outside the brush.
+
+    A piece the brush covers completely has nothing to continue, and the smooth
+    answer for it is the origin.
+    """
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+
+    if len(free) == 0:
+        return free
+    key = sc.weld(positions)
+    count = int(key.max()) + 1
+    welded_faces = key[faces]
+    edges = np.concatenate([welded_faces[:, [0, 1]], welded_faces[:, [1, 2]], welded_faces[:, [2, 0]]])
+    edges = np.unique(np.sort(edges[edges[:, 0] != edges[:, 1]], axis=1), axis=0)
+    if len(edges) == 0:
+        return free[:0]
+    ends = np.concatenate(edges.T)
+    adjacency = coo_matrix((np.ones(2 * len(edges)), (ends, np.concatenate(edges.T[::-1]))),
+                           shape=(count, count)).tocsr()
+    _count, labels = connected_components(adjacency, directed=False)
+    free_w = np.unique(key[free])
+    outside = np.ones(count, dtype=bool)
+    outside[free_w] = False
+    if not outside.any():
+        return free[:0]
+    anchored = np.zeros(int(labels.max()) + 1, dtype=bool)
+    anchored[labels[np.flatnonzero(outside)]] = True
+    allowed = set(free_w[anchored[labels[free_w]]].tolist())
+    return free[np.isin(key[free], list(allowed))]
+
+
+def _fair(positions: np.ndarray, faces: np.ndarray, free: np.ndarray) -> np.ndarray | None:
     """Positions with `free` vertices moved to the smoothest surface that continues their
-    surroundings (minimum bending: the uniform Laplacian squared is zero over them)."""
+    surroundings (minimum bending: the uniform Laplacian squared is zero over them).
+
+    A piece with no vertex outside the brush is left where it is. A solve that is
+    not a real position returns None, and the caller must not write the file.
+    """
     from scipy.sparse import coo_matrix, identity
     from scipy.sparse.linalg import spsolve
 
     key = sc.weld(positions)
     count = key.max() + 1
     welded = np.zeros((count, 3)); welded[key] = positions
+    free = _tied_to_the_rest(positions, faces, free)
+    if len(free) == 0:
+        return positions.copy()
     wf = key[faces]
     edges = np.concatenate([wf[:, [0, 1]], wf[:, [1, 2]], wf[:, [2, 0]]])
     edges = np.unique(np.sort(edges[edges[:, 0] != edges[:, 1]], 1), axis=0)
@@ -156,7 +197,10 @@ def _fair(positions: np.ndarray, faces: np.ndarray, free: np.ndarray) -> np.ndar
     lhs = (a_free.T @ a_free).tocsc()
     for axis in range(3):
         rhs = -(a_free.T @ (a_fixed @ welded[fixed, axis]))
-        welded[free_w, axis] = spsolve(lhs, rhs)
+        solved = spsolve(lhs, np.asarray(rhs).ravel())
+        if not np.isfinite(solved).all():
+            return None
+        welded[free_w, axis] = solved
     return welded[key]
 
 
@@ -259,6 +303,8 @@ def fix_spot(source: Path, output: Path, point: np.ndarray, radius: float,
     # bend the patches to continue the surface around them (the rim and its copies stay put)
     if centres_added:
         faired = _fair(attributes["POSITION"].astype(np.float64), faces_out, np.array(centres_added))
+        if faired is None:
+            faired = attributes["POSITION"].astype(np.float64)
         attributes["POSITION"] = faired.astype(np.float32)
         if "NORMAL" in attributes:
             weld = sc.weld(faired)
@@ -491,7 +537,14 @@ def smooth_spot(source: Path, output: Path, point: np.ndarray, radius: float, st
     free = np.flatnonzero(distance < radius)
     if not len(free):
         return {"smoothed": 0}
-    target = _fair(positions, faces, free)
+    tied = _tied_to_the_rest(positions, faces, free)
+    if len(tied) == 0:
+        return {"smoothed": 0,
+                "note": "that piece is not tied to the rest of the model, so it was left where it was"}
+    target = _fair(positions, faces, tied)
+    if target is None or not np.isfinite(target).all():
+        return {"smoothed": 0, "note": "the smooth did not settle, so the file was left as it was"}
+    free = tied
     reach = (1 - (distance[free] / radius) ** 2) ** 2 * float(strength)   # 1 at the centre, 0 at the ring
     moved = positions.copy()
     moved[free] += reach[:, None] * (target[free] - positions[free])

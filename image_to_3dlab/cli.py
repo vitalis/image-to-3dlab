@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import struct
 import sys
 from pathlib import Path
 
@@ -312,7 +313,7 @@ def main(argv: list[str] | None = None) -> int:
                 timeout=args.timeout,
                 poll_interval=args.poll_interval,
             )
-    except (ValueError, RuntimeError, OSError) as exc:
+    except (ValueError, RuntimeError, OSError, struct.error) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

@@ -213,6 +213,40 @@ def test_a_rim_that_does_not_close_is_still_patched(tmp_path, monkeypatch):
     assert report["cut"] > 0 and report["capped"] == 1
 
 
+def test_smooth_leaves_a_covered_loose_piece_where_it_was(tmp_path):
+    """A brush that covers a whole detached piece must not pull it to the origin."""
+    import trimesh
+
+    big = trimesh.creation.box(extents=(1.0, 1.0, 1.0))
+    small = trimesh.creation.box(extents=(0.2, 0.2, 0.2))
+    small.apply_translation((3.0, 0.0, 0.0))
+    source = tmp_path / "in.glb"
+    trimesh.util.concatenate([big, small]).export(source)
+    before = np.asarray(trimesh.load(source, force="mesh").vertices)
+    out = tmp_path / "out.glb"
+    report = sf.smooth_spot(source, out, np.array([3.0, 0.0, 0.0]), 0.4, strength=1.0)
+    assert report["smoothed"] == 0
+    assert "left" in report["note"]
+    assert not out.exists()
+    loose = np.linalg.norm(before - [3.0, 0.0, 0.0], axis=1) < 0.3
+    assert loose.sum() == 8
+    assert np.allclose(before[loose].mean(0), [3.0, 0.0, 0.0], atol=1e-5)
+
+
+def test_an_unsettled_smooth_does_not_write(tmp_path, monkeypatch):
+    source, _pos, _front = _sphere_with_pocket(tmp_path)
+
+    def unsettled(lhs, _rhs):
+        return np.full(lhs.shape[0], np.nan)
+
+    monkeypatch.setattr("scipy.sparse.linalg.spsolve", unsettled)
+    out = tmp_path / "out.glb"
+    report = sf.smooth_spot(source, out, np.array([0.0, 0.0, 0.4]), 0.5, strength=1.0)
+    assert report["smoothed"] == 0
+    assert not out.exists()
+    assert np.isfinite(pp.read_glb(source)[0]).all()
+
+
 def test_smooth_lifts_a_dent_without_cutting_anything(tmp_path):
     source, _pos, front = _sphere_with_pocket(tmp_path)
     report = sf.smooth_spot(source, tmp_path / "out.glb", np.array([0, 0, 0.4]), 0.5, strength=1.0)

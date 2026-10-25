@@ -131,7 +131,8 @@ def preview_response(output: Path, payload: Any) -> tuple[int, dict[str, Any]]:
     reports = spot_fix.apply_spots(base, result, spots, views)
     if not any(r.get("cut") or r.get("smoothed") or r.get("repainted_faces") for r in reports):
         result.unlink(missing_ok=True)
-        return 422, {"error": "Nothing changed: click right on the model."}
+        note = next((r["note"] for r in reports if r.get("note")), None)
+        return 422, {"error": note or "Nothing changed: click right on the model."}
     if base != origin:
         base.unlink(missing_ok=True)   # the previous preview in this session is superseded
     return 200, {"preview": result.relative_to(output).as_posix(), "reports": reports}

@@ -279,6 +279,46 @@ def test_a_real_cut_out_is_left_alone(tmp_path, monkeypatch):
     assert saved.is_file()
 
 
+def test_a_failed_winding_repair_keeps_the_file(tmp_path, monkeypatch):
+    """Export truncates its path before it finishes. A failure must not keep that empty file."""
+    import trimesh
+
+    from image_to_3dlab.trellis_backend import _repair_winding
+
+    source = tmp_path / "model.glb"
+    trimesh.creation.box().export(source)
+    original = source.read_bytes()
+
+    def truncate_then_fail(self, file_obj, *args, **kwargs):
+        Path(file_obj).write_bytes(b"")
+        raise RuntimeError("export failed")
+
+    monkeypatch.setattr(trimesh.Trimesh, "export", truncate_then_fail)
+    repaired, inverted = _repair_winding(source)
+    assert repaired is False and inverted is False
+    assert source.read_bytes() == original
+
+
+def test_a_bad_glb_is_an_error_line(tmp_path, monkeypatch, capsys):
+    import struct
+
+    from image_to_3dlab import cli
+
+    image = tmp_path / "a.png"
+    image.write_bytes(b"png")
+
+    def broken(_views, _out, _options):
+        raise struct.error("unpack requires a buffer of 4 bytes")
+
+    monkeypatch.setattr("image_to_3dlab.trellis_backend.generate_trellis", broken)
+    monkeypatch.setattr(cli, "validate_run_policy", lambda *_a, **_k: {})
+    code = cli.main([str(image), "--trellis", "--output-dir", str(tmp_path)])
+    err = capsys.readouterr().err
+    assert code == 1
+    assert "error:" in err
+    assert "Traceback" not in err
+
+
 def test_winding_flags_are_written_into_the_run_record(tmp_path, monkeypatch):
     from image_to_3dlab import cli
     from image_to_3dlab.trellis_backend import TrellisResult
