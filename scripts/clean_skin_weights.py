@@ -226,25 +226,28 @@ def cap_small_holes(
             if bone not in groups:
                 mesh.vertex_groups.new(name=bone)
                 groups[bone] = mesh.vertex_groups[bone].index
+        # A new point, a new face, or a new bone group drops the index table.
+        bm.verts.ensure_lookup_table()
+        corners = [(bm.verts[tri[0]], bm.verts[tri[1]]) for tri in patch["triangles"]]
         vert = bm.verts.new(patch["centre"].tolist())
         try:
-            for tri in patch["triangles"]:
-                face = bm.faces.new((bm.verts[tri[0]], bm.verts[tri[1]], vert))
+            for a, b in corners:
+                face = bm.faces.new((a, b, vert))
                 if uv_layer is None or patch["uv"] is None:
                     continue
-                for loop, index in zip(face.loops, (tri[0], tri[1], -1)):
-                    if index < 0:
+                for loop, source in zip(face.loops, (a, b, None)):
+                    if source is None:
                         loop[uv_layer].uv = patch["uv"]
                         continue
                     donor = next(
                         (
                             earlier[uv_layer].uv.copy()
-                            for earlier in bm.verts[index].link_loops
+                            for earlier in source.link_loops
                             if earlier.face is not face
                         ),
                         None,
                     )
-                    loop[uv_layer].uv = donor if donor is not None else uv[index]
+                    loop[uv_layer].uv = donor if donor is not None else patch["uv"]
             for bone, weight in weights.items():
                 vert[deform][groups[bone]] = float(weight)
             added += 1
