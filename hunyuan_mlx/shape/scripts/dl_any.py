@@ -1,49 +1,130 @@
 """Generic resumable ModelScope downloader. Reads exact size from the repo API.
 Usage: python scripts/dl_any.py <repo> <filepath> <outpath>
 """
+
+import argparse
+import json
 import os
 import sys
 import time
-import json
 import urllib.request
 
-REPO, FILEPATH, OUT = sys.argv[1], sys.argv[2], sys.argv[3]
-API = f"https://modelscope.cn/api/v1/models/{REPO}/repo/files?Revision=master&Recursive=true"
-BASE = f"https://modelscope.cn/api/v1/models/{REPO}/repo?Revision=master&FilePath={FILEPATH}"
-opener = urllib.request.build_opener(urllib.request.ProxyHandler(urllib.request.getproxies()))
+TERRITORIAL = (
+    "These are Tencent Hunyuan Community License weights, not licensed for use in "
+    "the EU, the UK or South Korea."
+)
 
-# exact size from API
-size = None
-with opener.open(API, timeout=60) as r:
-    for f in json.load(r)["Data"]["Files"]:
-        if f.get("Path") == FILEPATH:
-            size = f["Size"]
-print(f"target {FILEPATH}: {size} bytes ({size/1e9:.2f} GB)", flush=True)
-os.makedirs(os.path.dirname(OUT), exist_ok=True)
+API = "https://modelscope.cn/api/v1/models/{repo}/repo/files?Revision=master&Recursive=true"
+BASE = "https://modelscope.cn/api/v1/models/{repo}/repo?Revision=master&FilePath={path}"
 
-for attempt in range(1, 81):
-    have = os.path.getsize(OUT) if os.path.exists(OUT) else 0
-    if have >= size:
-        print(f"complete ({have} bytes)", flush=True)
-        break
-    req = urllib.request.Request(BASE)
-    if have:
-        req.add_header("Range", f"bytes={have}-")
+
+def _opener():
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler(urllib.request.getproxies())
+    )
+
+
+def lookup_size(repo, filepath):
+    """Byte size from the repo file list. Not the weight file itself."""
+    size = None
+    with _opener().open(API.format(repo=repo), timeout=60) as response:
+        for entry in json.load(response)["Data"]["Files"]:
+            if entry.get("Path") == filepath:
+                size = entry["Size"]
+    return size
+
+
+def download_file(repo, filepath, out):
+    size = lookup_size(repo, filepath)
+    base = BASE.format(repo=repo, path=filepath)
+    print(f"target {filepath}: {size} bytes ({size / 1e9:.2f} GB)", flush=True)
+    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+    net = _opener()
+
+    for attempt in range(1, 81):
+        have = os.path.getsize(out) if os.path.exists(out) else 0
+        if have >= size:
+            print(f"complete ({have} bytes)", flush=True)
+            break
+        req = urllib.request.Request(base)
+        if have:
+            req.add_header("Range", f"bytes={have}-")
+        try:
+            t0 = time.time()
+            with net.open(req, timeout=120) as response, open(out, "ab") as handle:
+                got = 0
+                while True:
+                    chunk = response.read(1 << 20)
+                    if not chunk:
+                        break
+                    handle.write(chunk)
+                    got += len(chunk)
+                    if got % (256 << 20) < (1 << 20):
+                        speed = got / 1e6 / max(1e-3, time.time() - t0)
+                        print(
+                            f"  {(have + got) / 1e9:.2f} GB ({speed:.1f} MB/s)",
+                            flush=True,
+                        )
+        except urllib.error.HTTPError as exc:
+            if exc.code == 416:
+                print("complete (416)", flush=True)
+                break
+            print(f"  attempt {attempt}: HTTP {exc.code}", flush=True)
+            time.sleep(min(20, 2 ** (attempt % 6)))
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"  attempt {attempt}: {type(exc).__name__} {str(exc)[:80]}", flush=True
+            )
+            time.sleep(min(20, 2 ** (attempt % 6)))
+    done = os.path.exists(out) and os.path.getsize(out) >= size
+    print("DONE" if done else "INCOMPLETE", flush=True)
+    return done
+
+
+def confirmed(yes: bool) -> bool:
+    if yes:
+        return True
+    if not sys.stdin or not sys.stdin.isatty():
+        print("Refusing to download without --yes when there is nobody to ask.")
+        return False
     try:
-        t0 = time.time()
-        with opener.open(req, timeout=120) as r, open(OUT, "ab") as fo:
-            got = 0
-            while True:
-                chunk = r.read(1 << 20)
-                if not chunk:
-                    break
-                fo.write(chunk); got += len(chunk)
-                if got % (256 << 20) < (1 << 20):
-                    print(f"  {(have+got)/1e9:.2f} GB ({got/1e6/max(1e-3,time.time()-t0):.1f} MB/s)", flush=True)
-    except urllib.error.HTTPError as e:
-        if e.code == 416:
-            print("complete (416)", flush=True); break
-        print(f"  attempt {attempt}: HTTP {e.code}", flush=True); time.sleep(min(20, 2 ** (attempt % 6)))
-    except Exception as e:  # noqa: BLE001
-        print(f"  attempt {attempt}: {type(e).__name__} {str(e)[:80]}", flush=True); time.sleep(min(20, 2 ** (attempt % 6)))
-print("DONE" if (os.path.exists(OUT) and os.path.getsize(OUT) >= size) else "INCOMPLETE", flush=True)
+        answer = input("Continue? [y/N] ")
+    except EOFError:
+        print("Refusing to download without --yes when there is nobody to ask.")
+        return False
+    if answer.strip().lower() not in {"y", "yes"}:
+        print("Nothing downloaded.")
+        return False
+    return True
+
+
+def announce(repo: str, filepath: str, out: str) -> None:
+    print("Downloading Hunyuan weights from ModelScope:", flush=True)
+    print(f"  repo: {repo}", flush=True)
+    print(f"  file: {filepath}", flush=True)
+    print(f"  out:  {out}", flush=True)
+    print(TERRITORIAL, flush=True)
+    print(
+        "The exact size is read from ModelScope after you agree, then the file is saved.",
+        flush=True,
+    )
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("repo")
+    parser.add_argument("filepath")
+    parser.add_argument("outpath")
+    parser.add_argument(
+        "--yes", action="store_true", help="download without asking again"
+    )
+    args = parser.parse_args(argv)
+    announce(args.repo, args.filepath, args.outpath)
+    if not confirmed(args.yes):
+        return 1
+    download_file(args.repo, args.filepath, args.outpath)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

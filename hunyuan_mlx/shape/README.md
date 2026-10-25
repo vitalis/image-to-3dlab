@@ -50,7 +50,8 @@ background first (e.g. `rembg`) — that's an upstream CPU step, kept out of the
 ```bash
 uv sync                                  # MLX runtime (Python 3.12)
 
-# 2mini (bundled DiT+DINO+VAE safetensors), via ModelScope (HF was region-blocked here):
+# 2mini (bundled DiT+DINO+VAE safetensors), via ModelScope (HF was region-blocked here).
+# Both downloaders ask first. Add --yes only after you have agreed.
 uv run python scripts/dl_modelscope.py
 
 # any other model: scripts/dl_any.py <repo> <path> <out>, e.g. 2.0-standard:

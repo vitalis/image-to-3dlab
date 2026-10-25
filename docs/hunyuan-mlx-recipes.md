@@ -9,7 +9,7 @@ uv sync --project hunyuan_mlx/shape
 uv sync --project hunyuan_mlx/paint
 hunyuan_mlx/shape/.venv/bin/python hunyuan_mlx/download_weights.py
 ```
-`download_weights.py` pulls shape weights (2.1, 2.0, 2.0-turbo) and paint weights from
+`download_weights.py` prints the size, asks, then pulls shape weights (2.1, 2.0, 2.0-turbo) and paint weights from
 Hugging Face. Paint comes from Xiong's MLX-ready repo
 (`zimengxiong/hunyuan3d-mlx-paint-large`, pinned), which carries the UNet, VAE, DINOv2 and
 RealESRGAN super-res weights together. Tencent's own paint folder ships the UNet as a

@@ -19,6 +19,7 @@ code loads.
 
 Usage:
     shape/.venv/bin/python download_weights.py [--model 2.0] [--skip-paint]
+    shape/.venv/bin/python download_weights.py --yes   # already confirmed
 """
 
 from __future__ import annotations
@@ -47,6 +48,13 @@ SHAPE_HF_SOURCES = {
     "2.0": ("tencent/Hunyuan3D-2", "hunyuan3d-dit-v2-0", "Hunyuan3D-2"),
     "2.0-turbo": ("tencent/Hunyuan3D-2", "hunyuan3d-dit-v2-0-turbo", "Hunyuan3D-2"),
 }
+# No Hugging Face commit for these shape repos is written down in this repo.
+# Paint is pinned below. scripts/bootstrap_hunyuan_cuda.py pins a GitHub commit
+# of Tencent's code, which is not a snapshot of these weight repos. Leaving
+# revision unset is deliberate: an invented hash would fetch the wrong files.
+# The loader splits the 2.1 safetensors on these prefixes. A file that does not
+# open, or that lacks one of them, is not a finished conversion.
+SHAPE_TENSOR_PREFIXES = ("conditioner.", "model.", "vae.")
 
 # Pinned, so a re-upload upstream cannot change what a fresh install gets. This revision
 # is the one every working local install was fetched from.
@@ -67,6 +75,32 @@ PAINT_FILES = (
 )
 
 
+def torch_interpreters() -> list[Path]:
+    """Where this repo already looks for an interpreter that has torch.
+
+    The converter's own header says `shape/.venv-oracle`. The paint parity tests
+    resolve `paint/.venv-oracle/bin/python`. The shape venv's lockfile has no torch,
+    so sys.executable is not one of these.
+    """
+    folder = "Scripts" if sys.platform == "win32" else "bin"
+    name = "python.exe" if sys.platform == "win32" else "python"
+    return [REPO / root / ".venv-oracle" / folder / name for root in ("shape", "paint")]
+
+
+def torch_python() -> Path:
+    for path in torch_interpreters():
+        if path.is_file():
+            return path
+    looked = "\n".join(f"  {path}" for path in torch_interpreters())
+    raise SystemExit(
+        "2.1 conversion needs torch, and the shape environment does not ship it.\n"
+        "Looked for the oracle interpreter this repo already uses:\n"
+        f"{looked}\n"
+        "Create it with `uv venv .venv-oracle` and install torch and safetensors. "
+        "This did not fall back to the shape interpreter."
+    )
+
+
 def download_shape(model: str) -> None:
     from huggingface_hub import hf_hub_download
 
@@ -75,65 +109,126 @@ def download_shape(model: str) -> None:
     dest = local_root / hf_dir
     dest.mkdir(parents=True, exist_ok=True)
 
+    # revision is intentionally omitted: none is recorded for these repos.
     hf_hub_download(hf_repo, f"{hf_dir}/config.yaml", local_dir=local_root)
 
     if model == "2.1":
         # 2.1 only ships a .ckpt on HF -- convert once, same as the existing local copy.
-        ckpt = hf_hub_download(hf_repo, f"{hf_dir}/model.fp16.ckpt", local_dir=local_root)
+        ckpt = hf_hub_download(
+            hf_repo, f"{hf_dir}/model.fp16.ckpt", local_dir=local_root
+        )
         target = dest / "model.fp16.safetensors"
-        if not target.is_file():
+        if not conversion_has_expected_tensors(target):
             print(f"converting {ckpt} -> {target} ...", flush=True)
             subprocess.run(
-                [sys.executable, str(REPO / "shape" / "scripts" / "convert_v21_ckpt.py"),
-                 ckpt, str(target)],
+                [
+                    str(torch_python()),
+                    str(REPO / "shape" / "scripts" / "convert_v21_ckpt.py"),
+                    str(ckpt),
+                    str(target),
+                ],
+                cwd=REPO / "shape",
                 check=True,
             )
         # The checkpoint is the download; the safetensors is what the loader opens. Keeping
         # both stored the same 6.9 GB model twice, which nobody noticed until a disk audit
-        # on 2026-09-21. Removed only once the conversion is on disk and non-empty, so an
-        # interrupted convert still leaves something to retry from.
+        # on 2026-09-21. Removed only once the destination opens and has the shape tensors,
+        # so a stub or an interrupted convert still leaves the checkpoint to retry from.
         discard_converted_checkpoint(Path(ckpt), target)
     else:
-        hf_hub_download(hf_repo, f"{hf_dir}/model.fp16.safetensors", local_dir=local_root)
+        hf_hub_download(
+            hf_repo, f"{hf_dir}/model.fp16.safetensors", local_dir=local_root
+        )
 
     print(f"{model}: ready at {dest}")
 
 
+def conversion_has_expected_tensors(path: Path) -> bool:
+    """True when `path` opens as safetensors and has each shape prefix.
+
+    A non-empty stub does not. If safetensors itself cannot be imported, the
+    checkpoint is kept: we will not delete the only copy we cannot check.
+    """
+    if not path.is_file() or path.stat().st_size <= 0:
+        return False
+    try:
+        from safetensors import SafetensorError, safe_open
+    except ImportError:
+        return False
+    try:
+        with safe_open(str(path), framework="numpy") as handle:
+            keys = list(handle.keys())
+    except (OSError, ValueError, SafetensorError):
+        return False
+    return all(
+        any(key.startswith(prefix) for key in keys) for prefix in SHAPE_TENSOR_PREFIXES
+    )
+
+
 def discard_converted_checkpoint(ckpt: Path, converted: Path) -> bool:
-    """Delete `ckpt` once `converted` exists and is plausibly complete.
+    """Delete `ckpt` once `converted` opens and has the expected tensors.
 
     Returns whether anything was removed, so a caller (and a test) can tell the difference
     between "cleaned up" and "left alone because the conversion looks unfinished".
     """
-    if not converted.is_file() or converted.stat().st_size <= 0:
+    if not conversion_has_expected_tensors(converted):
         return False
     if not ckpt.is_file() or ckpt.resolve() == converted.resolve():
         return False
     freed = ckpt.stat().st_size
     ckpt.unlink()
-    print(f"removed {ckpt.name} ({freed / 1024 ** 3:.1f} GB): superseded by "
-          f"{converted.name}", flush=True)
+    print(
+        f"removed {ckpt.name} ({freed / 1024**3:.1f} GB): superseded by "
+        f"{converted.name}",
+        flush=True,
+    )
+    return True
+
+
+def confirmed(yes: bool) -> bool:
+    """True only for --yes or an interactive yes. A closed stdin is a no."""
+    if yes:
+        return True
+    # Non-interactive without --yes must not silently proceed, and must not hang
+    # waiting on a stdin nobody is attached to.
+    if not sys.stdin or not sys.stdin.isatty():
+        print("Refusing to download without --yes when there is nobody to ask.")
+        return False
+    try:
+        answer = input("Continue? [y/N] ")
+    except EOFError:
+        print("Refusing to download without --yes when there is nobody to ask.")
+        return False
+    if answer.strip().lower() not in {"y", "yes"}:
+        print("Nothing downloaded.")
+        return False
     return True
 
 
 def announce(models: list[str], *, paint: bool) -> float:
     """Say what is about to be fetched, and how much of it, before fetching anything.
 
-    Not a prompt. Someone who typed this command has already consented; what they have
-    not necessarily been told is the size, and a silent multi-gigabyte download is how a
-    disk fills up unexplained. Returns the total so a caller can assert on it.
+    Not the question itself: main() asks after this, unless --yes was passed.
+    Returns the total so a caller can assert on it.
     """
-    lines = [f"  {m:<10} {APPROX_GB.get(m, 0):>5.1f} GB  ({SHAPE_HF_SOURCES[m][0]})"
-             for m in models]
+    lines = [
+        f"  {m:<10} {APPROX_GB.get(m, 0):>5.1f} GB  ({SHAPE_HF_SOURCES[m][0]})"
+        for m in models
+    ]
     total = sum(APPROX_GB.get(m, 0) for m in models)
     if paint:
-        lines.append(f"  {'paint':<10} {APPROX_GB['paint']:>5.1f} GB  ({PAINT_HF_REPO})")
+        lines.append(
+            f"  {'paint':<10} {APPROX_GB['paint']:>5.1f} GB  ({PAINT_HF_REPO})"
+        )
         total += APPROX_GB["paint"]
     print("Downloading Hunyuan3D weights from Hugging Face:", flush=True)
     print("\n".join(lines), flush=True)
     print(f"  {'total':<10} {total:>5.1f} GB (approximate)\n", flush=True)
-    print("These are Tencent Hunyuan Community License weights, not licensed for use in "
-          "the EU, the UK or South Korea.\n", flush=True)
+    print(
+        "These are Tencent Hunyuan Community License weights, not licensed for use in "
+        "the EU, the UK or South Korea.\n",
+        flush=True,
+    )
     return total
 
 
@@ -158,27 +253,37 @@ def build_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
-        "--model", choices=sorted(SHAPE_HF_SOURCES), default=DEFAULT_MODEL,
+        "--model",
+        choices=sorted(SHAPE_HF_SOURCES),
+        default=DEFAULT_MODEL,
         help=f"which shape model to download (default: {DEFAULT_MODEL}, the route the "
-             f"pipeline uses); pass --all for every one",
+        f"pipeline uses); pass --all for every one",
     )
     parser.add_argument(
-        "--all", action="store_true",
+        "--all",
+        action="store_true",
         help="download every shape model, not just the default. Adds about "
-             f"{APPROX_GB['2.1'] + APPROX_GB['2.0-turbo']:.0f} GB you probably do not need",
+        f"{APPROX_GB['2.1'] + APPROX_GB['2.0-turbo']:.0f} GB you probably do not need",
     )
     parser.add_argument("--skip-paint", action="store_true")
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="download without asking again. For a caller that already asked.",
+    )
     return parser
 
 
-def main() -> int:
-    args = build_parser().parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     # Defaulting to every model was the bug: the README documents this exact command and
     # calls it "~13 GB", while all three shape checkpoints plus paint come to ~24 GB.
     # Nobody chose that, and the extra two models go unused by the default route.
     models = sorted(SHAPE_HF_SOURCES) if args.all else [args.model]
     announce(models, paint=not args.skip_paint)
+    if not confirmed(args.yes):
+        return 1
 
     for model in models:
         download_shape(model)

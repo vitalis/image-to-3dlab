@@ -59,6 +59,23 @@ def mean_vertex_normals(n_verts, faces, face_normals):
     return (vn / np.clip(norm, 1e-12, None)).astype(np.float32)
 
 
+def smooth_inpaint_holes(inpaint, image_u8, mask_u8):
+    """Run `inpaint`. Only a missing OpenCV is ignored.
+
+    Returns the smoothed image, or None so the caller keeps the nearest fill.
+    Any other error propagates: a broken OpenCV must not look like a finished texture.
+    """
+    try:
+        return inpaint(image_u8, mask_u8, 3, 0)
+    except ImportError:
+        return None
+
+
+def _call_cv2_inpaint(image_u8, mask_u8, radius, _flag):
+    import cv2
+    return cv2.inpaint(image_u8, mask_u8, radius, cv2.INPAINT_NS)
+
+
 class MeshRender:
     def __init__(self, camera_distance=1.45, ortho_scale=1.2, scale_factor=1.15):
         self.camera_distance = camera_distance
@@ -225,13 +242,11 @@ class MeshRender:
         if holes.any() and mask.any():
             idx = ndimage.distance_transform_edt(holes, return_distances=False, return_indices=True)
             out = out[tuple(idx)]
-            try:
-                import cv2
-                m8 = (holes.astype(np.uint8)) * 255
-                sm = cv2.inpaint((out * 255).astype(np.uint8), m8, 3, cv2.INPAINT_NS)
-                out = sm.astype(np.float32) / 255.0
-            except Exception:
-                pass
+            image_u8 = (out * 255).astype(np.uint8)
+            mask_u8 = (holes.astype(np.uint8)) * 255
+            smoothed = smooth_inpaint_holes(_call_cv2_inpaint, image_u8, mask_u8)
+            if smoothed is not None:
+                out = np.asarray(smoothed, np.float32) / 255.0
         return np.clip(out, 0, 1)
 
     # --- image-to-3dlab: i2l_occlusion_fill -----------------------------------------------------

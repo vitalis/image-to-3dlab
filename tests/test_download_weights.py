@@ -28,14 +28,15 @@ def _load():
 dw = _load()
 
 
-def test_the_checkpoint_goes_once_the_conversion_exists(tmp_path):
+def test_a_non_empty_stub_is_not_a_finished_conversion(tmp_path):
+    """Bytes on disk are not enough. The safetensors has to open and carry the shape tensors."""
     ckpt = tmp_path / "model.fp16.ckpt"
     converted = tmp_path / "model.fp16.safetensors"
     ckpt.write_bytes(b"\0" * 4096)
     converted.write_bytes(b"\0" * 4096)
 
-    assert dw.discard_converted_checkpoint(ckpt, converted) is True
-    assert not ckpt.exists()
+    assert dw.discard_converted_checkpoint(ckpt, converted) is False
+    assert ckpt.is_file()
     assert converted.is_file()
 
 
@@ -53,14 +54,19 @@ def test_an_unfinished_conversion_keeps_the_checkpoint(tmp_path):
 def test_a_missing_conversion_keeps_the_checkpoint(tmp_path):
     ckpt = tmp_path / "model.fp16.ckpt"
     ckpt.write_bytes(b"\0" * 4096)
-    assert dw.discard_converted_checkpoint(ckpt, tmp_path / "absent.safetensors") is False
+    assert (
+        dw.discard_converted_checkpoint(ckpt, tmp_path / "absent.safetensors") is False
+    )
     assert ckpt.is_file()
 
 
 def test_rerunning_after_cleanup_is_harmless(tmp_path):
     converted = tmp_path / "model.fp16.safetensors"
     converted.write_bytes(b"\0" * 4096)
-    assert dw.discard_converted_checkpoint(tmp_path / "model.fp16.ckpt", converted) is False
+    assert (
+        dw.discard_converted_checkpoint(tmp_path / "model.fp16.ckpt", converted)
+        is False
+    )
 
 
 def test_the_2_1_route_is_the_only_one_that_converts():

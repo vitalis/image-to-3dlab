@@ -7,7 +7,22 @@ timestep_spacing='trailing', steps_offset=1). Deterministic — good for a repro
 from __future__ import annotations
 
 import numpy as np
-import mlx.core as mx
+
+
+def previous_ddim_timestep(timesteps, t) -> int:
+    """The scheduled step after `t`, or -1 after the last one.
+
+    Trailing spacing does not keep one gap. Fifteen steps alternate 66 and 67,
+    so `t - round(1000 / n)` is the wrong previous alpha on five of them.
+    """
+    steps = [int(step) for step in timesteps]
+    try:
+        index = steps.index(int(t))
+    except ValueError as exc:
+        raise ValueError(f"timestep {t} is not in the schedule") from exc
+    if index + 1 < len(steps):
+        return steps[index + 1]
+    return -1
 
 
 def _rescale_zero_terminal_snr(alphas_cumprod):
@@ -54,7 +69,6 @@ class DDIMScheduler:
         ts = np.round(np.arange(self.num_train, 0, -ratio)).astype(int) - 1  # trailing
         ts = np.clip(ts, 0, self.num_train - 1)
         self.timesteps = ts
-        self.ratio = int(round(ratio))
 
     def init_noise_sigma(self):
         return 1.0
@@ -64,7 +78,7 @@ class DDIMScheduler:
 
     def step(self, v, t, sample):
         """v: model output (v_prediction). sample: x_t. Returns x_{t-1}."""
-        prev_t = t - self.ratio
+        prev_t = previous_ddim_timestep(self.timesteps, t)
         a_t = float(self.acp[t])
         a_prev = float(self.acp[prev_t]) if prev_t >= 0 else self.final_alpha
         sa_t, soma_t = a_t ** 0.5, (1 - a_t) ** 0.5

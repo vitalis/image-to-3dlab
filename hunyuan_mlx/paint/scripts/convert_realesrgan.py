@@ -21,14 +21,20 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import sys
 import urllib.request
 from pathlib import Path
+
+# Same figure scripts/bootstrap_hunyuan_cuda.py states for this file.
+REALESRGAN_GB = 0.067
 
 RELEASE_URL = (
     "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/"
     "RealESRGAN_x4plus.pth"
 )
-DEFAULT_OUT = Path(__file__).resolve().parents[1] / "weights" / "realesrgan" / "rrdbnet.npz"
+DEFAULT_OUT = (
+    Path(__file__).resolve().parents[1] / "weights" / "realesrgan" / "rrdbnet.npz"
+)
 
 
 def download(dest: Path) -> None:
@@ -49,18 +55,58 @@ def convert(pth_path: Path, out_path: Path) -> None:
     print(f"wrote {out_path}: {len(arrays)} tensors")
 
 
-def main() -> int:
+def confirmed(yes: bool) -> bool:
+    if yes:
+        return True
+    if not sys.stdin or not sys.stdin.isatty():
+        print("Refusing to download without --yes when there is nobody to ask.")
+        return False
+    try:
+        answer = input("Continue? [y/N] ")
+    except EOFError:
+        print("Refusing to download without --yes when there is nobody to ask.")
+        return False
+    if answer.strip().lower() not in {"y", "yes"}:
+        print("Nothing downloaded.")
+        return False
+    return True
+
+
+def announce_download() -> None:
+    print("Downloading RealESRGAN_x4plus.pth from the official release:", flush=True)
+    print(f"  {REALESRGAN_GB:.3f} GB  {RELEASE_URL}", flush=True)
+    print("Licence: BSD-3-Clause (xinntao/Real-ESRGAN).", flush=True)
+    print(
+        "This file is not a Tencent weight. Hunyuan weights used with this paint "
+        "stage are not licensed for use in the EU, the UK or South Korea.",
+        flush=True,
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--pth", type=Path, default=None,
-                         help="local RealESRGAN_x4plus.pth; downloaded from the official "
-                         "release if omitted")
+    parser.add_argument(
+        "--pth",
+        type=Path,
+        default=None,
+        help="local RealESRGAN_x4plus.pth; downloaded from the official "
+        "release if omitted",
+    )
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
-    args = parser.parse_args()
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="download without asking again, when a download is needed",
+    )
+    args = parser.parse_args(argv)
 
     pth_path = args.pth
     if pth_path is None:
         pth_path = args.out.parent / "RealESRGAN_x4plus.pth"
         if not pth_path.is_file():
+            announce_download()
+            if not confirmed(args.yes):
+                return 1
             download(pth_path)
 
     convert(pth_path, args.out)

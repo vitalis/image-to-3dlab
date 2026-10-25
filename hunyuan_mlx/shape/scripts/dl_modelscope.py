@@ -3,13 +3,22 @@
 ModelScope serves the LFS blobs (hf-mirror 308-redirects them to blocked
 huggingface.co). Honors HTTPS_PROXY from env. Pure stdlib.
 """
+
+import argparse
 import os
 import sys
 import time
 import urllib.request
 
-BASE = ("https://modelscope.cn/api/v1/models/Tencent-Hunyuan/"
-        "Hunyuan3D-2mini/repo?Revision=master&FilePath=")
+TERRITORIAL = (
+    "These are Tencent Hunyuan Community License weights, not licensed for use in "
+    "the EU, the UK or South Korea."
+)
+
+BASE = (
+    "https://modelscope.cn/api/v1/models/Tencent-Hunyuan/"
+    "Hunyuan3D-2mini/repo?Revision=master&FilePath="
+)
 ROOT = os.environ.get("HY3D_WEIGHTS_ROOT", "weights/Hunyuan3D-2mini")
 
 FILES = [
@@ -20,6 +29,15 @@ FILES = [
 opener = urllib.request.build_opener(
     urllib.request.ProxyHandler(urllib.request.getproxies())
 )
+
+
+def is_complete(out, approx) -> bool:
+    """True when the file is present and within 4 KiB of the stated length.
+
+    The comparison applies to a missing file as well as a short one. Binding it
+    only to the missing branch treated every existing file as finished.
+    """
+    return (os.path.getsize(out) if os.path.exists(out) else 0) >= approx - 4096
 
 
 def download(path, approx):
@@ -46,25 +64,72 @@ def download(path, approx):
                     if got % (64 << 20) < (1 << 20):
                         cur = have + got
                         mbps = got / 1e6 / max(1e-3, time.time() - t0)
-                        print(f"  {path}: {cur/1e6:.0f} MB  ({mbps:.1f} MB/s)", flush=True)
-            print(f"  segment done {path}: +{got/1e6:.0f} MB", flush=True)
+                        print(
+                            f"  {path}: {cur / 1e6:.0f} MB  ({mbps:.1f} MB/s)",
+                            flush=True,
+                        )
+            print(f"  segment done {path}: +{got / 1e6:.0f} MB", flush=True)
         except urllib.error.HTTPError as e:
             if e.code == 416:  # range past EOF => file already complete
-                print(f"  complete {path} (416, {os.path.getsize(out)} bytes)", flush=True)
+                print(
+                    f"  complete {path} (416, {os.path.getsize(out)} bytes)", flush=True
+                )
                 return True
             print(f"  attempt {attempt} {path}: HTTP {e.code}", flush=True)
             time.sleep(min(20, 2 ** (attempt % 6)))
         except Exception as e:  # noqa: BLE001
-            print(f"  attempt {attempt} {path}: {type(e).__name__}: {str(e)[:100]}", flush=True)
+            print(
+                f"  attempt {attempt} {path}: {type(e).__name__}: {str(e)[:100]}",
+                flush=True,
+            )
             time.sleep(min(20, 2 ** (attempt % 6)))
-    return os.path.getsize(out) if os.path.exists(out) else 0 >= approx - 4096
+    return is_complete(out, approx)
 
 
-if __name__ == "__main__":
+def confirmed(yes: bool) -> bool:
+    if yes:
+        return True
+    if not sys.stdin or not sys.stdin.isatty():
+        print("Refusing to download without --yes when there is nobody to ask.")
+        return False
+    try:
+        answer = input("Continue? [y/N] ")
+    except EOFError:
+        print("Refusing to download without --yes when there is nobody to ask.")
+        return False
+    if answer.strip().lower() not in {"y", "yes"}:
+        print("Nothing downloaded.")
+        return False
+    return True
+
+
+def announce() -> None:
+    print("Downloading Hunyuan3D-2mini weights from ModelScope:", flush=True)
+    total = 0
+    for path, approx in FILES:
+        print(f"  {approx / 1e9:.2f} GB  {path}", flush=True)
+        total += approx
+    print(f"  {total / 1e9:.2f} GB total (approximate)", flush=True)
+    print(TERRITORIAL, flush=True)
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--yes", action="store_true", help="download without asking again"
+    )
+    args = parser.parse_args(argv)
+    announce()
+    if not confirmed(args.yes):
+        return 1
     ok = True
     for path, approx in FILES:
         print(f">>> {path}", flush=True)
         if not download(path, approx):
             ok = False
     print("DOWNLOADS_DONE" if ok else "DOWNLOADS_INCOMPLETE", flush=True)
-    sys.exit(0 if ok else 1)
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

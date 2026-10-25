@@ -5,11 +5,9 @@ Mirrors reference preprocessors.py + the in-conditioner torchvision transform:
   DINO transform:   [-1,1] -> [0,1] -> resize(518, bilinear) -> ImageNet-normalize -> NHWC
 All on CPU/numpy (the irreducible host part); output feeds the MLX DINO.
 """
-import cv2
+
 import numpy as np
 from PIL import Image
-
-import mlx.core as mx
 
 IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
@@ -26,6 +24,12 @@ def recenter(image: np.ndarray, border_ratio: float = 0.15):
     size = max(H, W)
     result = np.zeros((size, size, C), dtype=np.uint8)
     coords = np.nonzero(mask)
+    # np.nonzero on a blank mask is empty. .min() would raise a numpy error
+    # before the empty-image check below. The crop slice is unchanged: the
+    # reference ImageProcessorV2 is not in this repo, so the inclusive max is
+    # still excluded until that file can be compared.
+    if coords[0].size == 0:
+        raise ValueError("input image is empty")
     x_min, x_max = coords[0].min(), coords[0].max()
     y_min, y_max = coords[1].min(), coords[1].max()
     h, w = x_max - x_min, y_max - y_min
@@ -36,8 +40,11 @@ def recenter(image: np.ndarray, border_ratio: float = 0.15):
     h2, w2 = int(h * scale), int(w * scale)
     x2 = (size - h2) // 2
     y2 = (size - w2) // 2
-    result[x2:x2 + h2, y2:y2 + w2] = cv2.resize(image[x_min:x_max, y_min:y_max], (w2, h2),
-                                                interpolation=cv2.INTER_AREA)
+    import cv2
+
+    result[x2 : x2 + h2, y2 : y2 + w2] = cv2.resize(
+        image[x_min:x_max, y_min:y_max], (w2, h2), interpolation=cv2.INTER_AREA
+    )
     bg = np.ones((size, size, 3), dtype=np.uint8) * 255
     m = result[..., 3:].astype(np.float32) / 255
     out = result[..., :3] * m + bg * (1 - m)
@@ -46,6 +53,8 @@ def recenter(image: np.ndarray, border_ratio: float = 0.15):
 
 def load_image(path_or_pil, size: int = 512, border_ratio: float = 0.15) -> np.ndarray:
     """Returns [1, 3, size, size] float32 in [-1, 1] (RGB), matching array_to_tensor."""
+    import cv2
+
     if isinstance(path_or_pil, str):
         img = Image.open(path_or_pil)
     else:
@@ -59,10 +68,13 @@ def load_image(path_or_pil, size: int = 512, border_ratio: float = 0.15) -> np.n
     return t
 
 
-def dino_transform(img_chw_m1p1: np.ndarray, image_size: int = 518) -> mx.array:
+def dino_transform(img_chw_m1p1: np.ndarray, image_size: int = 518):
     """[3, H, W] in [-1,1] -> NHWC [1, 518, 518, 3] ImageNet-normalized (mx.array float32)."""
-    img01 = (img_chw_m1p1 + 1.0) / 2.0          # [0,1]
-    hwc = np.transpose(img01, (1, 2, 0))         # HWC
+    import cv2
+    import mlx.core as mx
+
+    img01 = (img_chw_m1p1 + 1.0) / 2.0  # [0,1]
+    hwc = np.transpose(img01, (1, 2, 0))  # HWC
     resized = cv2.resize(hwc, (image_size, image_size), interpolation=cv2.INTER_LINEAR)
     norm = (resized - IMAGENET_MEAN) / IMAGENET_STD
     return mx.array(norm[None].astype(np.float32))  # NHWC
