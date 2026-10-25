@@ -76,7 +76,9 @@ def _run(
 
     SF3D, remove_background, resize_foreground = _load_sf3d(options.repo)
     model = SF3D.from_pretrained(
-        options.model, config_name="config.yaml", weight_name="model.safetensors"
+        str(require_local_weights(options.model)),
+        config_name="config.yaml",
+        weight_name="model.safetensors",
     ).to(device)
     model.eval()
 
@@ -122,13 +124,35 @@ def pick_device(forced_cpu: bool, cuda: bool, mps: bool) -> str:
     return "mps" if mps else "cpu"
 
 
+def require_local_weights(model: str) -> Path:
+    """A directory that already holds SF3D's two files. A hub id is refused.
+
+    ``from_pretrained`` downloads ``config.yaml`` and ``model.safetensors`` when it is
+    given a hub id. That fetch belongs to ``scripts/bootstrap_sf3d.py``, which names
+    the size and waits for a yes.
+    """
+    path = Path(model).expanduser()
+    if (
+        path.is_dir()
+        and (path / "config.yaml").is_file()
+        and (path / "model.safetensors").is_file()
+    ):
+        return path.resolve()
+    raise RuntimeError(
+        "SF3D weights are not a local directory with config.yaml and model.safetensors. "
+        "Run scripts/bootstrap_sf3d.py. This package will not download them."
+    )
+
+
 def generate_sf3d(image: Path, output_dir: Path, options: SF3DOptions) -> Path:
+    require_local_weights(options.model)
     import torch
 
     os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
     forced_cpu = os.environ.get("SF3D_USE_CPU") == "1"
-    device = pick_device(forced_cpu, torch.cuda.is_available(),
-                         torch.backends.mps.is_available())
+    device = pick_device(
+        forced_cpu, torch.cuda.is_available(), torch.backends.mps.is_available()
+    )
     output_path = output_dir.resolve() / f"{image.stem}_sf3d.glb"
     try:
         return _run(image, output_path, options, device)

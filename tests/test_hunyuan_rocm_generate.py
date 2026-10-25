@@ -20,7 +20,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 import hunyuan_rocm_generate as gen
 
-GB = 1024 ** 3
+GB = 1024**3
 
 
 def test_a_big_card_is_left_on_upstreams_settings():
@@ -47,8 +47,12 @@ def test_the_ladder_only_ever_gives_back_what_it_has_to(gigabytes):
     so "at least as tight" has to mean per-column across the table, not per-sample.
     """
     rungs = gen.FIT_LADDER
-    for (floor_a, views_a, res_a, chunk_a), (floor_b, views_b, res_b, chunk_b) in itertools.pairwise(
-            rungs):
+    for (floor_a, views_a, res_a, chunk_a), (
+        floor_b,
+        views_b,
+        res_b,
+        chunk_b,
+    ) in itertools.pairwise(rungs):
         assert floor_b < floor_a, (floor_a, floor_b)
         assert views_b <= views_a, (views_a, views_b)
         assert res_b <= res_a, (res_a, res_b)
@@ -119,7 +123,9 @@ def test_the_chunk_reaches_the_environment_the_patch_reads(tmp_path):
 def test_no_chunk_means_the_variable_is_not_set_at_all(tmp_path):
     fresh: dict = {}
     gen.configure_environment(tmp_path, chunk=0, environ=fresh)
-    assert gen.CHUNK_ENV not in fresh, "an empty value would be read as a chunk of zero rows"
+    assert gen.CHUNK_ENV not in fresh, (
+        "an empty value would be read as a chunk of zero rows"
+    )
 
 
 def test_the_expandable_segments_trap_the_nvidia_route_sets_is_not_set_here(tmp_path):
@@ -148,6 +154,7 @@ def test_the_log_says_so_when_it_cannot_read_the_card():
 
 # --- the 512px black texture, found by running this on a real card -----------------------
 
+
 def test_this_route_never_asks_for_the_resolution_that_comes_back_black():
     """Upstream offers 512 and 768. On this card the paint UNet's multiview output has a
     maximum of 0.02 across the whole image at 512 -- uniformly black -- where at 256 it is
@@ -158,7 +165,9 @@ def test_this_route_never_asks_for_the_resolution_that_comes_back_black():
     assert gen.MAX_PAINT_RESOLUTION == 256
     assert gen.VALID_PAINT_RESOLUTION == (128, 256)
     for gigabytes in (48, 24, 20, 16, 12, 8, 1):
-        assert gen.fit_paint_settings(gigabytes * GB)["paint_resolution"] <= 256, gigabytes
+        assert gen.fit_paint_settings(gigabytes * GB)["paint_resolution"] <= 256, (
+            gigabytes
+        )
 
 
 def test_a_black_texture_is_told_apart_from_a_dark_one(tmp_path):
@@ -188,7 +197,8 @@ def test_a_run_that_baked_a_black_texture_stops_rather_than_shipping_it(tmp_path
     from PIL import Image
 
     Image.fromarray(numpy.zeros((64, 64, 3), dtype="uint8")).save(
-        tmp_path / "textured_mesh.jpg")
+        tmp_path / "textured_mesh.jpg"
+    )
     with pytest.raises(SystemExit) as raised:
         gen._refuse_a_blank_texture(tmp_path, {"paint_resolution": 512})
     message = str(raised.value)
@@ -230,9 +240,17 @@ def test_a_missing_checkout_is_reported_before_any_model_loads(tmp_path):
 
 
 def test_the_manifest_says_this_is_the_rocm_route(tmp_path):
-    manifest = gen.build_manifest(image="a.png", output="a.glb", params={}, shape_only=False,
-                                  timings={}, artifacts={}, matte_model=None,
-                                  fitted={"sdpa_query_chunk": 1024}, free_bytes=12 * GB)
+    manifest = gen.build_manifest(
+        image="a.png",
+        output="a.glb",
+        params={},
+        shape_only=False,
+        timings={},
+        artifacts={},
+        matte_model=None,
+        fitted={"sdpa_query_chunk": 1024},
+        free_bytes=12 * GB,
+    )
     assert manifest["device"] == "hip"
     assert "ROCm" in manifest["port"]
     assert manifest["generator"] == "hunyuan_rocm_generate.py"
@@ -247,8 +265,14 @@ def test_the_provenance_records_the_rocm_route_not_the_cuda_one(tmp_path):
     output = tmp_path / "out.glb"
     image.write_bytes(b"\x89PNG\r\n\x1a\n")
     output.write_bytes(b"glTF")
-    record = gen.build_provenance(image=image, output=output, parameters={},
-                                  matte_model=None, shape_only=False, backend_revision="abc")
+    record = gen.build_provenance(
+        image=image,
+        output=output,
+        parameters={},
+        matte_model=None,
+        shape_only=False,
+        backend_revision="abc",
+    )
     assert record["model"]["route"] == "amd-rocm"
     assert "Hunyuan" in record["license"]["name"]
     assert record["software"]["backend_revision"] == "abc"
@@ -261,16 +285,28 @@ def test_shape_only_does_not_claim_the_paint_models_it_never_loaded(tmp_path):
     output = tmp_path / "out.glb"
     image.write_bytes(b"\x89PNG\r\n\x1a\n")
     output.write_bytes(b"glTF")
-    names = [c["component"] for c in gen.build_provenance(
-        image=image, output=output, parameters={}, matte_model=None, shape_only=True,
-        backend_revision=None)["components"]]
+    names = [
+        c["component"]
+        for c in gen.build_provenance(
+            image=image,
+            output=output,
+            parameters={},
+            matte_model=None,
+            shape_only=True,
+            backend_revision=None,
+        )["components"]
+    ]
     assert "facebook/dinov2-giant" not in names
     assert "RealESRGAN_x4plus" not in names
 
 
 def test_validation_rejects_what_the_pipeline_cannot_do():
-    for bad in ({"octree_resolution": 999}, {"paint_resolution": 999},
-                {"max_num_view": 0}, {"steps": 0}):
+    for bad in (
+        {"octree_resolution": 999},
+        {"paint_resolution": 999},
+        {"max_num_view": 0},
+        {"steps": 0},
+    ):
         with pytest.raises(ValueError):
             gen.validate(bad)
 
@@ -286,6 +322,7 @@ def test_validation_fills_in_the_defaults():
 def test_the_intermediate_files_are_named_after_the_output():
     assert gen.work_dir(Path("/o/fox.glb")).name == "fox__hunyuan"
     assert gen.matted_path(Path("/o/fox.glb")).name == "fox__matted.png"
+
 
 def test_a_small_card_gets_fewer_views_when_nobody_asked_for_more():
     """The defaults used to be filled in before the fit, so they read as a request and the
@@ -314,7 +351,8 @@ def test_a_black_texture_at_the_top_size_suggests_a_smaller_one(tmp_path):
     from PIL import Image
 
     Image.fromarray(numpy.zeros((64, 64, 3), dtype="uint8")).save(
-        tmp_path / "textured_mesh.jpg")
+        tmp_path / "textured_mesh.jpg"
+    )
     with pytest.raises(SystemExit) as raised:
         gen._refuse_a_blank_texture(tmp_path, {"paint_resolution": 256})
     assert "--paint-resolution 128" in str(raised.value)
@@ -346,7 +384,9 @@ def test_every_missing_weight_set_is_named(tmp_path):
 
 
 def test_shape_only_does_not_ask_for_the_paint_weights(tmp_path):
-    missing = gen.missing_weights(tmp_path / "vendor", tmp_path / "hub", shape_only=True)
+    missing = gen.missing_weights(
+        tmp_path / "vendor", tmp_path / "hub", shape_only=True
+    )
     assert len(missing) == 2 and all("shape" in line for line in missing)
 
 
@@ -362,14 +402,34 @@ def test_a_run_with_no_weights_refuses_instead_of_downloading(tmp_path, monkeypa
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{}")
     monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "hub"))
-    monkeypatch.setattr(gen, "prepare_image", lambda *a, **k: pytest.fail("got past the check"))
+    monkeypatch.setattr(
+        gen, "prepare_image", lambda *a, **k: pytest.fail("got past the check")
+    )
     with pytest.raises(SystemExit, match="unannounced") as refused:
         gen.generate(tmp_path / "in.png", tmp_path / "out.glb", vendor, {})
     assert "bootstrap_hunyuan_rocm.py --weights-only" in str(refused.value)
 
 
-def test_check_reports_missing_weights_without_loading_anything(tmp_path, monkeypatch, capsys):
+def test_check_reports_missing_weights_without_loading_anything(
+    tmp_path, monkeypatch, capsys
+):
     monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "hub"))
-    monkeypatch.setattr(gen, "_enter_upstream", lambda *a, **k: pytest.fail("loaded upstream"))
+    monkeypatch.setattr(
+        gen, "_enter_upstream", lambda *a, **k: pytest.fail("loaded upstream")
+    )
     assert gen.check_environment(tmp_path / "vendor") == 1
     assert "--weights-only" in capsys.readouterr().out
+
+
+def test_an_uncut_image_stops_when_the_remover_file_is_missing(tmp_path, monkeypatch):
+    from PIL import Image
+
+    from image_to_3dlab import matte
+
+    monkeypatch.setenv("U2NET_HOME", str(tmp_path / "empty"))
+    (tmp_path / "empty").mkdir()
+    monkeypatch.setattr(matte, "cut_out", lambda *a, **k: pytest.fail("session"))
+    source = tmp_path / "plain.png"
+    Image.new("RGB", (8, 8), "white").save(source)
+    with pytest.raises(SystemExit, match="bootstrap_matte.py"):
+        gen.prepare_image(source, tmp_path / "out.glb", force_matte=False)

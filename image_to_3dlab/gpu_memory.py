@@ -19,7 +19,7 @@ import shutil
 import subprocess
 from collections.abc import Callable
 
-GB = 1024 ** 3
+GB = 1024**3
 
 # rocm-smi --showmeminfo vram prints one line per GPU:
 #   GPU[0]        : VRAM Total Memory (B): 25753026560
@@ -31,30 +31,34 @@ _ROCM_USED = re.compile(r"^GPU\[\d+\]\s*:\s*VRAM Total Used Memory \(B\):\s*(\d+
 
 def _run(command: list[str], timeout: int = 10) -> str | None:
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=timeout,
-                                check=False)
+        result = subprocess.run(
+            command, capture_output=True, text=True, timeout=timeout, check=False
+        )
     except (OSError, subprocess.SubprocessError):
         return None
     return result.stdout if result.returncode == 0 else None
 
 
-def nvidia_free_bytes(which: Callable = shutil.which,
-                      run: Callable = _run) -> int | None:
+def nvidia_free_bytes(
+    which: Callable = shutil.which, run: Callable = _run
+) -> int | None:
     """Free VRAM on the first NVIDIA card, in bytes."""
     tool = which("nvidia-smi")
     if not tool:
         return None
-    out = run([tool, "--query-gpu=memory.free,memory.total",
-               "--format=csv,noheader,nounits"])
-    match = _NVIDIA_FREE.match((out or "").strip().splitlines()[0] if out and out.strip() else "")
+    out = run(
+        [tool, "--query-gpu=memory.free,memory.total", "--format=csv,noheader,nounits"]
+    )
+    match = _NVIDIA_FREE.match(
+        (out or "").strip().splitlines()[0] if out and out.strip() else ""
+    )
     if not match:
         return None
     free_mib, _total_mib = int(match[1]), int(match[2])
     return free_mib * 1024 * 1024
 
 
-def rocm_free_bytes(which: Callable = shutil.which,
-                    run: Callable = _run) -> int | None:
+def rocm_free_bytes(which: Callable = shutil.which, run: Callable = _run) -> int | None:
     """Free VRAM on the largest AMD card, in bytes.
 
     `rocm-smi` numbers its GPUs, and the smallest of a multi-GPU box can be an APU with a
@@ -67,16 +71,23 @@ def rocm_free_bytes(which: Callable = shutil.which,
     out = run([tool, "--showmeminfo", "vram"])
     if not out:
         return None
-    total = [int(m[1]) for m in (_ROCM_TOTAL.match(line.strip()) for line in out.splitlines()) if m]
-    used = [int(m[1]) for m in (_ROCM_USED.match(line.strip()) for line in out.splitlines()) if m]
+    total = [
+        int(m[1])
+        for m in (_ROCM_TOTAL.match(line.strip()) for line in out.splitlines())
+        if m
+    ]
+    used = [
+        int(m[1])
+        for m in (_ROCM_USED.match(line.strip()) for line in out.splitlines())
+        if m
+    ]
     if not total or len(total) != len(used):
         return None
-    free = max(t - u for t, u in zip(total, used))
-    return max(0, free)
+    biggest = max(range(len(total)), key=total.__getitem__)
+    return max(0, total[biggest] - used[biggest])
 
 
-def free_vram_bytes(which: Callable = shutil.which,
-                    run: Callable = _run) -> int | None:
+def free_vram_bytes(which: Callable = shutil.which, run: Callable = _run) -> int | None:
     """Free VRAM on this machine's GPU, or None when it cannot be read.
 
     None means *unknown*, not *zero*: a box whose tools are missing or that is mid-install
@@ -87,14 +98,20 @@ def free_vram_bytes(which: Callable = shutil.which,
     and a caller fitting settings to VRAM would then choose settings for the smaller card on
     purpose. Either way the answer is a lower bound on one card, never an upper bound on both.
     """
-    found = [amount for amount in
-             (probe(which=which, run=run) for probe in (nvidia_free_bytes, rocm_free_bytes))
-             if amount is not None]
+    found = [
+        amount
+        for amount in (
+            probe(which=which, run=run)
+            for probe in (nvidia_free_bytes, rocm_free_bytes)
+        )
+        if amount is not None
+    ]
     return max(found) if found else None
 
 
-def gpu_processes(which: Callable = shutil.which,
-                  run: Callable = _run) -> list[tuple[int, str, int]]:
+def gpu_processes(
+    which: Callable = shutil.which, run: Callable = _run
+) -> list[tuple[int, str, int]]:
     """(pid, name, vram bytes) for the programs using the card right now.
 
     Both vendors list this. It is what turns "out of memory" into an answer: the user is
@@ -112,8 +129,13 @@ def gpu_processes(which: Callable = shutil.which,
     tool = which("nvidia-smi")
     if not tool:
         return []
-    out = run([tool, "--query-compute-apps=pid,process_name,used_gpu_memory",
-               "--format=csv,noheader,nounits"])
+    out = run(
+        [
+            tool,
+            "--query-compute-apps=pid,process_name,used_gpu_memory",
+            "--format=csv,noheader,nounits",
+        ]
+    )
     rows = []
     for line in (out or "").splitlines():
         parts = [part.strip() for part in line.split(",")]
@@ -133,9 +155,12 @@ def human_bytes(value: int) -> str:
     return f"{size:.1f} TB"
 
 
-def gpu_busy_note(wanted_bytes: int, free_bytes: int | None = None,
-                  free: Callable[[], int | None] = free_vram_bytes,
-                  processes: Callable[..., list[tuple[int, str, int]]] = gpu_processes) -> str | None:
+def gpu_busy_note(
+    wanted_bytes: int,
+    free_bytes: int | None = None,
+    free: Callable[[], int | None] = free_vram_bytes,
+    processes: Callable[..., list[tuple[int, str, int]]] = gpu_processes,
+) -> str | None:
     """Why a run will not fit, or None when it will (or when we cannot tell).
 
     `wanted_bytes` is what the backend needs up front, which is a floor: a generator's real
@@ -149,12 +174,16 @@ def gpu_busy_note(wanted_bytes: int, free_bytes: int | None = None,
         free_bytes = free()
     if free_bytes is None or free_bytes >= wanted_bytes:
         return None
-    note = (f"the GPU has {human_bytes(free_bytes)} free and this backend wants about "
-            f"{human_bytes(wanted_bytes)}")
+    note = (
+        f"the GPU has {human_bytes(free_bytes)} free and this backend wants about "
+        f"{human_bytes(wanted_bytes)}"
+    )
     rows = processes()
     if rows:
-        listed = ", ".join(f"{name} (pid {pid}, {human_bytes(vram)})"
-                           for pid, name, vram in sorted(rows, key=lambda row: -row[2]))
+        listed = ", ".join(
+            f"{name} (pid {pid}, {human_bytes(vram)})"
+            for pid, name, vram in sorted(rows, key=lambda row: -row[2])
+        )
         note += f". Close what is using the card first: {listed}"
     else:
         note += ". Another program is using the card; close it and try again"

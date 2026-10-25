@@ -13,6 +13,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "scripts"))
 
@@ -64,7 +66,9 @@ def test_the_amd_route_sets_no_allocator_configuration():
     """On ROCm, expandable_segments produced silent NaNs rather than an error, which is worse
     than not setting it. Guarded so it cannot be "tidied up" back in by symmetry."""
     assert "PYTORCH_CUDA_ALLOC_CONF" not in routes.ROCM.extra_env
-    assert routes.CUDA.extra_env["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
+    assert (
+        routes.CUDA.extra_env["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
+    )
 
 
 def test_environ_does_not_mutate_the_caller_and_copies_by_default():
@@ -97,23 +101,72 @@ def test_the_provenance_routes_sort_output_apart():
     assert routes.ROCM.provenance_route == "amd-rocm"
 
 
-def test_the_weights_come_from_the_repo_when_there_is_no_local_tree(monkeypatch, tmp_path):
+def _empty_cache(monkeypatch, tmp_path):
     monkeypatch.delenv("I2L_TRELLIS_MODEL_PATH", raising=False)
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "hub"))
+
+
+def test_a_missing_tree_is_refused_instead_of_the_hub_id(monkeypatch, tmp_path):
+    """The hub id used to be the silent fallback, and from_pretrained then downloaded."""
+    _empty_cache(monkeypatch, tmp_path)
     route = dataclasses.replace(routes.ROCM, vendor=tmp_path / "not-built")
-    assert route.model_path() == "microsoft/TRELLIS.2-4B"
+    with pytest.raises(SystemExit) as refused:
+        route.model_path()
+    text = str(refused.value)
+    assert "backend: TRELLIS.2" in text
+    assert route.name in text
+    assert "GB" in text
+    assert "bootstrap_trellis_rocm.py --weights-only" in text
+    assert "Refusing" in text
 
 
 def test_a_conventional_local_tree_is_used_without_being_asked(monkeypatch, tmp_path):
     """vendor/<route>/models/TRELLIS.2-4B holding a pipeline.json is a weights tree. Reading
     the environment alone would leave a machine that assembled one by hand still being told
     it is missing 15 GB."""
-    monkeypatch.delenv("I2L_TRELLIS_MODEL_PATH", raising=False)
-    route = dataclasses.replace(routes.ROCM, vendor=tmp_path)
-    assert route.model_path() == "microsoft/TRELLIS.2-4B"
+    _empty_cache(monkeypatch, tmp_path)
+    route = dataclasses.replace(routes.ROCM, vendor=tmp_path / "trellis-rocm")
+    with pytest.raises(SystemExit):
+        route.model_path()
     (route.vendor / "models" / "TRELLIS.2-4B").mkdir(parents=True)
-    assert route.model_path() == "microsoft/TRELLIS.2-4B", "an empty directory is not a tree"
+    with pytest.raises(SystemExit):
+        route.model_path()
     (route.vendor / "models" / "TRELLIS.2-4B" / "pipeline.json").write_text("{}")
     assert route.model_path() == str(route.vendor / "models" / "TRELLIS.2-4B")
+
+
+def test_a_cache_snapshot_with_pipeline_json_is_local(monkeypatch, tmp_path):
+    _empty_cache(monkeypatch, tmp_path)
+    snapshot = (
+        tmp_path / "hub" / "models--microsoft--TRELLIS.2-4B" / "snapshots" / "abc"
+    )
+    snapshot.mkdir(parents=True)
+    (snapshot / "pipeline.json").write_text("{}")
+    route = dataclasses.replace(routes.CUDA, vendor=tmp_path / "not-built")
+    assert route.model_path() == str(snapshot)
+
+
+def test_mac_resolve_does_not_return_the_hub_id_without_yes(monkeypatch, tmp_path):
+    _empty_cache(monkeypatch, tmp_path)
+    called = []
+
+    def boom(*_args, **_kwargs):
+        called.append(True)
+        raise AssertionError("from_pretrained")
+
+    with pytest.raises(SystemExit, match="--yes") as refused:
+        routes.resolve_weights(
+            route_label="Apple / trellis-space-mac", routes=(), confirm=False
+        )
+    text = str(refused.value)
+    assert "backend: TRELLIS.2" in text and "GB" in text
+    assert called == []
+    assert (
+        routes.resolve_weights(
+            route_label="Apple / trellis-space-mac", routes=(), confirm=True
+        )
+        == routes.HUB_REPO
+    )
 
 
 def test_the_weights_can_be_pointed_at_a_local_directory(monkeypatch, tmp_path):
@@ -128,21 +181,29 @@ def test_the_build_marker_is_the_same_name_on_both_routes():
     """Both bootstraps write `.i2l-build-complete`; readiness reads what the route asks for."""
     assert routes.CUDA.marker_name == routes.ROCM.marker_name == ".i2l-build-complete"
 
+
 def test_the_rocm_route_drops_an_inherited_allocator_setting():
     """expandable_segments gives silent NaNs on ROCm. Not setting it is not enough when the
     viewer was started from a shell that exports it."""
-    env = routes.ROCM.environ({"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-                               "PYTORCH_HIP_ALLOC_CONF": "expandable_segments:True"})
+    env = routes.ROCM.environ(
+        {
+            "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+            "PYTORCH_HIP_ALLOC_CONF": "expandable_segments:True",
+        }
+    )
     assert "PYTORCH_CUDA_ALLOC_CONF" not in env and "PYTORCH_HIP_ALLOC_CONF" not in env
-    assert routes.CUDA.environ({})["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
+    assert (
+        routes.CUDA.environ({})["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
+    )
 
 
 def test_the_cuda_route_keeps_a_users_own_allocator_setting():
     """Upstream's default, not a rule: a user who tuned it for their card keeps their value.
     The attention backends are still pinned, since a stale one selects a backend that is
     not there."""
-    env = routes.CUDA.environ({"PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:512",
-                               "ATTN_BACKEND": "stale"})
+    env = routes.CUDA.environ(
+        {"PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:512", "ATTN_BACKEND": "stale"}
+    )
     assert env["PYTORCH_CUDA_ALLOC_CONF"] == "max_split_size_mb:512"
     assert env["ATTN_BACKEND"] == "flash_attn"
 
@@ -170,4 +231,5 @@ def test_the_run_and_the_setup_card_look_in_the_same_places():
     assert routes.LOCAL_MODEL_DIR == backend_catalog.TRELLIS_LOCAL_MODEL_DIR
     for route in (routes.CUDA, routes.ROCM):
         assert set(route.local_trees()) == set(backend_catalog._local_trellis()) - {
-            backend_catalog.trellis_local_models()}
+            backend_catalog.trellis_local_models()
+        }

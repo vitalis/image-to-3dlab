@@ -26,49 +26,90 @@ sys.path.insert(0, str(REPO))
 from image_to_3dlab import host
 
 HALVES = ("shape", "paint")
-WEIGHTS_GB = 13.7  # Hunyuan3D-2 shape (5.0) + Xiong's paint-large (8.7), the catalogue's figures
+WEIGHTS_GB = (
+    13.7  # Hunyuan3D-2 shape (5.0) + Xiong's paint-large (8.7), the catalogue's figures
+)
 
 
 def venv_python(root: Path) -> Path:
-    return root / ".venv" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+    return (
+        root
+        / ".venv"
+        / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+    )
 
 
 def plan(repo: Path, uv: str) -> list[tuple[list[str], Path]]:
     """(command, working directory) for every step still needed, in order."""
-    steps = [([uv, "sync"], repo / "hunyuan_mlx" / half)
-             for half in HALVES if not venv_python(repo / "hunyuan_mlx" / half).exists()]
+    steps = [
+        ([uv, "sync"], repo / "hunyuan_mlx" / half)
+        for half in HALVES
+        if not venv_python(repo / "hunyuan_mlx" / half).exists()
+    ]
     # Explicitly the default route: without --model this fetches all three shape
-    # checkpoints, 23 GB where the default route needs 5.
-    steps.append(([str(venv_python(repo / "hunyuan_mlx" / "shape")),
-                   str(repo / "hunyuan_mlx" / "download_weights.py"), "--model", "2.0"], repo))
+    # checkpoints, 23 GB where the default route needs 5. --yes because this
+    # script already asked; the downloader has no keyboard of its own.
+    steps.append(
+        (
+            [
+                str(venv_python(repo / "hunyuan_mlx" / "shape")),
+                str(repo / "hunyuan_mlx" / "download_weights.py"),
+                "--yes",
+                "--model",
+                "2.0",
+            ],
+            repo,
+        )
+    )
     return steps
 
 
 def announcement(steps: list[tuple[list[str], Path]]) -> str:
     builds = [f"hunyuan_mlx/{cwd.name}" for cmd, cwd in steps if cmd[1:] == ["sync"]]
-    lines = ["Hunyuan3D-MLX (Xiong, full pipeline), default route (shape 2.0 + PBR paint)"]
+    lines = [
+        "Hunyuan3D-MLX (Xiong, full pipeline), default route (shape 2.0 + PBR paint)"
+    ]
     if builds:
         lines.append(f"  build   uv sync in {', '.join(builds)}")
-    lines.append(f"  fetch   about {WEIGHTS_GB} GB of weights from Hugging Face (skips what is there)")
-    lines.append("  licence Tencent Hunyuan Community License: not licensed in the EU, UK or South Korea")
+    lines.append(
+        f"  fetch   about {WEIGHTS_GB} GB of weights from Hugging Face (skips what is there)"
+    )
+    lines.append(
+        "  licence Tencent Hunyuan Community License: not licensed in the EU, UK or South Korea"
+    )
     return "\n".join(lines)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--yes", action="store_true", help="do not ask (the caller already did)")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--yes", action="store_true", help="do not ask (the caller already did)"
+    )
+    args = parser.parse_args(argv)
     uv = host.find_uv()
     if uv is None:
         raise SystemExit("uv is required: https://docs.astral.sh/uv/")
     steps = plan(REPO, uv)
     print(announcement(steps), flush=True)
-    if not args.yes and input("Go ahead? [y/N] ").strip().lower() not in {"y", "yes"}:
-        raise SystemExit("Nothing done.")
+    if not args.yes:
+        # Non-interactive without --yes must not silently proceed, and must not hang
+        # waiting on a stdin nobody is attached to.
+        if not sys.stdin or not sys.stdin.isatty():
+            print("Refusing to download without --yes when there is nobody to ask.")
+            return 1
+        try:
+            answer = input("Go ahead? [y/N] ")
+        except EOFError:
+            print("Refusing to download without --yes when there is nobody to ask.")
+            return 1
+        if answer.strip().lower() not in {"y", "yes"}:
+            print("Nothing done.")
+            return 1
     for command, cwd in steps:
         print(f"$ {' '.join(command)}  (in {cwd})", flush=True)
         subprocess.run(command, cwd=cwd, check=True)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

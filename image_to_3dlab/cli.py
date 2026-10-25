@@ -78,8 +78,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Face count above which generate.py's crude pre-simplify safety net runs "
-             "(maps to the I2L_PRE_CAP env var). Leave unset to use the port's default "
-             "of 4,000,000; a manifest may override it via 'pre_simplify_cap'.",
+        "(maps to the I2L_PRE_CAP env var). Leave unset to use the port's default "
+        "of 4,000,000; a manifest may override it via 'pre_simplify_cap'.",
     )
     trellis.add_argument("--steps", type=int)
     trellis.add_argument(
@@ -92,22 +92,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--trellis-remesh",
         action="store_true",
         help="Narrow-band DC remeshing before UV unwrap. generate.py calls this the stage "
-             "that targets boundary edges at source; every asset we ship is open",
+        "that targets boundary edges at source; every asset we ship is open",
     )
     trellis.add_argument(
         "--trellis-remesh-project",
         type=float,
         default=0.0,
         help="How far remeshed vertices snap back to the original surface. The vendored "
-             "port defaults to 0.9, which measurably worsened boundary edges "
-             "(6,008 -> 16,954 on the Forest Variant), so we default to 0.0",
+        "port defaults to 0.9, which measurably worsened boundary edges "
+        "(6,008 -> 16,954 on the Forest Variant), so we default to 0.0",
     )
     trellis.add_argument(
         "--trellis-material-mode",
         choices=("matte", "pbr"),
         default="pbr",
         help="pbr keeps TRELLIS's metallic-roughness map, matching the reference "
-             "implementation; matte discards it and renders mathematically flat",
+        "implementation; matte discards it and renders mathematically flat",
     )
 
     quality = parser.add_argument_group("ComfyUI/Hunyuan3D options")
@@ -179,7 +179,9 @@ def main(argv: list[str] | None = None) -> int:
             if "trellis_remesh" in parameters:
                 args.trellis_remesh = bool(parameters["trellis_remesh"])
             if "trellis_remesh_project" in parameters:
-                args.trellis_remesh_project = float(parameters["trellis_remesh_project"])
+                args.trellis_remesh_project = float(
+                    parameters["trellis_remesh_project"]
+                )
             args.output_dir = Path(
                 manifest_data.get("output", {}).get("directory", args.output_dir)
             )
@@ -196,12 +198,17 @@ def main(argv: list[str] | None = None) -> int:
     views = [v.expanduser().resolve() for v in (args.views or [args.image])]
     missing = [str(v) for v in views if not v.is_file()]
     if missing:
-        print(f"error: input image does not exist: {', '.join(missing)}", file=sys.stderr)
+        print(
+            f"error: input image does not exist: {', '.join(missing)}", file=sys.stderr
+        )
         return 2
     # Provenance and output naming follow the first view.
     image = views[0]
     if len(views) > 1 and not args.trellis:
-        print("error: multiple views are only supported by the trellis2 backend", file=sys.stderr)
+        print(
+            "error: multiple views are only supported by the trellis2 backend",
+            file=sys.stderr,
+        )
         return 2
     intent = {
         "use_case": manifest_data.get("use_case", "showcase")
@@ -231,6 +238,8 @@ def main(argv: list[str] | None = None) -> int:
     trellis_texture_backend = None
     trellis_material_normalized = None
     trellis_material_mode = None
+    trellis_winding_repaired = None
+    trellis_winding_inverted = None
 
     if not 0 < args.foreground_ratio <= 1:
         print("error: --foreground-ratio must be in (0, 1]", file=sys.stderr)
@@ -285,6 +294,8 @@ def main(argv: list[str] | None = None) -> int:
             trellis_texture_backend = trellis_result.texture_backend
             trellis_material_normalized = trellis_result.material_normalized
             trellis_material_mode = trellis_result.material_mode
+            trellis_winding_repaired = trellis_result.winding_repaired
+            trellis_winding_inverted = trellis_result.winding_inverted
         else:
             if args.workflow is None:
                 raise ValueError(
@@ -295,7 +306,7 @@ def main(argv: list[str] | None = None) -> int:
             result = ComfyUIClient(args.comfy_url).generate(
                 image=image,
                 workflow_path=args.workflow,
-                output_dir=args.output_dir,
+                output_dir=working_output_dir,
                 image_node=args.image_node,
                 output_node=args.output_node,
                 timeout=args.timeout,
@@ -320,10 +331,14 @@ def main(argv: list[str] | None = None) -> int:
         "material_mode": trellis_material_mode if args.trellis else None,
         "trellis_remesh": args.trellis_remesh if args.trellis else None,
         "trellis_remesh_project": (
-            args.trellis_remesh_project if args.trellis and args.trellis_remesh else None
+            args.trellis_remesh_project
+            if args.trellis and args.trellis_remesh
+            else None
         ),
         "steps": args.steps if args.trellis else None,
         "pre_simplify_cap": args.trellis_pre_simplify_cap if args.trellis else None,
+        "winding_repaired": trellis_winding_repaired if args.trellis else None,
+        "winding_inverted": trellis_winding_inverted if args.trellis else None,
     }
     result, sidecar = finalize_output(
         generated=result,

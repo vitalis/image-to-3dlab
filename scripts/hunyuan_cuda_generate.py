@@ -71,8 +71,9 @@ def checkout(vendor_root: Path) -> Path:
     return vendor_root / bootstrap.CHECKOUT.name
 
 
-def configure_environment(vendor_root: Path,
-                          environ: dict[str, str] | None = None) -> dict[str, str]:
+def configure_environment(
+    vendor_root: Path, environ: dict[str, str] | None = None
+) -> dict[str, str]:
     """Point upstream's shape loader at the weights the bootstrap fetched. Before import."""
     environ = os.environ if environ is None else environ
     environ["HY3DGEN_MODELS"] = str(vendor_root / bootstrap.MODELS.name)
@@ -94,13 +95,65 @@ def verify_paths(vendor_root: Path) -> list[str]:
         "shape pipeline": root / "hy3dshape" / "hy3dshape" / "pipelines.py",
         "paint pipeline": root / "hy3dpaint" / "textureGenPipeline.py",
         "paint config": root / "hy3dpaint" / "cfgs" / "hunyuan-paint-pbr.yaml",
-        "completed build (scripts/bootstrap_hunyuan_cuda.py)": vendor_root / BUILT_MARKER_NAME,
+        "completed build (scripts/bootstrap_hunyuan_cuda.py)": vendor_root
+        / BUILT_MARKER_NAME,
     }
-    return [f"missing {name}: {path}" for name, path in checks.items() if not path.exists()]
+    return [
+        f"missing {name}: {path}" for name, path in checks.items() if not path.exists()
+    ]
 
 
 def realesrgan_path(vendor_root: Path) -> Path:
     return vendor_root / bootstrap.REALESRGAN.relative_to(bootstrap.VENDOR)
+
+
+def hf_hub_dir(environ: dict[str, str] | None = None) -> Path:
+    """The Hugging Face cache upstream's paint stage reads, honouring the usual variables."""
+    environ = os.environ if environ is None else environ
+    if environ.get("HF_HUB_CACHE"):
+        return Path(environ["HF_HUB_CACHE"])
+    home = environ.get("HF_HOME") or str(Path.home() / ".cache" / "huggingface")
+    return Path(home) / "hub"
+
+
+def _cached(hub: Path, repo: str, inside: str) -> bool:
+    """Whether `inside` (a file or folder) is in any snapshot of `repo` in the cache."""
+    snapshots = hub / f"models--{repo.replace('/', '--')}" / "snapshots"
+    return any(snapshots.glob(f"*/{inside}"))
+
+
+def missing_weights(
+    vendor_root: Path, hub: Path | None = None, shape_only: bool = False
+) -> list[str]:
+    """Weights the run would otherwise fetch on its own. Upstream downloads the gaps."""
+    hub = hf_hub_dir() if hub is None else hub
+    shape = vendor_root / bootstrap.MODELS.name / bootstrap.HUNYUAN_REPO
+    checks = {
+        "Hunyuan3D-2.1 shape model": (shape / "hunyuan3d-dit-v2-1").is_dir(),
+        "Hunyuan3D-2.1 shape VAE": (shape / "hunyuan3d-vae-v2-1").is_dir(),
+    }
+    if not shape_only:
+        checks.update(
+            {
+                "Hunyuan3D-2.1 PBR paint": _cached(
+                    hub, bootstrap.HUNYUAN_REPO, "hunyuan3d-paintpbr-v2-1"
+                ),
+                "DINOv2-giant image encoder": _cached(
+                    hub, bootstrap.DINO_REPO, "model.safetensors"
+                ),
+                "RealESRGAN upscaler": realesrgan_path(vendor_root).is_file(),
+            }
+        )
+    return [
+        f"missing weights: {name}" for name, present in checks.items() if not present
+    ]
+
+
+WEIGHTS_HINT = (
+    f"Fetch them on purpose (about {bootstrap.total_gb():.1f} GB, "
+    "Tencent Hunyuan Community License, not licensed in the EU, UK or South Korea):\n"
+    "  python scripts/bootstrap_hunyuan_cuda.py --weights-only"
+)
 
 
 def paint_config_overrides(vendor_root: Path) -> dict[str, str]:
@@ -108,7 +161,9 @@ def paint_config_overrides(vendor_root: Path) -> dict[str, str]:
     root = checkout(vendor_root)
     return {
         "realesrgan_ckpt_path": str(realesrgan_path(vendor_root)),
-        "multiview_cfg_path": str(root / "hy3dpaint" / "cfgs" / "hunyuan-paint-pbr.yaml"),
+        "multiview_cfg_path": str(
+            root / "hy3dpaint" / "cfgs" / "hunyuan-paint-pbr.yaml"
+        ),
         "custom_pipeline": str(root / "hy3dpaint" / "hunyuanpaintpbr"),
     }
 
@@ -136,9 +191,16 @@ def matted_path(output: Path) -> Path:
     return output.with_name(f"{output.stem}__matted.png")
 
 
-def build_manifest(*, image: str, output: str, params: dict[str, Any], shape_only: bool,
-                   timings: dict[str, float], artifacts: dict[str, Any],
-                   matte_model: str | None) -> dict[str, Any]:
+def build_manifest(
+    *,
+    image: str,
+    output: str,
+    params: dict[str, Any],
+    shape_only: bool,
+    timings: dict[str, float],
+    artifacts: dict[str, Any],
+    matte_model: str | None,
+) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "generator": "hunyuan_cuda_generate.py",
@@ -155,35 +217,65 @@ def build_manifest(*, image: str, output: str, params: dict[str, Any], shape_onl
     }
 
 
-def build_provenance(*, image: Path, output: Path, parameters: dict[str, Any],
-                     matte_model: str | None, shape_only: bool,
-                     backend_revision: str | None) -> dict[str, Any]:
+def build_provenance(
+    *,
+    image: Path,
+    output: Path,
+    parameters: dict[str, Any],
+    matte_model: str | None,
+    shape_only: bool,
+    backend_revision: str | None,
+) -> dict[str, Any]:
     """The `.provenance.json` licence record, in `provenance.finalize_output`'s schema."""
     profile = LICENSES["hunyuan-comfyui"]  # the Hunyuan3D-2.1 licence profile
     components: list[dict[str, Any]] = []
     if matte_model:
-        components.append({
-            "component": f"rembg/{matte_model}",
-            "purpose": "background removal",
-            "license": MATTE_LICENSES.get(matte_model, "see rembg"),
-            "commercial_status": "commercial-clear",
-        })
+        components.append(
+            {
+                "component": f"rembg/{matte_model}",
+                "purpose": "background removal",
+                "license": MATTE_LICENSES.get(matte_model, "see rembg"),
+                "commercial_status": "commercial-clear",
+            }
+        )
     if not shape_only:
         components += [
-            {"component": "facebook/dinov2-giant", "purpose": "paint image conditioning",
-             "license": "Apache-2.0", "commercial_status": "commercial-clear"},
-            {"component": "RealESRGAN_x4plus", "purpose": "texture upscaling",
-             "license": "BSD-3-Clause", "commercial_status": "commercial-clear"},
+            {
+                "component": "facebook/dinov2-giant",
+                "purpose": "paint image conditioning",
+                "license": "Apache-2.0",
+                "commercial_status": "commercial-clear",
+            },
+            {
+                "component": "RealESRGAN_x4plus",
+                "purpose": "texture upscaling",
+                "license": "BSD-3-Clause",
+                "commercial_status": "commercial-clear",
+            },
         ]
     return {
         "schema_version": 1,
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "input": {"path": str(image), "sha256": sha256_file(image), "source": "user-provided"},
-        "output": {"path": str(output), "sha256": sha256_file(output),
-                   "classification": profile.classification},
-        "model": {"backend": "hunyuan3d-2.1", "route": "nvidia-cuda", "parameters": parameters},
-        "license": {"name": profile.license_name, "url": profile.license_url,
-                    "conditions": list(profile.conditions)},
+        "input": {
+            "path": str(image),
+            "sha256": sha256_file(image),
+            "source": "user-provided",
+        },
+        "output": {
+            "path": str(output),
+            "sha256": sha256_file(output),
+            "classification": profile.classification,
+        },
+        "model": {
+            "backend": "hunyuan3d-2.1",
+            "route": "nvidia-cuda",
+            "parameters": parameters,
+        },
+        "license": {
+            "name": profile.license_name,
+            "url": profile.license_url,
+            "conditions": list(profile.conditions),
+        },
         "components": components,
         "software": {"backend_revision": backend_revision},
     }
@@ -203,15 +295,23 @@ def backend_revision(vendor_root: Path) -> str | None:
 # ----------------------------------------------------------------------------------------
 # The heavy path. torch and upstream are imported lazily.
 # ----------------------------------------------------------------------------------------
-def prepare_image(image_path: Path, output: Path, *, force_matte: bool) -> tuple[Path, str | None]:
+def prepare_image(
+    image_path: Path, output: Path, *, force_matte: bool
+) -> tuple[Path, str | None]:
     """The image to generate from, and the remover that cut it (None if we did not)."""
     from PIL import Image
 
-    from image_to_3dlab.matte import cut_out, fallback_note, is_matted
+    from image_to_3dlab.matte import (
+        cut_out,
+        fallback_note,
+        is_matted,
+        refuse_missing_model,
+    )
 
     with Image.open(image_path) as opened:
         if not force_matte and is_matted(opened):
             return image_path, None
+        refuse_missing_model()
         cut, model = cut_out(opened.convert("RGB"))
     destination = matted_path(output)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -229,6 +329,7 @@ def _enter_upstream(vendor_root: Path) -> None:
             sys.path.insert(0, str(path))
     try:  # upstream's own shim for basicsr on newer torchvision; optional there too
         from torchvision_fix import apply_fix
+
         apply_fix()
     except ImportError:
         pass
@@ -242,13 +343,13 @@ def _free_gpu() -> None:
 
 
 def check_environment(vendor_root: Path) -> int:
-    """Seconds, no model load: paths, CUDA, and the imports a run needs."""
-    problems = verify_paths(vendor_root)
-    if not realesrgan_path(vendor_root).is_file():
-        problems.append(f"missing RealESRGAN weights: {realesrgan_path(vendor_root)}")
+    """Seconds, no model load: paths, weights, CUDA, and the imports a run needs."""
+    problems = verify_paths(vendor_root) + missing_weights(vendor_root)
     if problems:
         for problem in problems:
             print(f"  FAIL: {problem}", flush=True)
+        if any(problem.startswith("missing weights") for problem in problems):
+            print(WEIGHTS_HINT, flush=True)
         return 1
     _enter_upstream(vendor_root)
     import torch
@@ -264,8 +365,11 @@ def check_environment(vendor_root: Path) -> int:
         Hunyuan3DPaintPipeline,
     )
 
-    print(f"  PASS: {torch.cuda.get_device_name(0)}, shape + paint pipelines and both "
-          "compiled extensions import", flush=True)
+    print(
+        f"  PASS: {torch.cuda.get_device_name(0)}, shape + paint pipelines and both "
+        "compiled extensions import",
+        flush=True,
+    )
     return 0
 
 
@@ -302,17 +406,26 @@ def generate_shape(image: Path, mesh_path: Path, settings: dict[str, Any]) -> fl
     return seconds
 
 
-def generate_paint(image: Path, mesh_path: Path, output: Path, settings: dict[str, Any],
-                   vendor_root: Path) -> float:
+def generate_paint(
+    image: Path,
+    mesh_path: Path,
+    output: Path,
+    settings: dict[str, Any],
+    vendor_root: Path,
+) -> float:
     from textureGenPipeline import Hunyuan3DPaintConfig, Hunyuan3DPaintPipeline
 
     started = time.time()
-    config = Hunyuan3DPaintConfig(settings["max_num_view"], settings["paint_resolution"])
+    config = Hunyuan3DPaintConfig(
+        settings["max_num_view"], settings["paint_resolution"]
+    )
     for name, value in paint_config_overrides(vendor_root).items():
         setattr(config, name, value)
     print(LOADING_PAINT, flush=True)
     pipeline = Hunyuan3DPaintPipeline(config)
-    print(f"mesh loaded; paint models ready in {time.time() - started:.1f}s", flush=True)
+    print(
+        f"mesh loaded; paint models ready in {time.time() - started:.1f}s", flush=True
+    )
     obj = work_dir(output) / "textured_mesh.obj"
     pipeline(mesh_path=str(mesh_path), image_path=str(image), output_mesh_path=str(obj))
     painted = obj.with_suffix(".glb")
@@ -327,36 +440,73 @@ def generate_paint(image: Path, mesh_path: Path, output: Path, settings: dict[st
     return seconds
 
 
-def generate(image_path: Path, output: Path, vendor_root: Path, settings: dict[str, Any], *,
-             shape_only: bool = False, force_matte: bool = False) -> None:
+def generate(
+    image_path: Path,
+    output: Path,
+    vendor_root: Path,
+    settings: dict[str, Any],
+    *,
+    shape_only: bool = False,
+    force_matte: bool = False,
+) -> None:
     settings = validate(settings)
     problems = verify_paths(vendor_root)
     if problems:
-        raise SystemExit("Hunyuan3D-2.1 is not installed:\n  " + "\n  ".join(problems) +
-                         "\nRun: python scripts/bootstrap_hunyuan_cuda.py")
+        raise SystemExit(
+            "Hunyuan3D-2.1 is not installed:\n  "
+            + "\n  ".join(problems)
+            + "\nRun: python scripts/bootstrap_hunyuan_cuda.py"
+        )
+    absent = missing_weights(vendor_root, shape_only=shape_only)
+    if absent:
+        raise SystemExit(
+            "Refusing to let upstream download weights unannounced:\n  "
+            + "\n  ".join(absent)
+            + "\n"
+            + WEIGHTS_HINT
+        )
     prepared, matte_model = prepare_image(image_path, output, force_matte=force_matte)
     _enter_upstream(vendor_root)
     import torch
 
     if not torch.cuda.is_available():
-        raise SystemExit("torch cannot see a CUDA device; check the driver and the venv")
+        raise SystemExit(
+            "torch cannot see a CUDA device; check the driver and the venv"
+        )
 
     started = time.time()
     mesh_path = output if shape_only else work_dir(output) / "shape.glb"
     timings = {"shape": generate_shape(prepared, mesh_path, settings)}
     if not shape_only:
-        timings["paint"] = generate_paint(prepared, mesh_path, output, settings, vendor_root)
+        timings["paint"] = generate_paint(
+            prepared, mesh_path, output, settings, vendor_root
+        )
     timings["total"] = time.time() - started
 
     artifacts = {"glb": {"path": str(output), "sha256": sha256_file(output)}}
-    manifest = build_manifest(image=str(image_path), output=str(output), params=settings,
-                              shape_only=shape_only, timings=timings, artifacts=artifacts,
-                              matte_model=matte_model)
-    output.with_suffix(".json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
-    record = build_provenance(image=image_path, output=output, parameters=settings,
-                              matte_model=matte_model, shape_only=shape_only,
-                              backend_revision=backend_revision(vendor_root))
-    provenance_path(output).write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+    manifest = build_manifest(
+        image=str(image_path),
+        output=str(output),
+        params=settings,
+        shape_only=shape_only,
+        timings=timings,
+        artifacts=artifacts,
+        matte_model=matte_model,
+    )
+    output.with_suffix(".json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+    )
+    record = build_provenance(
+        image=image_path,
+        output=output,
+        parameters=settings,
+        matte_model=matte_model,
+        shape_only=shape_only,
+        backend_revision=backend_revision(vendor_root),
+    )
+    provenance_path(output).write_text(
+        json.dumps(record, indent=2, sort_keys=True) + "\n"
+    )
     print(f"Manifest: {output.with_suffix('.json')}", flush=True)
     print(f"Provenance: {provenance_path(output)}", flush=True)
     print(f"DONE in {timings['total']:.1f}s -> {output}", flush=True)
@@ -366,23 +516,48 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("image", type=Path, nargs="?", help="input image")
     parser.add_argument("output", type=Path, nargs="?", help="GLB to write")
-    parser.add_argument("--vendor-root", type=Path, default=DEFAULT_VENDOR,
-                        help="the checkout built by bootstrap_hunyuan_cuda.py")
+    parser.add_argument(
+        "--vendor-root",
+        type=Path,
+        default=DEFAULT_VENDOR,
+        help="the checkout built by bootstrap_hunyuan_cuda.py",
+    )
     parser.add_argument("--seed", type=int, default=DEFAULTS["seed"])
     parser.add_argument("--steps", type=int, default=DEFAULTS["steps"])
-    parser.add_argument("--octree-resolution", type=int, choices=VALID_OCTREE,
-                        default=DEFAULTS["octree_resolution"])
-    parser.add_argument("--guidance-scale", type=float, default=DEFAULTS["guidance_scale"])
-    parser.add_argument("--max-num-view", type=int, choices=list(VALID_VIEWS),
-                        default=DEFAULTS["max_num_view"])
-    parser.add_argument("--paint-resolution", type=int, choices=VALID_PAINT_RESOLUTION,
-                        default=DEFAULTS["paint_resolution"])
-    parser.add_argument("--shape-only", action="store_true",
-                        help="stop after the untextured mesh")
-    parser.add_argument("--matte", action="store_true",
-                        help="cut the subject out with our remover even if it looks matted")
-    parser.add_argument("--check", action="store_true",
-                        help="verify the environment and exit (no model load)")
+    parser.add_argument(
+        "--octree-resolution",
+        type=int,
+        choices=VALID_OCTREE,
+        default=DEFAULTS["octree_resolution"],
+    )
+    parser.add_argument(
+        "--guidance-scale", type=float, default=DEFAULTS["guidance_scale"]
+    )
+    parser.add_argument(
+        "--max-num-view",
+        type=int,
+        choices=list(VALID_VIEWS),
+        default=DEFAULTS["max_num_view"],
+    )
+    parser.add_argument(
+        "--paint-resolution",
+        type=int,
+        choices=VALID_PAINT_RESOLUTION,
+        default=DEFAULTS["paint_resolution"],
+    )
+    parser.add_argument(
+        "--shape-only", action="store_true", help="stop after the untextured mesh"
+    )
+    parser.add_argument(
+        "--matte",
+        action="store_true",
+        help="cut the subject out with our remover even if it looks matted",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="verify the environment and exit (no model load)",
+    )
     return parser.parse_args(argv)
 
 
@@ -397,12 +572,22 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"missing input image: {args.image}")
     if args.output.suffix.lower() != ".glb":
         raise SystemExit("the output must be a .glb path")
-    settings = {"seed": args.seed, "steps": args.steps,
-                "octree_resolution": args.octree_resolution,
-                "guidance_scale": args.guidance_scale, "max_num_view": args.max_num_view,
-                "paint_resolution": args.paint_resolution}
-    generate(args.image, args.output, vendor_root, settings, shape_only=args.shape_only,
-             force_matte=args.matte)
+    settings = {
+        "seed": args.seed,
+        "steps": args.steps,
+        "octree_resolution": args.octree_resolution,
+        "guidance_scale": args.guidance_scale,
+        "max_num_view": args.max_num_view,
+        "paint_resolution": args.paint_resolution,
+    }
+    generate(
+        args.image,
+        args.output,
+        vendor_root,
+        settings,
+        shape_only=args.shape_only,
+        force_matte=args.matte,
+    )
     return 0
 
 

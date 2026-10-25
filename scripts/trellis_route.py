@@ -27,6 +27,7 @@ REPO = Path(__file__).resolve().parents[1]
 #: they load the same files; viewer/backend_catalog.py counts the same list.
 ROUTE_DIRS = ("trellis-cuda", "trellis-rocm")
 LOCAL_MODEL_DIR = "TRELLIS.2-4B"
+HUB_REPO = "microsoft/TRELLIS.2-4B"
 
 
 @dataclass(frozen=True)
@@ -56,20 +57,18 @@ class Route:
     provenance_route: str = ""
     #: Written by the bootstrap when the build finished.
     marker_name: str = ".i2l-build-complete"
-    #: The Hugging Face repo `pipeline.from_pretrained` is given. Upstream loads it by id
-    #: and falls back to a local directory when one holds `pipeline.json`, so this can be
-    #: pointed at a directory of the same layout.
-    model_repo: str = "microsoft/TRELLIS.2-4B"
+    #: The Hugging Face repo id. Not a silent fallback: a run uses a directory that already
+    #: holds `pipeline.json`, or it stops and names the weights bootstrap.
+    model_repo: str = HUB_REPO
 
     def model_path(self) -> str:
-        """Where to load the weights from: a local directory if there is one, else the repo.
+        """Where to load the weights from. A local tree, or the cache, never the hub id.
 
-        Two ways to have a local one. `I2L_TRELLIS_MODEL_PATH` names it outright; otherwise
-        this route's own `vendor/<route>/models/TRELLIS.2-4B` is used when it exists, then the
-        other route's. The override exists for machines whose weights are somewhere else
-        entirely -- a shared store, an offline box -- where re-downloading 16 GB is not on.
-        The default is a convention, not a requirement: the Hugging Face cache works as it
-        always did.
+        `I2L_TRELLIS_MODEL_PATH` names a directory outright. Otherwise this route's own
+        `vendor/<route>/models/TRELLIS.2-4B` is used when it holds `pipeline.json`, then the
+        other route's, then a Hugging Face cache snapshot that already has that file.
+        No `pipeline.json` on disk is a refusal that names this route's weights bootstrap.
+        The hub id is not returned: upstream would download it.
 
         The Setup card counts the same places (`viewer/backend_catalog.py`), so a route
         whose weights are local does not read as partly downloaded on the machine that
@@ -81,7 +80,12 @@ class Route:
         for local in self.local_trees():
             if (local / "pipeline.json").is_file():
                 return str(local)
-        return self.model_repo
+        cached = cached_pipeline(self.model_repo)
+        if cached is not None:
+            return str(cached)
+        raise SystemExit(
+            missing_weights_text(route_label=self.name, bootstrap=self.bootstrap)
+        )
 
     def local_trees(self) -> list[Path]:
         """This route's own weights folder, then the other route's.
@@ -89,7 +93,9 @@ class Route:
         The card counts both, so the run must too: otherwise a machine whose weights sit
         under the other route reads "present" and then downloads 16 GB anyway.
         """
-        others = [self.vendor.parent / name for name in ROUTE_DIRS if name != self.vendor.name]
+        others = [
+            self.vendor.parent / name for name in ROUTE_DIRS if name != self.vendor.name
+        ]
         return [root / "models" / LOCAL_MODEL_DIR for root in [self.vendor, *others]]
 
     def environ(self, base: dict[str, str] | None = None) -> dict[str, str]:
@@ -149,3 +155,95 @@ ROCM = Route(
     port="microsoft/TRELLIS.2 (official, ROCm)",
     provenance_route="amd-rocm",
 )
+
+
+def hf_hub_dir(environ: dict[str, str] | None = None) -> Path:
+    """The Hugging Face hub cache, honouring the usual variables."""
+    environ = os.environ if environ is None else environ
+    if environ.get("HF_HUB_CACHE"):
+        return Path(environ["HF_HUB_CACHE"])
+    home = environ.get("HF_HOME") or str(Path.home() / ".cache" / "huggingface")
+    return Path(home) / "hub"
+
+
+def cached_pipeline(repo: str = HUB_REPO, hub: Path | None = None) -> Path | None:
+    """A snapshot directory that already holds `pipeline.json`, or None."""
+    root = (
+        (hf_hub_dir() if hub is None else hub)
+        / f"models--{repo.replace('/', '--')}"
+        / "snapshots"
+    )
+    if not root.is_dir():
+        return None
+    found = [path.parent for path in root.glob("*/pipeline.json") if path.is_file()]
+    return found[0] if found else None
+
+
+def weight_gigabytes() -> str:
+    """The size the TRELLIS weights bootstrap already announces. Not a new number."""
+    import bootstrap_trellis_cuda as boot
+
+    return f"{boot.total_gb():.1f} GB"
+
+
+def missing_weights_text(
+    *, route_label: str, bootstrap: str | None, confirm: bool = False
+) -> str:
+    """Backend, route, and size. A bootstrap route never offers a silent hub download."""
+    size = weight_gigabytes()
+    lines = [
+        "backend: TRELLIS.2 (Microsoft)",
+        f"route:   {route_label}",
+        f"weights: {size} are not on disk (no pipeline.json).",
+    ]
+    if bootstrap:
+        lines.append(f"Fetch them on purpose:\n  python {bootstrap} --weights-only")
+        lines.append(f"Refusing to load {HUB_REPO} from the hub.")
+    else:
+        lines.append(
+            "Fetch them on purpose, where this machine has a weights bootstrap:"
+        )
+        lines.append("  python scripts/bootstrap_trellis_cuda.py --weights-only")
+        lines.append("  python scripts/bootstrap_trellis_rocm.py --weights-only")
+        if confirm:
+            lines.append(f"Downloading {HUB_REPO} because --yes was passed.")
+        else:
+            lines.append(f"Pass --yes to download {HUB_REPO} from this script,")
+            lines.append("or put pipeline.json on disk first.")
+            lines.append("Refusing to load the hub id without that yes.")
+    return "\n".join(lines)
+
+
+def resolve_weights(
+    *,
+    route_label: str,
+    bootstrap: str | None = None,
+    confirm: bool = False,
+    extra: tuple[Path, ...] = (),
+    routes: tuple[Route, ...] | None = None,
+) -> str:
+    """A directory that already holds `pipeline.json`, or the hub id after an explicit yes.
+
+    A route whose bootstrap fetches the weights passes `bootstrap` and never gets the hub
+    id back. A Mac script has no weights bootstrap, so `--yes` is the yes.
+    """
+    for directory in extra:
+        if (directory / "pipeline.json").is_file():
+            return str(directory)
+    named = os.environ.get("I2L_TRELLIS_MODEL_PATH")
+    if named and (Path(named) / "pipeline.json").is_file():
+        return named
+    for route in (CUDA, ROCM) if routes is None else routes:
+        for local in route.local_trees():
+            if (local / "pipeline.json").is_file():
+                return str(local)
+    cached = cached_pipeline()
+    if cached is not None:
+        return str(cached)
+    text = missing_weights_text(
+        route_label=route_label, bootstrap=bootstrap, confirm=confirm
+    )
+    if bootstrap or not confirm:
+        raise SystemExit(text)
+    print(text, flush=True)
+    return HUB_REPO

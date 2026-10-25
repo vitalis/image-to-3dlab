@@ -13,8 +13,12 @@ import pytest
 def _vendor(tmp_path, built=True):
     vendor = tmp_path / "hunyuan-cuda"
     root = gen.checkout(vendor)
-    for relative in ("hy3dshape/hy3dshape/pipelines.py", "hy3dpaint/textureGenPipeline.py",
-                     "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml", ".venv/bin/python"):
+    for relative in (
+        "hy3dshape/hy3dshape/pipelines.py",
+        "hy3dpaint/textureGenPipeline.py",
+        "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml",
+        ".venv/bin/python",
+    ):
         base = vendor if relative.startswith(".venv") else root
         (base / relative).parent.mkdir(parents=True, exist_ok=True)
         (base / relative).write_text("")
@@ -25,13 +29,26 @@ def _vendor(tmp_path, built=True):
 
 def test_defaults_are_upstreams():
     """demo.py: 6 views at 512; the shape pipeline's own steps, octree and guidance."""
-    assert gen.DEFAULTS == {"seed": 1234, "steps": 50, "octree_resolution": 384,
-                            "guidance_scale": 5.0, "max_num_view": 6, "paint_resolution": 512}
+    assert gen.DEFAULTS == {
+        "seed": 1234,
+        "steps": 50,
+        "octree_resolution": 384,
+        "guidance_scale": 5.0,
+        "max_num_view": 6,
+        "paint_resolution": 512,
+    }
 
 
-@pytest.mark.parametrize("bad", [{"octree_resolution": 1024}, {"max_num_view": 5},
-                                 {"max_num_view": 10}, {"paint_resolution": 1024},
-                                 {"steps": 0}])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"octree_resolution": 1024},
+        {"max_num_view": 5},
+        {"max_num_view": 10},
+        {"paint_resolution": 1024},
+        {"steps": 0},
+    ],
+)
 def test_bad_settings_are_refused_before_a_model_loads(bad):
     with pytest.raises(ValueError):
         gen.validate(bad)
@@ -49,7 +66,12 @@ def test_shape_weights_are_read_from_where_the_installer_put_them(tmp_path):
 def test_the_real_installer_and_generator_agree_on_the_models_folder():
     env = gen.configure_environment(gen.DEFAULT_VENDOR, {})
     shape = next(local for label, _, _, local, _ in boot.WEIGHTS if "shape" in label)
-    assert shape == gen.DEFAULT_VENDOR / env["HY3DGEN_MODELS"].rsplit("/", 1)[-1] / boot.HUNYUAN_REPO
+    assert (
+        shape
+        == gen.DEFAULT_VENDOR
+        / env["HY3DGEN_MODELS"].rsplit("/", 1)[-1]
+        / boot.HUNYUAN_REPO
+    )
 
 
 def test_import_paths_match_upstreams_demo(tmp_path):
@@ -77,13 +99,19 @@ def test_check_needs_a_finished_build(tmp_path, capsys):
 def test_check_needs_realesrgan(tmp_path, capsys):
     vendor = _vendor(tmp_path)
     assert gen.check_environment(vendor) == 1
-    assert "RealESRGAN" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "RealESRGAN" in out
+    assert "--weights-only" in out
 
 
-def test_generate_refuses_a_missing_install_before_touching_the_image(tmp_path, monkeypatch):
+def test_generate_refuses_a_missing_install_before_touching_the_image(
+    tmp_path, monkeypatch
+):
     monkeypatch.setattr(gen, "prepare_image", lambda *a, **k: pytest.fail("matted"))
     with pytest.raises(SystemExit, match="bootstrap_hunyuan_cuda"):
-        gen.generate(tmp_path / "in.png", tmp_path / "out.glb", tmp_path / "nothing", {})
+        gen.generate(
+            tmp_path / "in.png", tmp_path / "out.glb", tmp_path / "nothing", {}
+        )
 
 
 def test_intermediates_stay_beside_the_output(tmp_path):
@@ -96,15 +124,27 @@ def test_provenance_records_territory_licence_and_paint_parts(tmp_path):
     image, output = tmp_path / "in.png", tmp_path / "out.glb"
     image.write_bytes(b"png")
     output.write_bytes(b"glb")
-    record = gen.build_provenance(image=image, output=output, parameters={"seed": 1},
-                                  matte_model="birefnet-general-lite", shape_only=False,
-                                  backend_revision="abc123")
-    assert record["model"] == {"backend": "hunyuan3d-2.1", "route": "nvidia-cuda",
-                               "parameters": {"seed": 1}}
+    record = gen.build_provenance(
+        image=image,
+        output=output,
+        parameters={"seed": 1},
+        matte_model="birefnet-general-lite",
+        shape_only=False,
+        backend_revision="abc123",
+    )
+    assert record["model"] == {
+        "backend": "hunyuan3d-2.1",
+        "route": "nvidia-cuda",
+        "parameters": {"seed": 1},
+    }
     assert record["output"]["classification"] == "territory-restricted"
     assert any("EU" in condition for condition in record["license"]["conditions"])
     names = [c["component"] for c in record["components"]]
-    assert names == ["rembg/birefnet-general-lite", "facebook/dinov2-giant", "RealESRGAN_x4plus"]
+    assert names == [
+        "rembg/birefnet-general-lite",
+        "facebook/dinov2-giant",
+        "RealESRGAN_x4plus",
+    ]
     assert record["software"]["backend_revision"] == "abc123"
 
 
@@ -112,16 +152,36 @@ def test_shape_only_provenance_lists_no_paint_parts(tmp_path):
     image, output = tmp_path / "in.png", tmp_path / "out.glb"
     image.write_bytes(b"png")
     output.write_bytes(b"glb")
-    record = gen.build_provenance(image=image, output=output, parameters={}, matte_model=None,
-                                  shape_only=True, backend_revision=None)
+    record = gen.build_provenance(
+        image=image,
+        output=output,
+        parameters={},
+        matte_model=None,
+        shape_only=True,
+        backend_revision=None,
+    )
     assert record["components"] == []
 
 
 def test_manifest_says_cuda_and_the_matte():
-    manifest = gen.build_manifest(image="in.png", output="out.glb", params={}, shape_only=False,
-                                  timings={}, artifacts={}, matte_model="u2net")
+    manifest = gen.build_manifest(
+        image="in.png",
+        output="out.glb",
+        params={},
+        shape_only=False,
+        timings={},
+        artifacts={},
+        matte_model="u2net",
+    )
     assert manifest["device"] == "cuda" and manifest["matte_model"] == "u2net"
     assert manifest["backend"] == "hunyuan3d-2.1"
+
+
+def _plant_remover(monkeypatch, tmp_path):
+    home = tmp_path / "removers"
+    home.mkdir()
+    (home / "u2net.onnx").write_bytes(b"not-a-model")
+    monkeypatch.setenv("U2NET_HOME", str(home))
 
 
 def test_an_unmatted_image_is_cut_out_by_our_remover(tmp_path, monkeypatch):
@@ -130,6 +190,7 @@ def test_an_unmatted_image_is_cut_out_by_our_remover(tmp_path, monkeypatch):
 
     from image_to_3dlab import matte
 
+    _plant_remover(monkeypatch, tmp_path)
     source = tmp_path / "in.png"
     Image.new("RGB", (32, 32), "white").save(source)
     cut = Image.new("RGBA", (32, 32), (0, 0, 0, 0))
@@ -149,7 +210,10 @@ def test_a_real_cutout_goes_straight_in(tmp_path, monkeypatch):
     image.paste((255, 0, 0, 255), (8, 8, 24, 24))
     image.save(source)
     monkeypatch.setattr(matte, "cut_out", lambda *a: pytest.fail("re-matted"))
-    assert gen.prepare_image(source, tmp_path / "out.glb", force_matte=False) == (source, None)
+    assert gen.prepare_image(source, tmp_path / "out.glb", force_matte=False) == (
+        source,
+        None,
+    )
 
 
 def test_main_requires_image_and_output():
@@ -164,7 +228,6 @@ def test_main_requires_a_glb(tmp_path):
         gen.main([str(image), str(tmp_path / "out.obj")])
 
 
-
 def test_a_finished_run_exits_without_interpreter_teardown(monkeypatch):
     # Seen on a real pod: the GLB, manifest and provenance were written, then the process
     # segfaulted during Python's shutdown (bpy/open3d teardown), so the viewer read a
@@ -173,6 +236,48 @@ def test_a_finished_run_exits_without_interpreter_teardown(monkeypatch):
     monkeypatch.setattr(gen.os, "_exit", exits.append)
     gen.finish(0)
     assert exits == [0]
+
+
+def test_a_marker_only_tree_refuses_before_from_pretrained(tmp_path, monkeypatch):
+    vendor = _vendor(tmp_path)
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "hub"))
+    monkeypatch.setattr(gen, "prepare_image", lambda *a, **k: pytest.fail("image"))
+    monkeypatch.setattr(
+        gen, "generate_shape", lambda *a, **k: pytest.fail("from_pretrained")
+    )
+    with pytest.raises(SystemExit, match="unannounced") as refused:
+        gen.generate(tmp_path / "in.png", tmp_path / "out.glb", vendor, {})
+    text = str(refused.value)
+    assert "bootstrap_hunyuan_cuda.py --weights-only" in text
+    assert f"{boot.total_gb():.1f}" in text
+    assert "shape model" in text
+
+
+def test_shape_only_still_names_the_missing_shape_weights(tmp_path, monkeypatch):
+    vendor = _vendor(tmp_path)
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "hub"))
+    monkeypatch.setattr(gen, "prepare_image", lambda *a, **k: pytest.fail("image"))
+    with pytest.raises(SystemExit, match="unannounced") as refused:
+        gen.generate(
+            tmp_path / "in.png", tmp_path / "out.glb", vendor, {}, shape_only=True
+        )
+    text = str(refused.value)
+    assert "shape model" in text
+    assert "PBR paint" not in text
+
+
+def test_an_uncut_image_stops_when_the_remover_file_is_missing(tmp_path, monkeypatch):
+    from PIL import Image
+
+    from image_to_3dlab import matte
+
+    monkeypatch.setenv("U2NET_HOME", str(tmp_path / "empty"))
+    (tmp_path / "empty").mkdir()
+    monkeypatch.setattr(matte, "cut_out", lambda *a, **k: pytest.fail("session"))
+    source = tmp_path / "plain.png"
+    Image.new("RGB", (8, 8), "white").save(source)
+    with pytest.raises(SystemExit, match="bootstrap_matte.py"):
+        gen.prepare_image(source, tmp_path / "out.glb", force_matte=False)
 
 
 def test_the_model_load_is_announced_before_it_starts(monkeypatch, capsys, tmp_path):
@@ -188,7 +293,10 @@ def test_the_model_load_is_announced_before_it_starts(monkeypatch, capsys, tmp_p
         raise Loaded
 
     pipelines = types.SimpleNamespace(
-        Hunyuan3DDiTFlowMatchingPipeline=types.SimpleNamespace(from_pretrained=from_pretrained))
+        Hunyuan3DDiTFlowMatchingPipeline=types.SimpleNamespace(
+            from_pretrained=from_pretrained
+        )
+    )
     monkeypatch.setitem(sys.modules, "hy3dshape", types.ModuleType("hy3dshape"))
     monkeypatch.setitem(sys.modules, "hy3dshape.pipelines", pipelines)
     monkeypatch.setitem(sys.modules, "torch", types.ModuleType("torch"))

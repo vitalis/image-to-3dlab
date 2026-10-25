@@ -55,8 +55,10 @@ def test_terminate_after_is_hours_from_now_in_utc():
     assert smoke.terminate_after(3, now) == "2026-10-03T01:30:00Z"
 
 
-@pytest.mark.parametrize("pod,price", [({"costPerHr": 0.49}, 0.49),
-                                       ({"adjustedCostPerHr": 0.5}, 0.5), ({}, None)])
+@pytest.mark.parametrize(
+    "pod,price",
+    [({"costPerHr": 0.49}, 0.49), ({"adjustedCostPerHr": 0.5}, 0.5), ({}, None)],
+)
 def test_pod_price_reads_what_runpod_bills(pod, price):
     assert smoke.pod_price(pod) == price
 
@@ -78,8 +80,9 @@ def test_ssh_target_parses_runpods_command():
         smoke.ssh_target({"podId": "abc"})
 
 
-@pytest.mark.parametrize("output,expected", [("52428800.000", 52.4288), ("", 0.0),
-                                             ("garbage", 0.0)])
+@pytest.mark.parametrize(
+    "output,expected", [("52428800.000", 52.4288), ("", 0.0), ("garbage", 0.0)]
+)
 def test_curl_speed_is_megabytes_per_second(output, expected):
     assert smoke.mb_per_s(output) == pytest.approx(expected)
 
@@ -88,6 +91,11 @@ def test_install_never_starts_the_lab_in_the_foreground():
     command = smoke.install_command("feat/x")
     assert "--ref feat/x" in command and "--yes" in command and "--no-start" in command
     assert "/feat/x/install.sh" in command  # the branch's installer, not main's
+
+
+def test_a_ref_with_a_semicolon_is_not_handed_to_the_shell():
+    with pytest.raises(ValueError, match="shell command"):
+        smoke.install_command("main;touch /tmp/owned")
 
 
 def test_the_lab_listens_for_runpods_proxy():
@@ -104,8 +112,12 @@ def test_starting_the_lab_returns_at_once(tmp_path):
     lab.write_text("#!/bin/sh\nsleep 5\n")
     lab.chmod(0o755)
     started = time.monotonic()
-    subprocess.run(["bash", "-c", smoke.lab_command("pod123")], capture_output=True,
-                   env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"}, timeout=10)
+    subprocess.run(
+        ["bash", "-c", smoke.lab_command("pod123")],
+        capture_output=True,
+        env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"},
+        timeout=10,
+    )
     assert time.monotonic() - started < 3
 
 
@@ -154,19 +166,26 @@ def test_closing_the_terminal_still_deletes_the_pod():
 def test_a_failed_blender_install_says_why():
     # 2026-10-02: blender.org refused the installer, and the script waited 20 minutes for
     # a Blender that was never coming, without the installer's own error.
-    events = [{"phase": "setup", "message": "Downloading..."},
-              {"phase": "setup", "message": "HTTP Error 403: Forbidden"},
-              {"phase": "setup_done", "status": "error", "message": "exited with code 1"}]
+    events = [
+        {"phase": "setup", "message": "Downloading..."},
+        {"phase": "setup", "message": "HTTP Error 403: Forbidden"},
+        {"phase": "setup_done", "status": "error", "message": "exited with code 1"},
+    ]
     status, tail = smoke.setup_run_outcome(events)
     assert status == "error" and "403" in tail
     assert smoke.setup_run_outcome(events[:2])[0] == "unfinished"
-    assert smoke.setup_run_outcome([{"phase": "setup_done", "status": "done"}])[0] == "done"
+    assert (
+        smoke.setup_run_outcome([{"phase": "setup_done", "status": "done"}])[0]
+        == "done"
+    )
 
 
 def test_only_a_409_that_says_wait_is_waited_out():
     # 2026-10-02: Finish was refused for a missing Blender, and the script retried that
     # for 10 minutes as if it were "busy".
-    assert smoke.worth_waiting(409, {"error": "setup is running; wait for it to finish"})
+    assert smoke.worth_waiting(
+        409, {"error": "setup is running; wait for it to finish"}
+    )
     assert not smoke.worth_waiting(409, {"error": "Finish needs Blender 4.2 or newer"})
     assert not smoke.worth_waiting(500, {"error": "wait"})
 
@@ -234,7 +253,10 @@ def test_a_one_route_run_without_pixal3d_skips_blender(tmp_path, monkeypatch):
 
 def test_the_blender_fallback_installs_where_the_lab_looks():
     command = smoke.blender_fallback_command("4.2.23")
-    assert "download.blender.org/release/Blender4.2/blender-4.2.23-linux-x64.tar.xz" in command
+    assert (
+        "download.blender.org/release/Blender4.2/blender-4.2.23-linux-x64.tar.xz"
+        in command
+    )
     assert "mv blender-4.2.23-linux-x64 blender-lts" in command
     assert command.startswith("set -eo pipefail")
 
@@ -261,8 +283,10 @@ def test_a_failed_blender_install_still_tests_finish(tmp_path, monkeypatch):
             if path.endswith("result.glb"):
                 return 200, b"glTF" + b"0" * 2048
             if path.endswith("/events") and "finish" in path:
-                return 200, (b'data: {"stages": ["photo", "compress"]}\n\n'
-                             b'data: {"message": "Pixal3D\'s own clean-up to 20,000 faces"}\n\n')
+                return 200, (
+                    b'data: {"stages": ["photo", "compress"]}\n\n'
+                    b'data: {"message": "Pixal3D\'s own clean-up to 20,000 faces"}\n\n'
+                )
             return 200, b"{}"
 
         def json(self, method, path, payload=None, **kw):
@@ -294,8 +318,10 @@ def test_a_failed_blender_install_still_tests_finish(tmp_path, monkeypatch):
 
 
 def test_multipart_carries_fields_and_files():
-    body, ctype = smoke.multipart({"settings": json.dumps({"backend": "trellis"})},
-                                  {"image": ("in.png", b"\x89PNG")})
+    body, ctype = smoke.multipart(
+        {"settings": json.dumps({"backend": "trellis"})},
+        {"image": ("in.png", b"\x89PNG")},
+    )
     boundary = ctype.split("boundary=")[1]
     assert body.endswith(f"--{boundary}--\r\n".encode())
     assert b'name="image"; filename="in.png"' in body and b"\x89PNG" in body
@@ -321,15 +347,34 @@ def test_announcement_names_every_route_and_its_size():
 
 def test_every_route_is_in_the_catalogue():
     import backend_catalog
+
     assert all(backend_catalog.resolve(r) is not None for r in smoke.ROUTES)
 
 
 def test_nothing_is_rented_without_a_yes(monkeypatch, tmp_path):
     image = tmp_path / "in.png"
     image.write_bytes(b"x")
+    monkeypatch.setattr(smoke.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr("builtins.input", lambda *_: "n")
     monkeypatch.setattr(smoke, "rent", lambda *a: pytest.fail("rented"))
     assert smoke.main(["--image", str(image)]) == 1
+
+
+def test_a_non_interactive_run_does_not_rent(monkeypatch, tmp_path, capsys):
+    image = tmp_path / "in.png"
+    image.write_bytes(b"x")
+    monkeypatch.setattr(smoke.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(smoke, "rent", lambda *a: pytest.fail("rented"))
+    assert smoke.main(["--image", str(image)]) == 1
+    assert "nobody to ask" in capsys.readouterr().out
+
+
+def test_a_bad_ref_never_reaches_a_rental(monkeypatch, tmp_path):
+    image = tmp_path / "in.png"
+    image.write_bytes(b"x")
+    monkeypatch.setattr(smoke, "rent", lambda *a: pytest.fail("rented"))
+    with pytest.raises(SystemExit, match=";"):
+        smoke.main(["--image", str(image), "--yes", "--ref", "main;touch /tmp/owned"])
 
 
 def test_pods_are_rented_with_a_driver_new_enough_for_the_pixal3d_prebuilt():

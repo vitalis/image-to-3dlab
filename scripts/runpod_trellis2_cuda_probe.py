@@ -13,9 +13,16 @@ import hashlib
 import json
 import os
 import platform
+import sys
 import time
 from pathlib import Path
 from unittest.mock import patch
+
+REPO = Path(__file__).resolve().parents[1]
+if str(REPO / "scripts") not in sys.path:
+    sys.path.insert(0, str(REPO / "scripts"))
+
+import trellis_route  # noqa: E402
 
 
 def sha256(path: Path) -> str:
@@ -26,13 +33,35 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def main() -> int:
+def load_pretrained(model: str):
+    """Stub the gated remover, then load. Tests replace this so a missing tree never calls it."""
+    from trellis2.pipelines import Trellis2ImageTo3DPipeline, rembg
+
+    with patch.object(rembg, "BiRefNet", new=lambda **_kwargs: None):
+        return Trellis2ImageTo3DPipeline.from_pretrained(model)
+
+
+def begin(confirm: bool) -> object:
+    """Pick the weights, then load. No local `pipeline.json` and no `--yes` stops first."""
+    model = trellis_route.resolve_weights(
+        route_label="NVIDIA / CUDA probe",
+        confirm=confirm,
+    )
+    return load_pretrained(model)
+
+
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--image", type=Path, required=True)
     parser.add_argument("--latents", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--texture-seed", type=int, default=42)
-    args = parser.parse_args()
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="download TRELLIS.2-4B when pipeline.json is not already on disk",
+    )
+    args = parser.parse_args(argv)
 
     os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
@@ -43,11 +72,12 @@ def main() -> int:
         "FLEX_GEMM_AUTOTUNE_CACHE_PATH",
         str(Path(__file__).resolve().parent / "autotune_cache.json"),
     )
+    # After the attention env, before torch. A missing tree never reaches from_pretrained.
+    pipeline = begin(args.yes)
 
     import torch
     from PIL import Image
     from trellis2.modules.sparse import SparseTensor
-    from trellis2.pipelines import Trellis2ImageTo3DPipeline, rembg
 
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is unavailable")
@@ -57,14 +87,11 @@ def main() -> int:
     bundle = torch.load(args.latents, map_location="cpu", weights_only=False)
     resolution = int(bundle["res"])
     if resolution != 512:
-        raise ValueError(f"this parity probe expects a frozen 512 shape, got {resolution}")
+        raise ValueError(
+            f"this parity probe expects a frozen 512 shape, got {resolution}"
+        )
 
     started = time.time()
-    # The source already has useful transparency, so official preprocessing never invokes
-    # background removal.  Avoid constructing gated RMBG-2.0 while leaving the official
-    # TRELLIS pipeline, weights, preprocessing, and sampling implementation untouched.
-    with patch.object(rembg, "BiRefNet", new=lambda **_kwargs: None):
-        pipeline = Trellis2ImageTo3DPipeline.from_pretrained("microsoft/TRELLIS.2-4B")
     pipeline.cuda()
     pipeline_seconds = time.time() - started
 
@@ -144,7 +171,9 @@ def main() -> int:
         "voxel_attributes": {
             "count": int(attrs.shape[0]),
             "base_color_mean": attrs[:, layout["base_color"]].mean(0).tolist(),
-            "base_color_median": attrs[:, layout["base_color"]].median(0).values.tolist(),
+            "base_color_median": attrs[:, layout["base_color"]]
+            .median(0)
+            .values.tolist(),
             "metallic_median": float(attrs[:, layout["metallic"]].median()),
             "roughness_median": float(attrs[:, layout["roughness"]].median()),
             "alpha_median": float(attrs[:, layout["alpha"]].median()),

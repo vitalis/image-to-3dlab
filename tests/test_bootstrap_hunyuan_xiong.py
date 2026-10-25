@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import bootstrap_hunyuan_xiong as bx
 
@@ -35,6 +37,9 @@ def test_a_fresh_clone_builds_both_and_a_set_up_one_only_fetches(tmp_path):
 def test_only_the_default_route_is_fetched(tmp_path):
     # Without --model the downloader fetches every shape checkpoint: 23 GB, not 5.
     fetch = bx.plan(_repo(tmp_path, "shape", "paint"), "uv")[-1][0]
+    # The downloader asks again, and this child has no keyboard. --yes is the
+    # answer this script already collected.
+    assert "--yes" in fetch
     assert fetch[fetch.index("--model") + 1] == "2.0"
     assert Path(fetch[0]).parent.name in ("bin", "Scripts")  # this OS's venv layout
 
@@ -42,3 +47,24 @@ def test_only_the_default_route_is_fetched(tmp_path):
 def test_the_announcement_names_route_size_and_licence(tmp_path):
     text = bx.announcement(bx.plan(_repo(tmp_path), "uv"))
     assert "default route" in text and "GB" in text and "EU" in text
+
+
+def test_a_non_interactive_run_refuses_without_downloading(monkeypatch, capsys):
+    monkeypatch.setattr(bx.shutil, "which", lambda name: "/usr/bin/uv")
+    monkeypatch.setattr(bx.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(bx.subprocess, "run", lambda *a, **k: pytest.fail("downloaded"))
+    assert bx.main([]) == 1
+    assert "nobody to ask" in capsys.readouterr().out
+
+
+def test_eof_on_a_tty_refuses_without_downloading(monkeypatch, capsys):
+    monkeypatch.setattr(bx.shutil, "which", lambda name: "/usr/bin/uv")
+    monkeypatch.setattr(bx.sys.stdin, "isatty", lambda: True)
+
+    def closed(*_args):
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", closed)
+    monkeypatch.setattr(bx.subprocess, "run", lambda *a, **k: pytest.fail("downloaded"))
+    assert bx.main([]) == 1
+    assert "nobody to ask" in capsys.readouterr().out

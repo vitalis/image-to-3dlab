@@ -42,26 +42,131 @@ PAINT_PYTHON = PAINT_ROOT / ".venv" / "bin" / "python"
 PAINT_SCRIPT = PAINT_ROOT / "scripts" / "run_paint_pbr.py"
 
 sys.path.insert(0, str(SHAPE_ROOT))
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
+
+def paint_work_dir(output: Path) -> Path:
+    """Per-run paint folder. Two outputs must not share one GLB."""
+    return output.parent / f"{output.stem}__paint"
+
+
+def paint_env(
+    mesh_path: Path,
+    image: Path,
+    output: Path,
+    paint_seed: int,
+    paint_res: int,
+    paint_steps: int,
+    paint_tex: int,
+) -> dict[str, str]:
+    work = paint_work_dir(output)
+    return {
+        **os.environ,
+        "PYTHONUNBUFFERED": "1",
+        "PAINT_MESH": str(mesh_path.resolve()),
+        "PAINT_IMG": str(image.resolve()),
+        "PAINT_SEED": str(paint_seed),
+        "PAINT_RES": str(paint_res),
+        "PAINT_STEPS": str(paint_steps),
+        "PAINT_TEX": str(paint_tex),
+        "PAINT_OUT": str(work.resolve()),
+    }
+
+
+def build_provenance(
+    *, image: Path, output: Path, parameters: dict, backend_revision: str | None = None
+) -> dict:
+    """Licence record for the Xiong full pipeline. Same shape as the CUDA Hunyuan writer."""
+    from datetime import datetime, timezone
+
+    from image_to_3dlab.provenance import LICENSES, sha256_file
+
+    profile = LICENSES["hunyuan-comfyui"]
+    components = [
+        {
+            "component": "facebook/dinov2-giant",
+            "purpose": "paint image conditioning",
+            "license": "Apache-2.0",
+            "commercial_status": "commercial-clear",
+        },
+        {
+            "component": "RealESRGAN_x4plus",
+            "purpose": "texture upscaling",
+            "license": "BSD-3-Clause",
+            "commercial_status": "commercial-clear",
+        },
+    ]
+    return {
+        "schema_version": 1,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "input": {
+            "path": str(image),
+            "sha256": sha256_file(image) if image.is_file() else None,
+            "source": "user-provided",
+        },
+        "output": {
+            "path": str(output),
+            "sha256": sha256_file(output) if output.is_file() else None,
+            "classification": profile.classification,
+        },
+        "model": {
+            "backend": "hunyuan-mlx-xiong",
+            "route": "apple-mlx-xiong",
+            "parameters": parameters,
+        },
+        "license": {
+            "name": profile.license_name,
+            "url": profile.license_url,
+            "conditions": list(profile.conditions),
+        },
+        "components": components,
+        "software": {"backend_revision": backend_revision},
+    }
+
+
+def provenance_path(output: Path) -> Path:
+    return output.with_suffix(".provenance.json")
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                      formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("image", type=Path)
     parser.add_argument("output", type=Path)
-    parser.add_argument("--model", choices=sorted(SHAPE_MODELS), default="2.0",
-                         help="shape-stage model; 2.0 is Xiong's own recommended pick "
-                         "and cleanest in our testing (see docs/hunyuan-mlx-recipes.md)")
-    parser.add_argument("--octree-resolution", type=int, default=512,
-                         choices=[256, 384, 512, 1024])
+    parser.add_argument(
+        "--model",
+        choices=sorted(SHAPE_MODELS),
+        default="2.0",
+        help="shape-stage model; 2.0 is Xiong's own recommended pick "
+        "and cleanest in our testing (see docs/hunyuan-mlx-recipes.md)",
+    )
+    parser.add_argument(
+        "--octree-resolution", type=int, default=512, choices=[256, 384, 512, 1024]
+    )
     parser.add_argument("--seed", type=int, default=42, help="shape-stage seed")
-    parser.add_argument("--quantize", type=int, default=8, choices=[0, 4, 8],
-                         help="4/8-bit DiT+DINO; 0 = full precision (much slower)")
-    parser.add_argument("--compile-dit", dest="compile_dit", action="store_true", default=True)
+    parser.add_argument(
+        "--quantize",
+        type=int,
+        default=8,
+        choices=[0, 4, 8],
+        help="4/8-bit DiT+DINO; 0 = full precision (much slower)",
+    )
+    parser.add_argument(
+        "--compile-dit", dest="compile_dit", action="store_true", default=True
+    )
     parser.add_argument("--no-compile-dit", dest="compile_dit", action="store_false")
-    parser.add_argument("--octree-decode", dest="octree_decode", action="store_true",
-                         default=True, help="FlashVDM-style near-surface-only decode (faster)")
-    parser.add_argument("--no-octree-decode", dest="octree_decode", action="store_false")
+    parser.add_argument(
+        "--octree-decode",
+        dest="octree_decode",
+        action="store_true",
+        default=True,
+        help="FlashVDM-style near-surface-only decode (faster)",
+    )
+    parser.add_argument(
+        "--no-octree-decode", dest="octree_decode", action="store_false"
+    )
     parser.add_argument("--decimation-target", type=int, default=300_000)
     parser.add_argument("--paint-seed", type=int, default=0)
     parser.add_argument("--paint-res", type=int, default=512)
@@ -70,8 +175,16 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def run_shape(image: Path, model: str, octree_resolution: int, seed: int, quantize: int,
-              compile_dit: bool, octree_decode: bool, t0: float):
+def run_shape(
+    image: Path,
+    model: str,
+    octree_resolution: int,
+    seed: int,
+    quantize: int,
+    compile_dit: bool,
+    octree_decode: bool,
+    t0: float,
+):
     import mlx.core as mx
     from hy3dmlx.pipeline import Hunyuan3DShapePipeline
 
@@ -81,25 +194,39 @@ def run_shape(image: Path, model: str, octree_resolution: int, seed: int, quanti
             f"model {model!r} not downloaded: {weights} does not exist. "
             "See docs/hunyuan-mlx-recipes.md for how to fetch weights."
         )
-    print(f"loading shape pipeline (model={model}, quantize={quantize or 'off'})... "
-          f"({time.time() - t0:.0f}s)", flush=True)
+    print(
+        f"loading shape pipeline (model={model}, quantize={quantize or 'off'})... "
+        f"({time.time() - t0:.0f}s)",
+        flush=True,
+    )
     pipe = Hunyuan3DShapePipeline.from_pretrained(
-        str(weights), dtype=mx.float16, quantize=quantize or None)
+        str(weights), dtype=mx.float16, quantize=quantize or None
+    )
     print(f"shape pipeline ready ({time.time() - t0:.0f}s)", flush=True)
     mesh = pipe.generate(
-        str(image), num_inference_steps=30, guidance_scale=5.0,
-        octree_resolution=octree_resolution, seed=seed,
-        octree_decode=octree_decode, compile_dit=compile_dit,
+        str(image),
+        num_inference_steps=30,
+        guidance_scale=5.0,
+        octree_resolution=octree_resolution,
+        seed=seed,
+        octree_decode=octree_decode,
+        compile_dit=compile_dit,
     )
-    print(f"shape generated ({time.time() - t0:.0f}s): "
-          f"{len(mesh.vertices)} verts, {len(mesh.faces)} faces", flush=True)
+    print(
+        f"shape generated ({time.time() - t0:.0f}s): "
+        f"{len(mesh.vertices)} verts, {len(mesh.faces)} faces",
+        flush=True,
+    )
     return mesh
 
 
 def run_remesh(mesh, decimation_target: int, t0: float) -> tuple[object, bool]:
     if len(mesh.faces) <= decimation_target:
-        print(f"mesh at/under decimation target ({len(mesh.faces):,} <= "
-              f"{decimation_target:,}); no remesh needed ({time.time() - t0:.0f}s)", flush=True)
+        print(
+            f"mesh at/under decimation target ({len(mesh.faces):,} <= "
+            f"{decimation_target:,}); no remesh needed ({time.time() - t0:.0f}s)",
+            flush=True,
+        )
         return mesh, False
     import fast_simplification
     import trimesh
@@ -111,33 +238,43 @@ def run_remesh(mesh, decimation_target: int, t0: float) -> tuple[object, bool]:
     return trimesh.Trimesh(vertices=v_out, faces=f_out, process=False), True
 
 
-def run_paint(mesh_path: Path, image: Path, output: Path, paint_seed: int, paint_res: int,
-              paint_steps: int, paint_tex: int, t0: float) -> None:
-    env = {
-        **os.environ, "PYTHONUNBUFFERED": "1",
-        "PAINT_MESH": str(mesh_path.resolve()), "PAINT_IMG": str(image.resolve()),
-        "PAINT_SEED": str(paint_seed), "PAINT_RES": str(paint_res),
-        "PAINT_STEPS": str(paint_steps), "PAINT_TEX": str(paint_tex),
-    }
-    # Same self-sufficiency fix as hunyuan_mlx_generate.py: run_paint_pbr.py's bare
-    # Image.save("outputs/...") calls crash post-diffusion on a fresh outputs/ dir.
-    (PAINT_ROOT / "outputs").mkdir(parents=True, exist_ok=True)
+def run_paint(
+    mesh_path: Path,
+    image: Path,
+    output: Path,
+    paint_seed: int,
+    paint_res: int,
+    paint_steps: int,
+    paint_tex: int,
+    t0: float,
+) -> None:
+    env = paint_env(
+        mesh_path, image, output, paint_seed, paint_res, paint_steps, paint_tex
+    )
+    work = Path(env["PAINT_OUT"])
+    work.mkdir(parents=True, exist_ok=True)
     print(f"starting paint stage ({time.time() - t0:.0f}s)", flush=True)
     proc = subprocess.run(
-        [str(PAINT_PYTHON), "-u", str(PAINT_SCRIPT)], cwd=str(PAINT_ROOT), env=env,
+        [str(PAINT_PYTHON), "-u", str(PAINT_SCRIPT)],
+        cwd=str(PAINT_ROOT),
+        env=env,
         check=False,
     )
     if proc.returncode != 0:
         raise RuntimeError(f"paint stage exited with code {proc.returncode}")
 
-    result = PAINT_ROOT / "outputs" / "textured_mesh_pbr.glb"
+    result = work / "textured_mesh_pbr.glb"
     if not result.is_file():
         raise RuntimeError(f"paint stage did not produce {result}")
     output.parent.mkdir(parents=True, exist_ok=True)
     result.replace(output)
-    for name in ("pbr_albedo_texture.png", "pbr_albedo_views.png",
-                 "pbr_mr_texture.png", "pbr_mr_views.png"):
-        src = PAINT_ROOT / "outputs" / name
+    for name in (
+        "pbr_albedo_texture.png",
+        "pbr_albedo_views.png",
+        "pbr_mr_texture.png",
+        "pbr_mr_views.png",
+    ):
+        src = work / name
         if src.is_file():
             src.replace(output.with_name(f"{output.stem}_{name}"))
     print(f"paint stage done ({time.time() - t0:.0f}s) -> {output}", flush=True)
@@ -146,11 +283,22 @@ def run_paint(mesh_path: Path, image: Path, output: Path, paint_seed: int, paint
 def main() -> None:
     args = parse_args()
     t0 = time.time()
-    print(f"[hunyuan-mlx-xiong] image={args.image} model={args.model} "
-          f"octree={args.octree_resolution} quantize={args.quantize}", flush=True)
+    print(
+        f"[hunyuan-mlx-xiong] image={args.image} model={args.model} "
+        f"octree={args.octree_resolution} quantize={args.quantize}",
+        flush=True,
+    )
 
-    mesh = run_shape(args.image, args.model, args.octree_resolution, args.seed,
-                      args.quantize, args.compile_dit, args.octree_decode, t0)
+    mesh = run_shape(
+        args.image,
+        args.model,
+        args.octree_resolution,
+        args.seed,
+        args.quantize,
+        args.compile_dit,
+        args.octree_decode,
+        t0,
+    )
     shape_seconds = time.time() - t0
 
     mesh, remeshed = run_remesh(mesh, args.decimation_target, t0)
@@ -170,13 +318,23 @@ def main() -> None:
     # can get SIGKILLed by memory pressure even on 48 GB machines.
     del mesh
     import gc
+
     gc.collect()
     import mlx.core as mx
+
     mx.clear_cache()
 
     paint_t0 = time.time()
-    run_paint(tmp_mesh, args.image, args.output, args.paint_seed, args.paint_res,
-              args.paint_steps, args.paint_tex, t0)
+    run_paint(
+        tmp_mesh,
+        args.image,
+        args.output,
+        args.paint_seed,
+        args.paint_res,
+        args.paint_steps,
+        args.paint_tex,
+        t0,
+    )
     paint_seconds = time.time() - paint_t0
 
     total = time.time() - t0
@@ -210,7 +368,14 @@ def main() -> None:
     }
     manifest_path = args.output.with_name(f"{args.output.stem}.json")
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    record = build_provenance(
+        image=args.image, output=args.output, parameters=manifest["parameters"]
+    )
+    provenance_path(args.output).write_text(
+        json.dumps(record, indent=2, sort_keys=True) + "\n"
+    )
     print(f"Manifest: {manifest_path}", flush=True)
+    print(f"Provenance: {provenance_path(args.output)}", flush=True)
     print(f"Total: {total:.1f}s", flush=True)
 
 

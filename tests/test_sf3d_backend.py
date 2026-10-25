@@ -7,13 +7,16 @@ import pytest
 from image_to_3dlab.sf3d_backend import pick_device
 
 
-@pytest.mark.parametrize("forced_cpu,cuda,mps,expected", [
-    (False, True, False, "cuda"),
-    (False, False, True, "mps"),
-    (False, False, False, "cpu"),
-    (True, True, False, "cpu"),
-    (True, False, True, "cpu"),
-])
+@pytest.mark.parametrize(
+    "forced_cpu,cuda,mps,expected",
+    [
+        (False, True, False, "cuda"),
+        (False, False, True, "mps"),
+        (False, False, False, "cpu"),
+        (True, True, False, "cpu"),
+        (True, False, True, "cpu"),
+    ],
+)
 def test_pick_device(forced_cpu, cuda, mps, expected):
     assert pick_device(forced_cpu, cuda, mps) == expected
 
@@ -21,6 +24,7 @@ def test_pick_device(forced_cpu, cuda, mps, expected):
 # Upstream `remove_background` skips rembg on any RGBA with alpha < 255, so a Qwen image
 # with noise alpha went in un-cut and every SF3D model came out inside a grey slab
 # (3090 Ti pod run 4, 2026-09-24). We decide by contents and force rembg when needed.
+
 
 def _noisy_rgba():
     import numpy as np
@@ -52,10 +56,39 @@ def test_real_matte_is_left_alone():
 
     alpha = np.zeros((32, 32), dtype=np.uint8)
     alpha[8:24, 8:24] = 255
-    image = Image.fromarray(np.dstack([np.zeros((32, 32, 3)), alpha]).astype(np.uint8), "RGBA")
+    image = Image.fromarray(
+        np.dstack([np.zeros((32, 32, 3)), alpha]).astype(np.uint8), "RGBA"
+    )
     calls = []
     cut_out(image, lambda *a, **k: calls.append(1), session=None)
     assert calls == []
+
+
+def test_a_hub_id_is_refused_and_a_local_directory_is_kept(tmp_path):
+    from image_to_3dlab.sf3d_backend import require_local_weights
+
+    with pytest.raises(RuntimeError, match="bootstrap_sf3d.py"):
+        require_local_weights("stabilityai/stable-fast-3d")
+    (tmp_path / "config.yaml").write_text("x")
+    (tmp_path / "model.safetensors").write_bytes(b"x")
+    assert require_local_weights(str(tmp_path)) == tmp_path.resolve()
+
+
+def test_generate_refuses_a_hub_id_before_loading_the_model(tmp_path, monkeypatch):
+    from image_to_3dlab.sf3d_backend import SF3DOptions, generate_sf3d
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("from_pretrained must not run")
+
+    monkeypatch.setattr("image_to_3dlab.sf3d_backend._run", boom)
+    image = tmp_path / "in.png"
+    image.write_bytes(b"png")
+    with pytest.raises(RuntimeError, match="bootstrap_sf3d.py"):
+        generate_sf3d(
+            image,
+            tmp_path,
+            SF3DOptions(repo=tmp_path, model="stabilityai/stable-fast-3d"),
+        )
 
 
 def test_the_setup_hint_names_this_machines_installer():

@@ -71,7 +71,9 @@ def validate_bundle(payload: dict) -> None:
             f"latent row mismatch: {feats.shape[0]} features vs {coords.shape[0]} coords"
         )
     if coords.shape[1] != 4:
-        raise ValueError(f"expected batched BXYZ coordinates with 4 columns, got {coords.shape}")
+        raise ValueError(
+            f"expected batched BXYZ coordinates with 4 columns, got {coords.shape}"
+        )
     if int(payload["res"]) not in (512, 1024, 1536):
         raise ValueError(f"unsupported latent resolution: {payload['res']}")
 
@@ -129,6 +131,69 @@ def default_geometry_decode(latent_path: Path) -> Path:
     return latent_path.with_name(latent_path.stem + "_decode.pt")
 
 
+def live_remover_refusal(vendor_root: Path) -> str | None:
+    """Fail when this checkout would still construct the gated remover."""
+    path = (
+        vendor_root / "TRELLIS.2" / "trellis2" / "pipelines" / "trellis2_image_to_3d.py"
+    )
+    if not path.is_file():
+        return None
+    import patch_trellis_space_core as space_patch
+
+    if space_patch._CONSTRUCTOR in path.read_text(encoding="utf-8", errors="replace"):
+        return (
+            f"{path} still constructs the background remover. "
+            "BRIA RMBG-2.0 must not be loaded. "
+            "Run: python scripts/patch_trellis_space_core.py"
+        )
+    return None
+
+
+def refuse_uncut_image(image_path: Path, *, preprocessed: bool) -> None:
+    """Same refusal as the Mac TRELLIS CLI. A preprocessed RGB input is already cut."""
+    if preprocessed:
+        return
+    from PIL import Image
+
+    import trellis_space_generate as space
+
+    raw = Image.open(image_path)
+    try:
+        extrema = raw.getextrema()
+        alpha_min = extrema[3][0] if raw.mode == "RGBA" else None
+        if not space.alpha_is_transparent(raw.mode, alpha_min):
+            raise SystemExit(
+                f"{image_path} has no transparent alpha foreground. Cut it out first: the studio "
+                "does this for you, or use any PNG with a transparent background."
+            )
+        import numpy as np
+
+        border = space.border_opaque_fraction(np.array(raw)[..., 3])
+    finally:
+        raw.close()
+    if border > space.BORDER_OPAQUE_LIMIT:
+        raise SystemExit(space.uncut_foreground_message(image_path, border))
+
+
+def load_trellis(model: str):
+    """The one `from_pretrained` call. Tests stub it and assert a missing tree never reaches it."""
+    from trellis2.pipelines.trellis2_image_to_3d import Trellis2ImageTo3DPipeline
+
+    return Trellis2ImageTo3DPipeline.from_pretrained(model, load_rembg=False)
+
+
+def open_pipeline(vendor: Path, *, confirm: bool):
+    """Resolve a local tree, then load. A missing tree never calls `load_trellis`."""
+    import trellis_route
+
+    model = trellis_route.resolve_weights(
+        route_label="Apple / Stage-3 resample",
+        confirm=confirm,
+        extra=(vendor / "models" / trellis_route.LOCAL_MODEL_DIR,),
+    )
+    return load_trellis(model)
+
+
 def repo_relative(path: Path) -> str:
     resolved = path.resolve()
     try:
@@ -142,8 +207,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("latents", type=Path)
     parser.add_argument("output", type=Path, help="split material cache (.pt)")
     parser.add_argument("--geometry-decode", type=Path)
-    parser.add_argument("--image", type=Path,
-                        help="conditioning image; defaults to the first cached image")
+    parser.add_argument(
+        "--image",
+        type=Path,
+        help="conditioning image; defaults to the first cached image",
+    )
     parser.add_argument(
         "--preprocessed-image",
         action="store_true",
@@ -157,16 +225,34 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rescale-t", type=float, default=3.0)
     parser.add_argument("--tex-latent-output", type=Path)
     parser.add_argument("--metadata", type=Path)
-    parser.add_argument("--vendor-root", type=Path, default=DEFAULT_VENDOR,
-                        help="TRELLIS wrapper containing TRELLIS.2 and .venv")
-    parser.add_argument("--sparse-attn-backend", default="sdpa",
-                        choices=("sdpa", "metal_flash", "mlx"),
-                        help="mlx routes attention through MLX's fused Metal kernel; "
-                             "needs scripts/patch_trellis_mlx_attention.py applied")
-    parser.add_argument("--sample-only", action="store_true",
-                        help="save the texture latent and stop before material decoding")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="validate inputs and print the experiment without loading models")
+    parser.add_argument(
+        "--vendor-root",
+        type=Path,
+        default=DEFAULT_VENDOR,
+        help="TRELLIS wrapper containing TRELLIS.2 and .venv",
+    )
+    parser.add_argument(
+        "--sparse-attn-backend",
+        default="sdpa",
+        choices=("sdpa", "metal_flash", "mlx"),
+        help="mlx routes attention through MLX's fused Metal kernel; "
+        "needs scripts/patch_trellis_mlx_attention.py applied",
+    )
+    parser.add_argument(
+        "--sample-only",
+        action="store_true",
+        help="save the texture latent and stop before material decoding",
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="download TRELLIS.2-4B when pipeline.json is not already on disk",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="validate inputs and print the experiment without loading models",
+    )
     return parser.parse_args()
 
 
@@ -196,6 +282,10 @@ def main() -> int:
         raise SystemExit(f"missing geometry decode: {geometry_path}")
     if not image_path.is_file():
         raise SystemExit(f"missing conditioning image: {image_path}")
+    refuse_uncut_image(image_path, preprocessed=args.preprocessed_image)
+    remover = live_remover_refusal(vendor)
+    if remover:
+        raise SystemExit(remover)
 
     params = sampler_params(args)
     experiment = {
@@ -218,6 +308,7 @@ def main() -> int:
 
     try:
         import flex_gemm  # noqa: F401
+
         os.environ.setdefault("SPARSE_CONV_BACKEND", "flex_gemm")
     except (ImportError, RuntimeError):
         os.environ.setdefault("SPARSE_CONV_BACKEND", "none")
@@ -227,18 +318,12 @@ def main() -> int:
         sys.path.append(str(stubs))
     from PIL import Image
     from trellis2.modules.sparse import SparseTensor
-    from trellis2.pipelines.trellis2_image_to_3d import Trellis2ImageTo3DPipeline
 
     started = time.time()
     raw_image = Image.open(image_path)
-    has_transparent_alpha = (
-        raw_image.mode == "RGBA" and raw_image.getextrema()[3][0] < 255
-    )
     print("Loading TRELLIS.2 pipeline...", flush=True)
-    pipeline = Trellis2ImageTo3DPipeline.from_pretrained(
-        "microsoft/TRELLIS.2-4B",
-        load_rembg=not has_transparent_alpha and not args.preprocessed_image,
-    )
+    # Never true. An opaque picture used to take the branch that builds BRIA.
+    pipeline = open_pipeline(vendor, confirm=args.yes)
     pipeline.to(torch.device("mps"))
     load_seconds = time.time() - started
     print(f"Pipeline loaded in {load_seconds:.1f}s", flush=True)
@@ -313,7 +398,10 @@ def main() -> int:
         metadata_path = args.metadata or args.output.with_suffix(".json")
         metadata_path.parent.mkdir(parents=True, exist_ok=True)
         metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
-        print("Sample-only run complete; material decode intentionally skipped.", flush=True)
+        print(
+            "Sample-only run complete; material decode intentionally skipped.",
+            flush=True,
+        )
         print(f"Metadata: {metadata_path}", flush=True)
         return 0
 

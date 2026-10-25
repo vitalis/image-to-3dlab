@@ -6,7 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from image_to_3dlab.trellis_backend import _normalize_glb_material
+from image_to_3dlab.trellis_backend import (
+    TrellisOptions,
+    _normalize_glb_material,
+    _prepare_rgba,
+    generate_trellis,
+)
 
 _GLB_MAGIC = 0x46546C67
 _JSON_CHUNK = 0x4E4F534A
@@ -139,8 +144,10 @@ def test_normalize_material_is_idempotent(tmp_path):
 
 # --- the generate.py argv ----------------------------------------------------------
 
+
 def _opts(**kw):
     from image_to_3dlab.trellis_backend import TrellisOptions
+
     return TrellisOptions(repo=Path("/repo"), **kw)
 
 
@@ -162,7 +169,10 @@ def test_command_passes_remesh_and_an_explicit_project():
     from image_to_3dlab.trellis_backend import build_generate_command
 
     cmd = build_generate_command(
-        Path("/py"), Path("/gen.py"), [Path("a.png")], Path("/out"),
+        Path("/py"),
+        Path("/gen.py"),
+        [Path("a.png")],
+        Path("/out"),
         _opts(remesh=True, remesh_project=0.0),
     )
     assert "--remesh" in cmd
@@ -174,9 +184,17 @@ def test_command_carries_the_core_settings():
     from image_to_3dlab.trellis_backend import build_generate_command
 
     cmd = build_generate_command(
-        Path("/py"), Path("/gen.py"), [Path("a.png"), Path("b.png")], Path("/out"),
-        _opts(seed=42, pipeline_type="1024_cascade", texture_size=3072,
-              bake_target_faces=300000, steps=12),
+        Path("/py"),
+        Path("/gen.py"),
+        [Path("a.png"), Path("b.png")],
+        Path("/out"),
+        _opts(
+            seed=42,
+            pipeline_type="1024_cascade",
+            texture_size=3072,
+            bake_target_faces=300000,
+            steps=12,
+        ),
     )
     assert cmd[cmd.index("--seed") + 1] == "42"
     assert cmd[cmd.index("--pipeline-type") + 1] == "1024_cascade"
@@ -203,6 +221,7 @@ def test_steps_omitted_when_unset():
 # and adding only the arg would then have raised TypeError on TrellisOptions. Both
 # surfaces are pinned so the crash cannot come back.
 
+
 def test_trellis_options_accepts_pre_simplify_cap():
     assert _opts().pre_simplify_cap is None
     assert _opts(pre_simplify_cap=4_000_000).pre_simplify_cap == 4_000_000
@@ -219,3 +238,86 @@ def test_cli_defines_pre_simplify_cap_so_the_attr_always_exists():
         ["img.png", "--trellis", "--trellis-pre-simplify-cap", "4000000"]
     )
     assert args.trellis_pre_simplify_cap == 4_000_000
+
+
+def test_noisy_alpha_is_cut_out_and_a_failed_cut_stops_the_run(tmp_path, monkeypatch):
+    import numpy as np
+    from PIL import Image
+
+    noise = np.random.default_rng(0).integers(101, 256, (32, 32))
+    rgb = np.full((32, 32, 3), 128)
+    image = Image.fromarray(np.dstack([rgb, noise]).astype(np.uint8), "RGBA")
+    source = tmp_path / "noisy.png"
+    image.save(source)
+    calls = []
+
+    def cut_out(picture, session=None):
+        calls.append(1)
+        return picture, "u2net"
+
+    monkeypatch.setattr("image_to_3dlab.matte.cut_out", cut_out)
+    with pytest.raises(RuntimeError, match="transparent foreground"):
+        _prepare_rgba(source, tmp_path / "out.png")
+    assert calls == [1]
+
+
+def test_a_real_cut_out_is_left_alone(tmp_path, monkeypatch):
+    import numpy as np
+    from PIL import Image
+
+    alpha = np.zeros((32, 32), dtype=np.uint8)
+    alpha[4:28, 4:28] = 255
+    image = Image.fromarray(np.dstack([np.zeros((32, 32, 3), np.uint8), alpha]), "RGBA")
+    source = tmp_path / "cut.png"
+    image.save(source)
+
+    def cut_out(*_args, **_kwargs):
+        raise AssertionError("already matted")
+
+    monkeypatch.setattr("image_to_3dlab.matte.cut_out", cut_out)
+    saved = _prepare_rgba(source, tmp_path / "out.png")
+    assert saved.is_file()
+
+
+def test_winding_flags_are_written_into_the_run_record(tmp_path, monkeypatch):
+    from image_to_3dlab import cli
+    from image_to_3dlab.trellis_backend import TrellisResult
+
+    image = tmp_path / "a.png"
+    image.write_bytes(b"png")
+    glb = tmp_path / "a_trellis2.glb"
+    glb.write_bytes(b"glb")
+    captured = {}
+
+    def fake_generate(_views, _out, _options):
+        return TrellisResult(glb, "metal-o-voxel", True, "pbr", True, False)
+
+    def fake_finalize(**kwargs):
+        captured.update(kwargs)
+        return glb, tmp_path / "a.provenance.json"
+
+    monkeypatch.setattr(
+        "image_to_3dlab.trellis_backend.generate_trellis", fake_generate
+    )
+    monkeypatch.setattr(cli, "finalize_output", fake_finalize)
+    monkeypatch.setattr(cli, "validate_run_policy", lambda *_a, **_k: {})
+    assert cli.main([str(image), "--trellis", "--output-dir", str(tmp_path)]) == 0
+    assert captured["parameters"]["winding_repaired"] is True
+    assert captured["parameters"]["winding_inverted"] is False
+
+
+def test_a_bad_choice_is_refused_before_generation(tmp_path):
+    image = tmp_path / "a.png"
+    image.write_bytes(b"png")
+    with pytest.raises(ValueError, match="material mode"):
+        generate_trellis(
+            image, tmp_path, TrellisOptions(repo=tmp_path, material_mode="glass")
+        )
+    with pytest.raises(ValueError, match="pipeline"):
+        generate_trellis(
+            image, tmp_path, TrellisOptions(repo=tmp_path, pipeline_type="huge")
+        )
+    with pytest.raises(ValueError, match="texture"):
+        generate_trellis(
+            image, tmp_path, TrellisOptions(repo=tmp_path, texture_size=64)
+        )

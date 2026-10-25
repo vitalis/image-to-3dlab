@@ -35,7 +35,9 @@ def test_same_settings_as_the_mac_route():
 
 
 def test_backends_are_pinned_not_inherited():
-    env = gen.configure_environment({"ATTN_BACKEND": "sdpa", "SPARSE_CONV_BACKEND": "none"})
+    env = gen.configure_environment(
+        {"ATTN_BACKEND": "sdpa", "SPARSE_CONV_BACKEND": "none"}
+    )
     assert env["ATTN_BACKEND"] == "flash_attn"
     assert env["SPARSE_ATTN_BACKEND"] == "flash_attn"
     assert env["SPARSE_CONV_BACKEND"] == "flex_gemm"
@@ -57,13 +59,21 @@ def test_generate_refuses_before_touching_the_image(tmp_path, monkeypatch):
     monkeypatch.setattr(gen, "prepare_image", lambda *a, **k: pytest.fail("matted"))
     monkeypatch.setattr(gen, "load_pipeline", lambda *a: pytest.fail("loaded"))
     with pytest.raises(SystemExit, match="BRIA"):
-        gen.generate(tmp_path / "in.png", tmp_path / "out.glb", vendor, seed=0,
-                     resolution="1024", decimation_target=1, texture_size=1024,
-                     save_latents=False)
+        gen.generate(
+            tmp_path / "in.png",
+            tmp_path / "out.glb",
+            vendor,
+            seed=0,
+            resolution="1024",
+            decimation_target=1,
+            texture_size=1024,
+            save_latents=False,
+        )
 
 
-def test_load_pipeline_refuses_an_unpatched_checkout_before_importing_torch(tmp_path,
-                                                                             monkeypatch):
+def test_load_pipeline_refuses_an_unpatched_checkout_before_importing_torch(
+    tmp_path, monkeypatch
+):
     vendor = _vendor(tmp_path, patched=False)
     monkeypatch.setitem(sys.modules, "torch", None)  # an import would raise, not pass
     with pytest.raises(SystemExit, match="BRIA"):
@@ -98,9 +108,16 @@ def test_forbid_bria_makes_the_remover_unbuildable():
 
 
 def test_manifest_says_cuda_and_no_rembg():
-    manifest = gen.build_manifest(image="in.png", output="out.glb", params=gen.DEMO_PARAMS,
-                                  pipeline_type="1024_cascade", seed=0, timings={},
-                                  artifacts={}, matte_model="birefnet-general-lite")
+    manifest = gen.build_manifest(
+        image="in.png",
+        output="out.glb",
+        params=gen.DEMO_PARAMS,
+        pipeline_type="1024_cascade",
+        seed=0,
+        timings={},
+        artifacts={},
+        matte_model="birefnet-general-lite",
+    )
     assert manifest["device"] == "cuda"
     assert manifest["generator"] == "trellis_cuda_generate.py"
     assert manifest["load_rembg"] is False
@@ -112,16 +129,23 @@ def test_provenance_records_licences_and_bria_blocked(tmp_path):
     image, output = tmp_path / "in.png", tmp_path / "out.glb"
     image.write_bytes(b"png")
     output.write_bytes(b"glb")
-    record = gen.build_provenance(image=image, output=output, parameters={"seed": 0},
-                                  matte_model="birefnet-general-lite",
-                                  backend_revision="abc123")
+    record = gen.build_provenance(
+        image=image,
+        output=output,
+        parameters={"seed": 0},
+        matte_model="birefnet-general-lite",
+        backend_revision="abc123",
+    )
     assert record["license"]["name"] == "MIT (TRELLIS.2) + DINOv3 License"
     assert record["model"]["route"] == "nvidia-cuda"
     names = {c["component"]: c for c in record["components"]}
     assert names["BRIA RMBG-2.0"]["loaded"] is False
     assert "rembg/birefnet-general-lite" in names
     assert "facebook/dinov3-vitl16-pretrain-lvd1689m" in names
-    assert record["output"]["sha256"] and record["software"]["backend_revision"] == "abc123"
+    assert (
+        record["output"]["sha256"]
+        and record["software"]["backend_revision"] == "abc123"
+    )
     json.dumps(record)
 
 
@@ -129,8 +153,13 @@ def test_provenance_without_our_matte_lists_no_remover(tmp_path):
     image, output = tmp_path / "in.png", tmp_path / "out.glb"
     image.write_bytes(b"png")
     output.write_bytes(b"glb")
-    record = gen.build_provenance(image=image, output=output, parameters={},
-                                  matte_model=None, backend_revision=None)
+    record = gen.build_provenance(
+        image=image,
+        output=output,
+        parameters={},
+        matte_model=None,
+        backend_revision=None,
+    )
     assert not any(c["component"].startswith("rembg/") for c in record["components"])
 
 
@@ -145,17 +174,26 @@ def test_backend_revision_reads_the_build_marker(tmp_path):
     assert gen.backend_revision(tmp_path / "nothing") is None
 
 
+def _plant_remover(monkeypatch, tmp_path):
+    home = tmp_path / "removers"
+    home.mkdir()
+    (home / "u2net.onnx").write_bytes(b"not-a-model")
+    monkeypatch.setenv("U2NET_HOME", str(home))
+
+
 def test_an_unmatted_image_is_cut_out_by_our_remover(tmp_path, monkeypatch):
     from PIL import Image
 
     from image_to_3dlab import matte
 
+    _plant_remover(monkeypatch, tmp_path)
     source = tmp_path / "in.png"
     Image.new("RGB", (32, 32), "white").save(source)
     cut = Image.new("RGBA", (32, 32), (0, 0, 0, 0))
     monkeypatch.setattr(matte, "cut_out", lambda image: (cut, "birefnet-general-lite"))
-    path, model = gen.prepare_image(source, tmp_path / "out.glb", force_matte=False,
-                                    allow_uncut=False)
+    path, model = gen.prepare_image(
+        source, tmp_path / "out.glb", force_matte=False, allow_uncut=False
+    )
     assert model == "birefnet-general-lite"
     assert path == gen.matted_path(tmp_path / "out.glb") and path.is_file()
 
@@ -170,8 +208,9 @@ def test_a_real_cutout_goes_straight_in(tmp_path, monkeypatch):
     image.paste((255, 0, 0, 255), (8, 8, 24, 24))
     image.save(source)
     monkeypatch.setattr(matte, "cut_out", lambda *a: pytest.fail("re-matted"))
-    assert gen.prepare_image(source, tmp_path / "out.glb", force_matte=False,
-                             allow_uncut=False) == (source, None)
+    assert gen.prepare_image(
+        source, tmp_path / "out.glb", force_matte=False, allow_uncut=False
+    ) == (source, None)
 
 
 def test_main_requires_image_and_output():
@@ -180,6 +219,7 @@ def test_main_requires_image_and_output():
 
 
 # --- AMD: the attention backend the ROCm patches add ------------------------------------
+
 
 def test_the_nvidia_route_never_asks_for_the_amd_patches(tmp_path):
     assert gen.uses_aule(gen.ROUTE) is False
@@ -192,15 +232,20 @@ def test_an_amd_checkout_without_the_attention_patches_is_refused(tmp_path):
     assert refusal and "patch_trellis_rocm.py" in refusal
 
 
-def test_check_on_amd_reports_the_missing_patches_before_torch(tmp_path, monkeypatch, capsys):
+def test_check_on_amd_reports_the_missing_patches_before_torch(
+    tmp_path, monkeypatch, capsys
+):
     monkeypatch.setitem(sys.modules, "torch", None)  # an import would raise, not pass
     assert gen.check_environment(_vendor(tmp_path), gen.trellis_route.ROCM) == 1
     assert "patch_trellis_rocm.py" in capsys.readouterr().out
 
 
-def test_check_on_amd_reports_a_missing_aule_before_loading_trellis(tmp_path, monkeypatch,
-                                                                   capsys):
-    fake_torch = types.SimpleNamespace(cuda=types.SimpleNamespace(is_available=lambda: True))
+def test_check_on_amd_reports_a_missing_aule_before_loading_trellis(
+    tmp_path, monkeypatch, capsys
+):
+    fake_torch = types.SimpleNamespace(
+        cuda=types.SimpleNamespace(is_available=lambda: True)
+    )
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
     monkeypatch.setitem(sys.modules, "aule", None)
     monkeypatch.setitem(sys.modules, "o_voxel", None)  # reaching TRELLIS would raise
@@ -211,7 +256,43 @@ def test_check_on_amd_reports_a_missing_aule_before_loading_trellis(tmp_path, mo
     assert "aule" in out and "bootstrap_trellis_rocm.py" in out
 
 
-def test_load_pipeline_on_amd_refuses_unpatched_attention_before_torch(tmp_path, monkeypatch):
+def test_load_pipeline_on_amd_refuses_unpatched_attention_before_torch(
+    tmp_path, monkeypatch
+):
     monkeypatch.setitem(sys.modules, "torch", None)
     with pytest.raises(SystemExit, match="patch_trellis_rocm.py"):
         gen.load_pipeline(_vendor(tmp_path), gen.trellis_route.ROCM)
+
+
+def test_an_uncut_image_stops_when_the_remover_file_is_missing(tmp_path, monkeypatch):
+    from PIL import Image
+
+    from image_to_3dlab import matte
+
+    monkeypatch.setenv("U2NET_HOME", str(tmp_path / "empty"))
+    (tmp_path / "empty").mkdir()
+    monkeypatch.setattr(matte, "cut_out", lambda *a, **k: pytest.fail("session"))
+    source = tmp_path / "plain.png"
+    Image.new("RGB", (8, 8), "white").save(source)
+    with pytest.raises(SystemExit, match="bootstrap_matte.py"):
+        gen.prepare_image(
+            source, tmp_path / "out.glb", force_matte=False, allow_uncut=False
+        )
+
+
+def test_load_pipeline_refuses_a_missing_tree_before_from_pretrained(
+    tmp_path, monkeypatch
+):
+    import dataclasses
+
+    monkeypatch.delenv("I2L_TRELLIS_MODEL_PATH", raising=False)
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "hub"))
+    vendor = _vendor(tmp_path)
+    route = dataclasses.replace(gen.ROUTE, vendor=vendor)
+    monkeypatch.setattr(
+        gen, "_from_pretrained", lambda *a, **k: pytest.fail("from_pretrained")
+    )
+    with pytest.raises(SystemExit, match="bootstrap_trellis_cuda") as refused:
+        gen.load_pipeline(vendor, route)
+    assert "GB" in str(refused.value)
+    assert "TRELLIS.2" in str(refused.value)

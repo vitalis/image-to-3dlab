@@ -27,6 +27,7 @@ import argparse
 import getpass
 import json
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -49,13 +50,17 @@ IMAGE = "runpod/pytorch:1.0.3-cu1281-torch291-ubuntu2404"
 ROUTES = ("trellis", "hunyuan-cuda", "pixal3d")
 PORT = 8777
 # The installer of the ref under test: main's may not know flags the branch added.
-INSTALL_URL = "https://raw.githubusercontent.com/Bingeljell/image-to-3dlab/{ref}/install.sh"
+INSTALL_URL = (
+    "https://raw.githubusercontent.com/Bingeljell/image-to-3dlab/{ref}/install.sh"
+)
 # Big public files on the hosts setup downloads from most: Hugging Face and GitHub
 # releases (flash-attn's wheel). The slower one sets the pace.
 SPEED_URLS = (
     "https://huggingface.co/facebook/dinov2-large/resolve/main/model.safetensors",
-    ("https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3.post1/"
-     "flash_attn-2.8.3.post1%2Bcu12torch2.8cxx11abiTRUE-cp311-cp311-linux_x86_64.whl"),
+    (
+        "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3.post1/"
+        "flash_attn-2.8.3.post1%2Bcu12torch2.8cxx11abiTRUE-cp311-cp311-linux_x86_64.whl"
+    ),
 )
 MIN_MB_PER_S = 20.0
 TERMINAL = {"done", "error", "cancelled"}
@@ -64,6 +69,7 @@ DEFAULT_IMAGE = REPO / "output" / "pod-test-2026-10-01" / "input-vanguard_plain.
 
 # ---- pure helpers (tested) -----------------------------------------------------------
 
+
 def terminate_after(hours: float, now: datetime | None = None) -> str:
     """RunPod's own kill switch, as the UTC timestamp `--terminate-after` takes."""
     now = now or datetime.now(timezone.utc)
@@ -71,28 +77,80 @@ def terminate_after(hours: float, now: datetime | None = None) -> str:
 
 
 # Where the Hunyuan licence does not reach: the EU, the UK and South Korea.
-BLOCKED_COUNTRIES = frozenset({
-    "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", "HU", "IE",
-    "IT", "LV", "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK", "SI", "ES", "SE",
-    "GB", "KR",
-})
+BLOCKED_COUNTRIES = frozenset(
+    {
+        "AT",
+        "BE",
+        "BG",
+        "HR",
+        "CY",
+        "CZ",
+        "DK",
+        "EE",
+        "FI",
+        "FR",
+        "DE",
+        "GR",
+        "HU",
+        "IE",
+        "IT",
+        "LV",
+        "LT",
+        "LU",
+        "MT",
+        "NL",
+        "PL",
+        "PT",
+        "RO",
+        "SK",
+        "SI",
+        "ES",
+        "SE",
+        "GB",
+        "KR",
+    }
+)
 
 
-def create_command(gpu: str, name: str, hours: float, cloud: str = "secure",
-                   country: str = "US") -> list[str]:
+def create_command(
+    gpu: str, name: str, hours: float, cloud: str = "secure", country: str = "US"
+) -> list[str]:
     """Community pods only get a reachable SSH port with a public IP, which --wait needs.
 
     Pinned to one country because the run fetches Hunyuan weights, which are not licensed
     in the EU, the UK or South Korea, and an unpinned pod can land in any of them."""
     community = ["--public-ip"] if cloud == "community" else []
-    return ["runpodctl", "pod", "create", "--cloud-type", cloud.upper(), *community,
-            "--country-code", country, "--gpu-id", gpu,
-            # Hosts set the driver. Below CUDA 12.9 (driver 575) Pixal3D compiles for 15
-            # minutes instead of downloading its prebuilt in one.
-            "--min-cuda-version", "12.9",
-            "--image", IMAGE, "--name", name, "--container-disk-in-gb", "120",
-            "--volume-in-gb", "60", "--ports", f"{PORT}/http,22/tcp",
-            "--terminate-after", terminate_after(hours), "--wait", "-o", "json"]
+    return [
+        "runpodctl",
+        "pod",
+        "create",
+        "--cloud-type",
+        cloud.upper(),
+        *community,
+        "--country-code",
+        country,
+        "--gpu-id",
+        gpu,
+        # Hosts set the driver. Below CUDA 12.9 (driver 575) Pixal3D compiles for 15
+        # minutes instead of downloading its prebuilt in one.
+        "--min-cuda-version",
+        "12.9",
+        "--image",
+        IMAGE,
+        "--name",
+        name,
+        "--container-disk-in-gb",
+        "120",
+        "--volume-in-gb",
+        "60",
+        "--ports",
+        f"{PORT}/http,22/tcp",
+        "--terminate-after",
+        terminate_after(hours),
+        "--wait",
+        "-o",
+        "json",
+    ]
 
 
 def pod_price(pod: dict) -> float | None:
@@ -107,8 +165,14 @@ def pod_price(pod: dict) -> float | None:
 def ssh_target(info: dict) -> tuple[str, int, str | None]:
     """(host, port, key file) from `runpodctl ssh info`, whose command reads
     `ssh root@1.2.3.4 -p 12345 -i ~/.ssh/key`. Found by shape, not key name."""
-    command = next((v for v in info.values()
-                    if isinstance(v, str) and v.startswith("ssh ") and "@" in v), None)
+    command = next(
+        (
+            v
+            for v in info.values()
+            if isinstance(v, str) and v.startswith("ssh ") and "@" in v
+        ),
+        None,
+    )
     if command is None:
         raise RuntimeError(f"no ssh command in runpodctl's answer: {info}")
     words = shlex.split(command)
@@ -123,14 +187,19 @@ def matching_private_key(registered: dict, ssh_dir: Path) -> Path | None:
     list-keys`). Without it ssh tries the default key, which RunPod may never have seen."""
     known = {" ".join(k.get("key", "").split()[:2]) for k in registered.get("keys", [])}
     for pub in sorted(ssh_dir.glob("*.pub")):
-        if " ".join(pub.read_text().split()[:2]) in known and pub.with_suffix("").is_file():
+        if (
+            " ".join(pub.read_text().split()[:2]) in known
+            and pub.with_suffix("").is_file()
+        ):
             return pub.with_suffix("")
     return None
 
 
 def speed_command(url: str, seconds: int = 20) -> str:
-    return (f"curl -sL -o /dev/null --max-time {seconds} -w '%{{speed_download}}' "
-            f"{shlex.quote(url)} || true")
+    return (
+        f"curl -sL -o /dev/null --max-time {seconds} -w '%{{speed_download}}' "
+        f"{shlex.quote(url)} || true"
+    )
 
 
 def mb_per_s(curl_output: str) -> float:
@@ -140,9 +209,24 @@ def mb_per_s(curl_output: str) -> float:
         return 0.0
 
 
+# One git branch or tag. A semicolon, a pipe, or a backtick would be a second command
+# once this string is handed to the pod's shell.
+_SAFE_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+
+
 def install_command(ref: str) -> str:
-    return (f"curl -fsSL {INSTALL_URL.format(ref=ref)} | bash -s -- --ref {shlex.quote(ref)} "
-            "--yes --no-start")
+    if (
+        _SAFE_REF.fullmatch(ref) is None
+        or ".." in ref
+        or "//" in ref
+        or ref.endswith("/")
+        or ref.endswith(".")
+    ):
+        raise ValueError(
+            f"--ref must be one git branch or tag name, not a shell command: {ref!r}"
+        )
+    url = shlex.quote(INSTALL_URL.format(ref=ref))
+    return f"curl -fsSL {url} | bash -s -- --ref {shlex.quote(ref)} --yes --no-start"
 
 
 def lab_command(pod_id: str) -> str:
@@ -151,8 +235,10 @@ def lab_command(pod_id: str) -> str:
 
     `;`, not `&&`: with `&&` the trailing `&` backgrounds the whole list, whose stdout is
     still the SSH channel, so ssh never returns."""
-    return (f"cd ~/image-to-3dlab; RUNPOD_POD_ID={shlex.quote(pod_id)} "
-            "nohup ./lab > lab.log 2>&1 < /dev/null &")
+    return (
+        f"cd ~/image-to-3dlab; RUNPOD_POD_ID={shlex.quote(pod_id)} "
+        "nohup ./lab > lab.log 2>&1 < /dev/null &"
+    )
 
 
 # Blender for the hand install, when the viewer's own install fails. Finish is what the
@@ -165,25 +251,35 @@ def blender_fallback_command(version: str = BLENDER_FALLBACK) -> str:
     failure (pipefail), so a half-unpacked Blender is never taken for a working one."""
     name = f"blender-{version}-linux-x64"
     url = f"https://download.blender.org/release/Blender{version.rsplit('.', 1)[0]}/{name}.tar.xz"
-    return (f"set -eo pipefail; cd ~ && curl -fsSL {shlex.quote(url)} | tar -xJ "
-            f"&& rm -rf blender-lts && mv {name} blender-lts "
-            "&& ~/blender-lts/blender --background --version | head -1")
+    return (
+        f"set -eo pipefail; cd ~ && curl -fsSL {shlex.quote(url)} | tar -xJ "
+        f"&& rm -rf blender-lts && mv {name} blender-lts "
+        "&& ~/blender-lts/blender --background --version | head -1"
+    )
 
 
 def viewer_url(pod_id: str) -> str:
     return f"https://{pod_id}-{PORT}.proxy.runpod.net"
 
 
-def multipart(fields: dict[str, str], files: dict[str, tuple[str, bytes]]) -> tuple[bytes, str]:
+def multipart(
+    fields: dict[str, str], files: dict[str, tuple[str, bytes]]
+) -> tuple[bytes, str]:
     boundary = uuid.uuid4().hex
     parts = []
     for name, value in fields.items():
-        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"'
-                     f"\r\n\r\n{value}\r\n".encode())
+        parts.append(
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"'
+            f"\r\n\r\n{value}\r\n".encode()
+        )
     for name, (filename, data) in files.items():
-        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"; '
-                     f'filename="{filename}"\r\nContent-Type: application/octet-stream'
-                     "\r\n\r\n".encode() + data + b"\r\n")
+        parts.append(
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"; '
+            f'filename="{filename}"\r\nContent-Type: application/octet-stream'
+            "\r\n\r\n".encode()
+            + data
+            + b"\r\n"
+        )
     parts.append(f"--{boundary}--\r\n".encode())
     return b"".join(parts), f"multipart/form-data; boundary={boundary}"
 
@@ -210,7 +306,7 @@ def worth_waiting(status: int, payload: dict) -> bool:
 
 
 def finish_route(events: list[dict]) -> str:
-    """"pixal3d" when Finish took Pixal3D's own clean-up, else "classic". A Finish that
+    """ "pixal3d" when Finish took Pixal3D's own clean-up, else "classic". A Finish that
     quietly falls back still finishes, so a pod test must check which one ran."""
     said = " ".join(str(e.get("message", "")) for e in events)
     return "pixal3d" if "Pixal3D's own clean-up" in said else "classic"
@@ -221,14 +317,19 @@ def setup_run_outcome(events: list[dict]) -> tuple[str, str]:
     ends with a `setup_done` event; one that never arrived is "unfinished"."""
     done = next((e for e in reversed(events) if e.get("phase") == "setup_done"), None)
     lines = [str(e.get("message", "")) for e in events if e.get("phase") == "setup"]
-    return (done.get("status", "error") if done else "unfinished"), "\n".join(lines[-15:])
+    return (done.get("status", "error") if done else "unfinished"), "\n".join(
+        lines[-15:]
+    )
 
 
-def announcement(routes: list[str], gpus: list[str], cap: float, hours: float,
-                 cloud: str = "secure") -> str:
-    lines = [f"This rents one RunPod pod ({cloud} cloud) and downloads model weights onto it:",
-             f"  GPU: first available of {', '.join(gpus)}, at most ${cap:.2f}/hr",
-             f"  deleted at the end; RunPod terminates it anyway after {hours:g} h"]
+def announcement(
+    routes: list[str], gpus: list[str], cap: float, hours: float, cloud: str = "secure"
+) -> str:
+    lines = [
+        f"This rents one RunPod pod ({cloud} cloud) and downloads model weights onto it:",
+        f"  GPU: first available of {', '.join(gpus)}, at most ${cap:.2f}/hr",
+        f"  deleted at the end; RunPod terminates it anyway after {hours:g} h",
+    ]
     total = 0.0
     for route in routes:
         backend = backend_catalog.resolve(route)
@@ -241,10 +342,15 @@ def announcement(routes: list[str], gpus: list[str], cap: float, hours: float,
 
 # ---- the pod -------------------------------------------------------------------------
 
+
 def runpodctl(*args: str) -> dict:
-    out = subprocess.run(["runpodctl", *args], capture_output=True, text=True, check=False)
+    out = subprocess.run(
+        ["runpodctl", *args], capture_output=True, text=True, check=False
+    )
     if out.returncode != 0:
-        raise RuntimeError(f"runpodctl {' '.join(args)}: {out.stderr.strip() or out.stdout}")
+        raise RuntimeError(
+            f"runpodctl {' '.join(args)}: {out.stderr.strip() or out.stdout}"
+        )
     return json.loads(out.stdout or "{}")
 
 
@@ -253,22 +359,45 @@ class Pod:
         self.id = pod["id"]
         self.host, self.port, self.key = ssh_target(runpodctl("ssh", "info", self.id))
         if not self.key or not Path(self.key).expanduser().is_file():
-            self.key = matching_private_key(runpodctl("ssh", "list-keys"), Path.home() / ".ssh")
+            self.key = matching_private_key(
+                runpodctl("ssh", "list-keys"), Path.home() / ".ssh"
+            )
 
     def ssh(self, command: str, timeout: float = 1800) -> str:
-        args = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-                "-o", "LogLevel=ERROR", "-o", "ServerAliveInterval=30", "-p", str(self.port)]
+        args = [
+            "ssh",
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-o",
+            "LogLevel=ERROR",
+            "-o",
+            "ServerAliveInterval=30",
+            "-p",
+            str(self.port),
+        ]
         if self.key:
             args += ["-i", str(Path(self.key).expanduser())]
-        out = subprocess.run([*args, self.host, command], capture_output=True, text=True,
-                             timeout=timeout, check=False)
+        out = subprocess.run(
+            [*args, self.host, command],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
         if out.returncode != 0:
             raise RuntimeError(f"on the pod: {command[:80]}\n{out.stderr[-2000:]}")
         return out.stdout
 
 
-def rent(gpus: list[str], cap: float, hours: float, cloud: str = "secure",
-         country: str = "US") -> dict:
+def rent(
+    gpus: list[str],
+    cap: float,
+    hours: float,
+    cloud: str = "secure",
+    country: str = "US",
+) -> dict:
     name = f"pod-smoke-{datetime.now():%m%d-%H%M}"  # noqa: DTZ005 - local time, for people
     for gpu in gpus:
         print(f"Renting {gpu} in {country}...", flush=True)
@@ -280,7 +409,9 @@ def rent(gpus: list[str], cap: float, hours: float, cloud: str = "secure",
         price = pod_price(pod)
         if price is None or price > cap:
             delete(pod["id"])
-            raise SystemExit(f"{gpu} bills ${price}/hr, over the ${cap:.2f} cap. Deleted.")
+            raise SystemExit(
+                f"{gpu} bills ${price}/hr, over the ${cap:.2f} cap. Deleted."
+            )
         print(f"  pod {pod['id']} at ${price:.2f}/hr")
         return {**pod, "rented_gpu": gpu}
     raise SystemExit("No GPU from the list was available. Nothing is running.")
@@ -295,13 +426,17 @@ def delete(pod_id: str) -> None:
         except RuntimeError as exc:
             print(f"  delete failed, retrying: {exc}")
             time.sleep(10)
-    print(f"!! Could not delete pod {pod_id}. Delete it by hand: runpodctl pod delete {pod_id}")
+    print(
+        f"!! Could not delete pod {pod_id}. Delete it by hand: runpodctl pod delete {pod_id}"
+    )
 
 
 # ---- the viewer API ------------------------------------------------------------------
 
 # Named honestly: Cloudflare refuses Python-urllib's anonymous default, not us.
-USER_AGENT = "image-to-3dlab pod smoke test (+https://github.com/Bingeljell/image-to-3dlab)"
+USER_AGENT = (
+    "image-to-3dlab pod smoke test (+https://github.com/Bingeljell/image-to-3dlab)"
+)
 
 
 class Viewer:
@@ -311,19 +446,35 @@ class Viewer:
         token = os.environ.get("I3D_STUDIO_TOKEN", "").strip()
         if not token:
             try:
-                token = (Path(__file__).resolve().parents[1] / "output" / ".studio-token").read_text(encoding="utf-8").strip()
+                token = (
+                    (Path(__file__).resolve().parents[1] / "output" / ".studio-token")
+                    .read_text(encoding="utf-8")
+                    .strip()
+                )
             except OSError:
                 token = ""
         self.key = {"Authorization": f"Bearer {token}"} if token else {}
 
-    def call(self, method: str, path: str, body: bytes | None = None,
-             content_type: str = "application/json", timeout: float = 120) -> tuple[int, bytes]:
-        request = urllib.request.Request(self.base + path, data=body, method=method,
-                                         headers={"Content-Type": content_type,
-                                                  "User-Agent": USER_AGENT,
-                                                  # the studio refuses a write without it
-                                                  "X-AssetFurnace-Request": "pod-smoke-test",
-                                                  **self.key})
+    def call(
+        self,
+        method: str,
+        path: str,
+        body: bytes | None = None,
+        content_type: str = "application/json",
+        timeout: float = 120,
+    ) -> tuple[int, bytes]:
+        request = urllib.request.Request(
+            self.base + path,
+            data=body,
+            method=method,
+            headers={
+                "Content-Type": content_type,
+                "User-Agent": USER_AGENT,
+                # the studio refuses a write without it
+                "X-AssetFurnace-Request": "pod-smoke-test",
+                **self.key,
+            },
+        )
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 return response.status, response.read()
@@ -331,15 +482,24 @@ class Viewer:
             return exc.code, exc.read()
 
     def json(self, method: str, path: str, payload=None, **kw) -> tuple[int, dict]:
-        body = json.dumps(payload).encode() if payload is not None else kw.pop("body", None)
+        body = (
+            json.dumps(payload).encode()
+            if payload is not None
+            else kw.pop("body", None)
+        )
         status, data = self.call(method, path, body, **kw)
         try:
             return status, json.loads(data or b"{}")
         except json.JSONDecodeError:
             return status, {"raw": data[:300].decode(errors="replace")}
 
-    def start(self, path: str, body: bytes | None = None, ctype: str = "application/json",
-              patience: float = 600) -> dict:
+    def start(
+        self,
+        path: str,
+        body: bytes | None = None,
+        ctype: str = "application/json",
+        patience: float = 600,
+    ) -> dict:
         """POST that waits out a 409 (another job or setup still finishing)."""
         deadline = time.time() + patience
         while True:
@@ -375,8 +535,10 @@ class Viewer:
 def interrupt_on_hangup() -> None:
     """Closing the terminal (SIGHUP) or a kill (SIGTERM) would skip `finally` and leave
     the pod billing until RunPod's own deadline. As Ctrl-C, they still delete it."""
+
     def handler(signum, frame):
         raise KeyboardInterrupt
+
     for sig in (signal.SIGHUP, signal.SIGTERM):
         signal.signal(sig, handler)
 
@@ -391,8 +553,14 @@ def step(results: list[dict], name: str, func, *args):
         detail, ok = str(exc), False
         print(f"   FAILED: {detail[:600]}", flush=True)
     minutes = (time.time() - began) / 60
-    results.append({"step": name, "ok": ok, "minutes": round(minutes, 1),
-                    "detail": detail if isinstance(detail, (str, dict)) else str(detail)})
+    results.append(
+        {
+            "step": name,
+            "ok": ok,
+            "minutes": round(minutes, 1),
+            "detail": detail if isinstance(detail, (str, dict)) else str(detail),
+        }
+    )
     print(f"   {'ok' if ok else 'FAILED'} in {minutes:.1f} min", flush=True)
     return ok, detail
 
@@ -410,7 +578,9 @@ def run_smoke(pod: Pod, args, token: str, out: Path, results: list[dict]) -> lis
     ok, _ = step(results, "download speed", speed)
     if not ok:
         return results
-    ok, _ = step(results, "install", lambda: pod.ssh(install_command(args.ref), 1800)[-500:])
+    ok, _ = step(
+        results, "install", lambda: pod.ssh(install_command(args.ref), 1800)[-500:]
+    )
     if not ok:
         return results
     viewer = Viewer(viewer_url(pod.id))
@@ -426,8 +596,10 @@ def run_smoke(pod: Pod, args, token: str, out: Path, results: list[dict]) -> lis
             if last == 200:
                 return viewer.base + "/viewer/studio.html"
             time.sleep(6)
-        raise RuntimeError(f"viewer never answered {viewer.base} (last: {last}): "
-                           + pod.ssh("tail -20 ~/image-to-3dlab/lab.log"))
+        raise RuntimeError(
+            f"viewer never answered {viewer.base} (last: {last}): "
+            + pod.ssh("tail -20 ~/image-to-3dlab/lab.log")
+        )
 
     ok, url = step(results, "start the lab", start_lab)
     if not ok:
@@ -444,12 +616,14 @@ def run_smoke(pod: Pod, args, token: str, out: Path, results: list[dict]) -> lis
     step(results, "Hugging Face sign-in", sign_in)
 
     for route in args.routes:
+
         def setup(route=route):
             viewer.start(f"/api/setup/{route}/download")
             final = viewer.wait(f"/api/setup/{route}/status", 90 * 60)
             if final["status"] != "done":
                 raise RuntimeError(final.get("log_tail", "")[-1500:])
             return "done"
+
         step(results, f"set up {route}", setup)
 
     def blender():
@@ -464,7 +638,9 @@ def run_smoke(pod: Pod, args, token: str, out: Path, results: list[dict]) -> lis
             raise RuntimeError(f"installer {status}:\n{tail}")
         _, caps = viewer.json("GET", "/api/finish/capabilities")
         if not caps.get("blender"):
-            raise RuntimeError(caps.get("blender_problem") or "installed, but Finish cannot see it")
+            raise RuntimeError(
+                caps.get("blender_problem") or "installed, but Finish cannot see it"
+            )
         return f"Blender {caps.get('blender_version')}"
 
     # Only Finish needs Blender, and only the Pixal3D model is finished.
@@ -472,21 +648,31 @@ def run_smoke(pod: Pod, args, token: str, out: Path, results: list[dict]) -> lis
         ok, _ = step(results, "install Blender", blender)
         if not ok:
             # Recorded as failed above, so the run is NOT CLEAN; Finish still gets tested.
-            step(results, "install Blender by hand (fallback)",
-                 lambda: pod.ssh(f"bash -c {shlex.quote(blender_fallback_command())}", 900))
+            step(
+                results,
+                "install Blender by hand (fallback)",
+                lambda: pod.ssh(
+                    f"bash -c {shlex.quote(blender_fallback_command())}", 900
+                ),
+            )
 
     image = args.image.read_bytes()
     models: dict[str, bytes] = {}
     for route in args.routes:
+
         def generate(route=route):
-            body, ctype = multipart({"settings": json.dumps({"backend": route})},
-                                    {"image": (args.image.name, image)})
+            body, ctype = multipart(
+                {"settings": json.dumps({"backend": route})},
+                {"image": (args.image.name, image)},
+            )
             job = viewer.start("/api/generate", body, ctype, patience=1800)
             job_id = job.get("job_id") or job.get("id")
             final = viewer.wait(f"/api/generate/{job_id}/status", 60 * 60)
             if final["status"] != "done":
                 raise RuntimeError(str(final.get("last_event"))[:1500])
-            _, glb = viewer.call("GET", f"/api/generate/{job_id}/result.glb", timeout=600)
+            _, glb = viewer.call(
+                "GET", f"/api/generate/{job_id}/result.glb", timeout=600
+            )
             if not is_glb(glb):
                 raise RuntimeError("result.glb is not a GLB")
             _, record = viewer.call("GET", f"/api/generate/{job_id}/manifest.json")
@@ -494,53 +680,91 @@ def run_smoke(pod: Pod, args, token: str, out: Path, results: list[dict]) -> lis
             (out / f"{route}.json").write_bytes(record)
             models[route] = glb
             return f"{len(glb) / 1e6:.1f} MB"
+
         step(results, f"generate {route}", generate)
 
     if "pixal3d" in models:
+
         def finish():
-            body, ctype = multipart({"settings": "{}"},
-                                    {"asset": ("pixal3d.glb", models["pixal3d"]),
-                                     "image": (args.image.name, image)})
+            body, ctype = multipart(
+                {"settings": "{}"},
+                {
+                    "asset": ("pixal3d.glb", models["pixal3d"]),
+                    "image": (args.image.name, image),
+                },
+            )
             job = viewer.start("/api/finish", body, ctype)
             job_id = job.get("job_id") or job.get("id")
             final = viewer.wait(f"/api/finish/{job_id}/status", 60 * 60)
             if final["status"] != "done":
                 raise RuntimeError(str(final.get("last_event"))[:1500])
             _, events = viewer.call("GET", f"/api/finish/{job_id}/events", timeout=60)
-            stages = next((e.get("stages") for e in sse_events(events.decode(errors="replace"))
-                           if e.get("stages")), [])
+            stages = next(
+                (
+                    e.get("stages")
+                    for e in sse_events(events.decode(errors="replace"))
+                    if e.get("stages")
+                ),
+                [],
+            )
             if "photo" not in stages:
                 raise RuntimeError(f"Pixel Match did not run; stages were {stages}")
             route = finish_route(sse_events(events.decode(errors="replace")))
             if route != "pixal3d":
-                raise RuntimeError("Finish took the classic route, not Pixal3D's own clean-up "
-                                   "(no post-replay, or no dump beside the model)")
+                raise RuntimeError(
+                    "Finish took the classic route, not Pixal3D's own clean-up "
+                    "(no post-replay, or no dump beside the model)"
+                )
             _, glb = viewer.call("GET", f"/api/finish/{job_id}/result.glb", timeout=600)
             (out / "pixal3d-finished.glb").write_bytes(glb)
             return f"Pixal3D clean-up route; stages {stages}; {len(glb) / 1e6:.1f} MB"
+
         step(results, "Finish the Pixal3D model (Pixel Match)", finish)
 
     return results
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--ref", default="main", help="branch or tag the installer takes")
-    parser.add_argument("--routes", default=",".join(ROUTES),
-                        help=f"comma-separated (default: {','.join(ROUTES)})")
-    parser.add_argument("--gpu", action="append", help="GPU id to try, in order (repeatable)")
-    parser.add_argument("--cloud", choices=("secure", "community"), default="secure",
-                        help="community is cheaper (a 3090 for ~$0.22/hr) but rarer with "
-                             "a public IP")
-    parser.add_argument("--country", default="US", type=str.upper,
-                        help="where the pod may run (US). Hunyuan's weights are not licensed "
-                             "in the EU, the UK or South Korea, so never pick one of those")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--ref", default="main", help="branch or tag the installer takes"
+    )
+    parser.add_argument(
+        "--routes",
+        default=",".join(ROUTES),
+        help=f"comma-separated (default: {','.join(ROUTES)})",
+    )
+    parser.add_argument(
+        "--gpu", action="append", help="GPU id to try, in order (repeatable)"
+    )
+    parser.add_argument(
+        "--cloud",
+        choices=("secure", "community"),
+        default="secure",
+        help="community is cheaper (a 3090 for ~$0.22/hr) but rarer with a public IP",
+    )
+    parser.add_argument(
+        "--country",
+        default="US",
+        type=str.upper,
+        help="where the pod may run (US). Hunyuan's weights are not licensed "
+        "in the EU, the UK or South Korea, so never pick one of those",
+    )
     parser.add_argument("--max-price", type=float, default=0.80, help="$/hr cap (0.80)")
-    parser.add_argument("--max-hours", type=float, default=3.0,
-                        help="RunPod terminates the pod after this, whatever happens (3)")
-    parser.add_argument("--image", type=Path, default=DEFAULT_IMAGE, help="input picture")
-    parser.add_argument("--keep", action="store_true", help="do not delete the pod at the end")
+    parser.add_argument(
+        "--max-hours",
+        type=float,
+        default=3.0,
+        help="RunPod terminates the pod after this, whatever happens (3)",
+    )
+    parser.add_argument(
+        "--image", type=Path, default=DEFAULT_IMAGE, help="input picture"
+    )
+    parser.add_argument(
+        "--keep", action="store_true", help="do not delete the pod at the end"
+    )
     parser.add_argument("--yes", action="store_true", help="skip the confirmation")
     args = parser.parse_args(argv)
     args.routes = [r.strip() for r in args.routes.split(",") if r.strip()]
@@ -548,19 +772,37 @@ def main(argv: list[str] | None = None) -> int:
     if unknown:
         parser.error(f"unknown route: {', '.join(unknown)}")
     if args.country in BLOCKED_COUNTRIES and "hunyuan-cuda" in args.routes:
-        parser.error(f"Hunyuan's weights are not licensed in {args.country}; pick another "
-                     "--country or drop hunyuan-cuda from --routes")
+        parser.error(
+            f"Hunyuan's weights are not licensed in {args.country}; pick another "
+            "--country or drop hunyuan-cuda from --routes"
+        )
     if not args.image.is_file():
         parser.error(f"no input picture at {args.image}; pass --image")
+    try:
+        install_command(args.ref)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     gpus = args.gpu or list(GPUS)
 
     print(announcement(args.routes, gpus, args.max_price, args.max_hours, args.cloud))
-    if not args.yes and input("Rent the pod and download all of that? [y/N] ").strip().lower() \
-            not in {"y", "yes"}:
-        print("Nothing rented.")
-        return 1
-    token = (os.environ.get("HF_TOKEN")
-             or getpass.getpass("Hugging Face Read token (not shown): ")).strip()
+    if not args.yes:
+        # Non-interactive without --yes must not silently proceed, and must not hang
+        # waiting on a stdin nobody is attached to.
+        if not sys.stdin or not sys.stdin.isatty():
+            print("Refusing to download without --yes when there is nobody to ask.")
+            return 1
+        try:
+            answer = input("Rent the pod and download all of that? [y/N] ")
+        except EOFError:
+            print("Refusing to download without --yes when there is nobody to ask.")
+            return 1
+        if answer.strip().lower() not in {"y", "yes"}:
+            print("Nothing rented.")
+            return 1
+    token = (
+        os.environ.get("HF_TOKEN")
+        or getpass.getpass("Hugging Face Read token (not shown): ")
+    ).strip()
 
     out = REPO / "output" / f"pod-smoke-{datetime.now():%Y%m%d-%H%M}"  # noqa: DTZ005 - local time, for people
     out.mkdir(parents=True, exist_ok=True)
@@ -574,20 +816,30 @@ def main(argv: list[str] | None = None) -> int:
         print("\nInterrupted.")
     finally:
         if args.keep:
-            print(f"Kept pod {pod_json['id']}; RunPod terminates it after {args.max_hours:g} h.")
+            print(
+                f"Kept pod {pod_json['id']}; RunPod terminates it after {args.max_hours:g} h."
+            )
         else:
             delete(pod_json["id"])
         hours = (time.time() - started) / 3600
         price = pod_price(pod_json) or 0.0
-        summary = {"ref": args.ref, "gpu": pod_json.get("machine", {}).get("gpuDisplayName")
-                   or pod_json.get("gpuTypeId") or pod_json.get("rented_gpu"),
-                   "price_per_hr": price,
-                   "hours": round(hours, 2), "cost": round(hours * price, 2), "steps": results}
+        summary = {
+            "ref": args.ref,
+            "gpu": pod_json.get("machine", {}).get("gpuDisplayName")
+            or pod_json.get("gpuTypeId")
+            or pod_json.get("rented_gpu"),
+            "price_per_hr": price,
+            "hours": round(hours, 2),
+            "cost": round(hours * price, 2),
+            "steps": results,
+        }
         (out / "summary.json").write_text(json.dumps(summary, indent=2))
         print(f"\n{'step':45} {'result':8} min")
         for r in results:
             print(f"{r['step']:45} {'ok' if r['ok'] else 'FAILED':8} {r['minutes']}")
-        print(f"~${summary['cost']:.2f} over {hours:.1f} h. Results in {out.relative_to(REPO)}")
+        print(
+            f"~${summary['cost']:.2f} over {hours:.1f} h. Results in {out.relative_to(REPO)}"
+        )
     clean = bool(results) and all(r["ok"] for r in results)
     print("ONE-SHOT: CLEAN" if clean else "ONE-SHOT: NOT CLEAN")
     return 0 if clean else 1

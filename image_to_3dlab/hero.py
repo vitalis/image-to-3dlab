@@ -10,6 +10,7 @@ whose middle sits inside the head's height (the neck when it carries hair or a c
 That needs no names and no hand-drawn box, and matched the hand-picked heads on both
 characters it was tried on (warrior: one bone; elf: head + neck).
 """
+
 from __future__ import annotations
 
 import json
@@ -21,16 +22,20 @@ from PIL import Image, ImageDraw
 from scipy import ndimage
 from scipy.spatial import cKDTree
 
-LIGHT_GREY = 236          # the studio's plain background, for pictures without a cut-out
+LIGHT_GREY = 236  # the studio's plain background, for pictures without a cut-out
 GREY_TOLERANCE = 25
-CROP_PAD = 1.3            # crop side vs the head's own size, so hair and ears fit
-CROP_DROP = 0.05          # shift the crop down a little: chin and neck matter more than air
+CROP_PAD = 1.3  # crop side vs the head's own size, so hair and ears fit
+CROP_DROP = 0.05  # shift the crop down a little: chin and neck matter more than air
 HEAD_FLOOR_PERCENTILE = 5
-OUTLINE_GROW_PX = 4       # the least margin round the real head's outline
+OUTLINE_GROW_PX = 4  # the least margin round the real head's outline
 OUTLINE_GROW_SHARE = 0.1  # else a tenth of the head's width
-LINER_SHRINK = 0.04       # the body's own head, kept as a liner under the new hair, shrinks this much
-COLLAR_RATIO = 1.15       # a slice this much wider than the neck above it is a collar, not more neck
-MIN_SLICE_POINTS = 20     # fewer points than this in a slice and its width is noise
+LINER_SHRINK = (
+    0.04  # the body's own head, kept as a liner under the new hair, shrinks this much
+)
+COLLAR_RATIO = (
+    1.15  # a slice this much wider than the neck above it is a collar, not more neck
+)
+MIN_SLICE_POINTS = 20  # fewer points than this in a slice and its width is noise
 
 _COMPONENTS = {5121: np.uint8, 5123: np.uint16, 5125: np.uint32, 5126: np.float32}
 _WIDTH = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4}
@@ -46,6 +51,8 @@ def picture_box(image: Image.Image) -> tuple[int, int, int, int]:
             return int(xs.min()), int(xs.max()), int(ys.min()), int(ys.max())
     rgb = np.asarray(image.convert("RGB")).astype(int)
     ys, xs = np.nonzero(np.abs(rgb - LIGHT_GREY).max(-1) > GREY_TOLERANCE)
+    if xs.size == 0:
+        raise ValueError("the figure was not found")
     return int(xs.min()), int(xs.max()), int(ys.min()), int(ys.max())
 
 
@@ -54,14 +61,20 @@ def frame(vertices: np.ndarray, box: tuple[int, int, int, int]):
     same box, so a model's scale against its picture comes from the two heights."""
     lo, hi = vertices.min(axis=0), vertices.max(axis=0)
     x0, x1, y0, y1 = box
-    return (lo + hi) / 2, (hi[1] - lo[1]) / (y1 - y0), np.array([(x0 + x1) / 2, (y0 + y1) / 2])
+    return (
+        (lo + hi) / 2,
+        (hi[1] - lo[1]) / (y1 - y0),
+        np.array([(x0 + x1) / 2, (y0 + y1) / 2]),
+    )
 
 
 def project(points: np.ndarray, fr) -> tuple[np.ndarray, np.ndarray]:
     """Front-view picture pixels (x, y) of world points; picture y runs down."""
     centre, per_px, box_centre = fr
-    return (box_centre[0] + (points[:, 0] - centre[0]) / per_px,
-            box_centre[1] - (points[:, 1] - centre[1]) / per_px)
+    return (
+        box_centre[0] + (points[:, 0] - centre[0]) / per_px,
+        box_centre[1] - (points[:, 1] - centre[1]) / per_px,
+    )
 
 
 def _accessor(document: dict, binary: bytes, index: int) -> np.ndarray:
@@ -73,15 +86,17 @@ def _accessor(document: dict, binary: bytes, index: int) -> np.ndarray:
     stride = view.get("byteStride", item)
     rows = np.lib.stride_tricks.as_strided(
         np.frombuffer(binary, dtype=np.uint8, offset=start),
-        shape=(accessor["count"], stride), strides=(stride, 1))
+        shape=(accessor["count"], stride),
+        strides=(stride, 1),
+    )
     return rows[:, :item].copy().view(dtype).reshape(-1, width)
 
 
 def skinned_vertices(glb: bytes) -> tuple[np.ndarray, np.ndarray]:
     """Positions and dominant joint of every vertex of every skinned primitive in a GLB."""
     length = struct.unpack_from("<I", glb, 12)[0]
-    document = json.loads(glb[20:20 + length])
-    binary = glb[20 + length + 8:]
+    document = json.loads(glb[20 : 20 + length])
+    binary = glb[20 + length + 8 :]
     positions, joints = [], []
     for mesh in document["meshes"]:
         for primitive in mesh["primitives"]:
@@ -103,7 +118,9 @@ def boxed(points: np.ndarray) -> np.ndarray:
     return (points - (lo + hi) / 2) / (hi[1] - lo[1])
 
 
-def regions(vertices: np.ndarray, rig_positions: np.ndarray, rig_joints: np.ndarray) -> np.ndarray:
+def regions(
+    vertices: np.ndarray, rig_positions: np.ndarray, rig_joints: np.ndarray
+) -> np.ndarray:
     """The bone of every vertex: the nearest rigged vertex once both are boxed to one height
     (the rigger may re-export the mesh at another scale or orientation)."""
     _, nearest = cKDTree(boxed(rig_positions)).query(boxed(vertices), workers=-1)
@@ -148,7 +165,9 @@ def neck_height(heights: np.ndarray, xs: np.ndarray, slices: int = 30) -> float 
     return float(edges[narrower[0]]) if len(narrower) else None
 
 
-def neck_ring(vertices: np.ndarray, real: np.ndarray, cut: float) -> tuple[np.ndarray, float]:
+def neck_ring(
+    vertices: np.ndarray, real: np.ndarray, cut: float
+) -> tuple[np.ndarray, float]:
     """(the neck's centre line as x, z; the skull's radius round it), from the upper half of the
     head above CUT. A neck is narrower than the skull and a collar wider, so the skull's radius
     is the ring between them, whatever the paint (no skin-colour guess)."""
@@ -159,8 +178,14 @@ def neck_ring(vertices: np.ndarray, real: np.ndarray, cut: float) -> tuple[np.nd
     return axis, float(np.percentile(radius, 90))
 
 
-def head_cut(body: np.ndarray, real: np.ndarray, head: np.ndarray, cut: float | None,
-             axis: np.ndarray, ring: float) -> tuple[np.ndarray, np.ndarray]:
+def head_cut(
+    body: np.ndarray,
+    real: np.ndarray,
+    head: np.ndarray,
+    cut: float | None,
+    axis: np.ndarray,
+    ring: float,
+) -> tuple[np.ndarray, np.ndarray]:
     """(which body vertices the new head replaces, which new-head vertices may stay).
 
     Above CUT (the collar's top) the whole head swaps. Below it, in the collar band, a height
@@ -174,11 +199,19 @@ def head_cut(body: np.ndarray, real: np.ndarray, head: np.ndarray, cut: float | 
     def inside(points):
         return np.hypot(points[:, 0] - axis[0], points[:, 2] - axis[1]) < ring
 
-    return real & ((body[:, 1] >= cut) | inside(body)), (head[:, 1] >= cut) | inside(head)
+    return real & ((body[:, 1] >= cut) | inside(body)), (head[:, 1] >= cut) | inside(
+        head
+    )
 
 
-def crop_box(px: np.ndarray, py: np.ndarray, width: int, height: int,
-             pad: float = CROP_PAD, drop: float = CROP_DROP) -> tuple[int, int, int, int]:
+def crop_box(
+    px: np.ndarray,
+    py: np.ndarray,
+    width: int,
+    height: int,
+    pad: float = CROP_PAD,
+    drop: float = CROP_DROP,
+) -> tuple[int, int, int, int]:
     """A square crop (x0, y0, x1, y1) round the head's pixels, padded and kept in the picture."""
     x0, x1, y0, y1 = px.min(), px.max(), py.min(), py.max()
     side = min(max(x1 - x0, y1 - y0) * pad, width, height)
@@ -190,7 +223,9 @@ def crop_box(px: np.ndarray, py: np.ndarray, width: int, height: int,
     return left, top, left + side, top + side
 
 
-def crop_to_full(full_frame, head_frame, crop: tuple[int, int, int, int], head_width: int) -> np.ndarray:
+def crop_to_full(
+    full_frame, head_frame, crop: tuple[int, int, int, int], head_width: int
+) -> np.ndarray:
     """Transform taking the head model (framed by its crop picture) into the full model's frame:
     a head point at crop pixel p sits at full pixel crop0 + p * (crop side / head picture side)."""
     c_f, s_f, b_f = full_frame
@@ -215,8 +250,13 @@ def place_on(real: np.ndarray, new: np.ndarray) -> np.ndarray:
     return tf
 
 
-def silhouette(faces: np.ndarray, px: np.ndarray, py: np.ndarray, shape: tuple[int, int],
-               grow: int = 0) -> np.ndarray:
+def silhouette(
+    faces: np.ndarray,
+    px: np.ndarray,
+    py: np.ndarray,
+    shape: tuple[int, int],
+    grow: int = 0,
+) -> np.ndarray:
     """Front-view outline of FACES as a filled mask. Whole triangles, not corner points:
     corners alone leave gaps on a low-poly mesh, and anything over a gap was dropped as a hole."""
     canvas = Image.new("L", (shape[1], shape[0]), 0)
@@ -236,7 +276,9 @@ def on_mask(px: np.ndarray, py: np.ndarray, mask: np.ndarray) -> np.ndarray:
     return hit
 
 
-def liner_split(vertices: np.ndarray, real: np.ndarray, shrink: float) -> tuple[np.ndarray, np.ndarray]:
+def liner_split(
+    vertices: np.ndarray, real: np.ndarray, shrink: float
+) -> tuple[np.ndarray, np.ndarray]:
     """(vertices with the old head shrunk, which vertices go). The old head's back half stays
     as a liner under the new hair, shrunk about its centre by SHRINK.
 
@@ -254,8 +296,19 @@ def liner_split(vertices: np.ndarray, real: np.ndarray, shrink: float) -> tuple[
     return moved, real & (vertices[:, 2] > centre[2])
 
 
-def graft(full, head, full_box, head_box, crop, head_width, bone, shape, grow=None, liner=LINER_SHRINK,
-          cut_at=None):
+def graft(
+    full,
+    head,
+    full_box,
+    head_box,
+    crop,
+    head_width,
+    bone,
+    shape,
+    grow=None,
+    liner=LINER_SHRINK,
+    cut_at=None,
+):
     """Swap FULL's head region for HEAD (both trimesh meshes; HEAD is moved in place).
 
     CUT_AT: "neck" finds the neck (`neck_height`) and swaps only above it; a height (model
@@ -275,10 +328,14 @@ def graft(full, head, full_box, head_box, crop, head_width, bone, shape, grow=No
     fpx, fpy = project(full.vertices, full_frame)
     outline = silhouette(full.faces[real[full.faces].all(axis=1)], fpx, fpy, shape)
 
-    head.apply_transform(crop_to_full(full_frame, frame(head.vertices, head_box), crop, head_width))
+    head.apply_transform(
+        crop_to_full(full_frame, frame(head.vertices, head_box), crop, head_width)
+    )
     new = on_mask(*project(head.vertices, full_frame), outline)
     if not new.any():
-        raise ValueError("the head model does not land on the body's head: check the crop")
+        raise ValueError(
+            "the head model does not land on the body's head: check the crop"
+        )
     place = place_on(full.vertices[real], head.vertices[new])
     head.apply_transform(place)
 
@@ -294,34 +351,58 @@ def graft(full, head, full_box, head_box, crop, head_width, bone, shape, grow=No
         # A margin in proportion to the head: the new head's hair often stands wider than the
         # body's own head, and a few fixed pixels trimmed it into holes at the sides.
         cols = np.flatnonzero(outline.any(axis=0))
-        grow = max(OUTLINE_GROW_PX, int(round(OUTLINE_GROW_SHARE * (cols.max() - cols.min()))))
-    keep = on_mask(*project(head.vertices, full_frame), ndimage.binary_dilation(outline, iterations=grow))
-    cut = neck_height(full.vertices[real, 1], full.vertices[real, 0]) if cut_at == "neck" else cut_at
-    axis, ring = neck_ring(full.vertices, real, cut) if cut is not None else (None, None)
+        grow = max(
+            OUTLINE_GROW_PX, int(round(OUTLINE_GROW_SHARE * (cols.max() - cols.min())))
+        )
+    keep = on_mask(
+        *project(head.vertices, full_frame),
+        ndimage.binary_dilation(outline, iterations=grow),
+    )
+    cut = (
+        neck_height(full.vertices[real, 1], full.vertices[real, 0])
+        if cut_at == "neck"
+        else cut_at
+    )
+    axis, ring = (
+        neck_ring(full.vertices, real, cut) if cut is not None else (None, None)
+    )
     swap, in_head = head_cut(full.vertices, real, head.vertices, cut, axis, ring)
     keep &= in_head
     body_mesh = full.copy()
     body_mesh.vertices, gone = liner_split(full.vertices, swap, liner)
-    body = body_mesh.submesh([np.flatnonzero(~gone[full.faces].any(axis=1))], append=True)
+    body = body_mesh.submesh(
+        [np.flatnonzero(~gone[full.faces].any(axis=1))], append=True
+    )
     part = head.submesh([np.flatnonzero(keep[head.faces].all(axis=1))], append=True)
-    report = {"head_bones": picked, "outline_margin_px": int(grow), "liner_shrink": liner,
-              "cut_at": None if cut is None else round(cut, 4),
-              "neck_ring": None if ring is None else round(ring, 4),
-              "scale_to_real_head": round(float(place[0, 0]), 4),
-              "line_up_cost": float(cost), "body_faces": int(len(body.faces)),
-              "head_faces": int(len(part.faces))}
+    report = {
+        "head_bones": picked,
+        "outline_margin_px": int(grow),
+        "liner_shrink": liner,
+        "cut_at": None if cut is None else round(cut, 4),
+        "neck_ring": None if ring is None else round(ring, 4),
+        "scale_to_real_head": round(float(place[0, 0]), 4),
+        "line_up_cost": float(cost),
+        "body_faces": int(len(body.faces)),
+        "head_faces": int(len(part.faces)),
+    }
     return body, part, report
 
 
-MATERIAL_TOLERANCE = 0.3   # a change this big is worth a human's glance
-SPREAD_LIMITS = (0.8, 1.25)  # how far matching may stretch or squeeze a channel's contrast
+MATERIAL_TOLERANCE = 0.3  # a change this big is worth a human's glance
+SPREAD_LIMITS = (
+    0.8,
+    1.25,
+)  # how far matching may stretch or squeeze a channel's contrast
 
 
 def sample_texture(image: Image.Image, uv: np.ndarray) -> np.ndarray:
     """Texture values (0..1, RGB) at glTF UVs (v runs up the image)."""
     a = np.asarray(image.convert("RGB")).astype(float) / 255
     h, w = a.shape[:2]
-    u, v = np.clip(uv[:, 0], 0, 1), np.clip(uv[:, 1], 0, 1)   # atlases sit in 0..1; 1.0 must not wrap to 0
+    u, v = (
+        np.clip(uv[:, 0], 0, 1),
+        np.clip(uv[:, 1], 0, 1),
+    )  # atlases sit in 0..1; 1.0 must not wrap to 0
     x = np.round(u * (w - 1)).astype(int)
     y = np.round((1 - v) * (h - 1)).astype(int)
     return a[y, x]
@@ -340,8 +421,12 @@ def paired_points(head_vertices: np.ndarray, body_vertices: np.ndarray, reach: f
     return close, nearest[close]
 
 
-def match_to_body(head_texture: Image.Image, head_seen: np.ndarray, body_seen: np.ndarray,
-                  channels: tuple[int, ...] = (0, 1, 2)) -> tuple[Image.Image, dict]:
+def match_to_body(
+    head_texture: Image.Image,
+    head_seen: np.ndarray,
+    body_seen: np.ndarray,
+    channels: tuple[int, ...] = (0, 1, 2),
+) -> tuple[Image.Image, dict]:
     """HEAD_TEXTURE with each channel's level and contrast moved to the body's.
 
     The head and body are built in separate runs and come out in different states: one
@@ -365,12 +450,22 @@ def match_to_body(head_texture: Image.Image, head_seen: np.ndarray, body_seen: n
         else:
             stretch = 0.0
         a[..., c] = (a[..., c] - mh) * stretch + mb
-        report["rgb"[c]] = {"head": round(mh, 3), "body": round(mb, 3), "stretch": round(stretch, 2)}
+        report["rgb"[c]] = {
+            "head": round(mh, 3),
+            "body": round(mb, 3),
+            "stretch": round(stretch, 2),
+        }
     out = Image.fromarray(np.round(np.clip(a, 0, 1) * 255).astype(np.uint8), "RGB")
-    report["big_change"] = any(abs(v["head"] - v["body"]) > MATERIAL_TOLERANCE for v in report.values())
+    report["big_change"] = any(
+        abs(v["head"] - v["body"]) > MATERIAL_TOLERANCE for v in report.values()
+    )
     return out, report
 
 
 def load_picture(path: Path) -> Image.Image:
     with Image.open(path) as opened:
-        return opened.convert("RGBA") if opened.mode in ("RGBA", "LA", "P") else opened.convert("RGB")
+        return (
+            opened.convert("RGBA")
+            if opened.mode in ("RGBA", "LA", "P")
+            else opened.convert("RGB")
+        )

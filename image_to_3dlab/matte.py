@@ -38,9 +38,14 @@ def is_matted(image) -> bool:
 
 LITE_MODEL = "birefnet-general-lite"
 FALLBACK_MODEL = "u2net"
-LITE_URL = ("https://github.com/danielgatis/rembg/releases/download/v0.0.0/"
-            "BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx")
+LITE_URL = (
+    "https://github.com/danielgatis/rembg/releases/download/v0.0.0/"
+    "BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx"
+)
 LITE_BYTES = 224_005_088
+# Sizes already stated in this repo: lite in the fallback note, u2net in the
+# Hunyuan CUDA bootstrap. A missing file must name one of these and stop.
+MODEL_SIZES = {LITE_MODEL: "224 MB", FALLBACK_MODEL: "176 MB"}
 LITE_MD5 = "4fab47adc4ff364be1713e97b7e66334"  # rembg's own known hash for this file
 
 
@@ -64,8 +69,10 @@ def fallback_note(model: str) -> str | None:
     """What to tell the user when a run falls back to u2net, or None."""
     if model != FALLBACK_MODEL:
         return None
-    return ("using u2net, which can eat thin or light-coloured parts; install "
-            "BiRefNet-lite (224 MB) from Setup & Status or scripts/bootstrap_matte.py")
+    return (
+        "using u2net, which can eat thin or light-coloured parts; install "
+        "BiRefNet-lite (224 MB) from Setup & Status or scripts/bootstrap_matte.py"
+    )
 
 
 def clean_edges(rgba, solid: int = 250, reach: int = 4):
@@ -90,8 +97,11 @@ def clean_edges(rgba, solid: int = 250, reach: int = 4):
             for dx in (-1, 0, 1):
                 if dy == dx == 0:
                     continue
-                k = padded_known[1 + dy:1 + dy + height, 1 + dx:1 + dx + width]
-                total += padded_rgb[1 + dy:1 + dy + height, 1 + dx:1 + dx + width] * k[..., None]
+                k = padded_known[1 + dy : 1 + dy + height, 1 + dx : 1 + dx + width]
+                total += (
+                    padded_rgb[1 + dy : 1 + dy + height, 1 + dx : 1 + dx + width]
+                    * k[..., None]
+                )
                 count += k
         grow = ~known & (count > 0)
         if not grow.any():
@@ -103,13 +113,37 @@ def clean_edges(rgba, solid: int = 250, reach: int = 4):
     return out
 
 
+def refuse_missing_model() -> str:
+    """The remover this run would use. Exit when its file is not already on disk.
+
+    `rembg.new_session` downloads u2net when the file is missing. Call this first.
+    """
+    chosen = matte_model()
+    path = model_file(chosen)
+    if not path.is_file():
+        size = MODEL_SIZES.get(chosen, "")
+        named = f"{chosen} ({size})" if size else chosen
+        raise SystemExit(
+            f"{named} is not installed ({path}). Run: python scripts/bootstrap_matte.py"
+        )
+    return chosen
+
+
 def new_session(model: str | None = None):
     # Newer rembg keeps models in ~/.rembg/models unless told otherwise, so a backend's own
     # venv missed BiRefNet-lite here and fetched u2net. One folder for every rembg.
+    # A missing file must stop here. rembg.new_session downloads u2net on its own.
+    chosen = model or matte_model()
+    path = model_file(chosen)
+    if not path.is_file():
+        raise RuntimeError(
+            f"{chosen} is not installed ({path}). "
+            "Install it from Setup & Status or scripts/bootstrap_matte.py."
+        )
     os.environ.setdefault("U2NET_HOME", str(model_home()))
     import rembg
 
-    return rembg.new_session(model or matte_model())
+    return rembg.new_session(chosen)
 
 
 def cut_out(image, session=None):
@@ -118,7 +152,9 @@ def cut_out(image, session=None):
     import rembg
     from PIL import Image
 
-    model = matte_model() if session is None else getattr(session, "model_name", "custom")
+    model = (
+        matte_model() if session is None else getattr(session, "model_name", "custom")
+    )
     session = session or new_session(model)
     cut = rembg.remove(image.convert("RGB"), session=session).convert("RGBA")
     return Image.fromarray(clean_edges(np.asarray(cut))), model

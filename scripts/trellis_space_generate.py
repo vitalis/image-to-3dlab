@@ -66,19 +66,40 @@ DEMO_PARAMS: dict[str, Any] = {
     "seed": 0,
     "decimation_target": 300_000,
     "texture_size": 2048,
-    "sparse_structure": {"steps": 12, "guidance_strength": 7.5, "guidance_rescale": 0.7, "rescale_t": 5.0},
-    "shape_slat": {"steps": 12, "guidance_strength": 7.5, "guidance_rescale": 0.5, "rescale_t": 3.0},
-    "tex_slat": {"steps": 12, "guidance_strength": 1.0, "guidance_rescale": 0.0, "rescale_t": 3.0},
+    "sparse_structure": {
+        "steps": 12,
+        "guidance_strength": 7.5,
+        "guidance_rescale": 0.7,
+        "rescale_t": 5.0,
+    },
+    "shape_slat": {
+        "steps": 12,
+        "guidance_strength": 7.5,
+        "guidance_rescale": 0.5,
+        "rescale_t": 3.0,
+    },
+    "tex_slat": {
+        "steps": 12,
+        "guidance_strength": 1.0,
+        "guidance_rescale": 0.0,
+        "rescale_t": 3.0,
+    },
     "remesh": {"remesh": True, "remesh_band": 1, "remesh_project": 0},
 }
 
-PIPELINE_TYPE_BY_RESOLUTION = {"512": "512", "1024": "1024_cascade", "1536": "1536_cascade"}
+PIPELINE_TYPE_BY_RESOLUTION = {
+    "512": "512",
+    "1024": "1024_cascade",
+    "1536": "1536_cascade",
+}
 
 # app.py pre-simplifies the decoded mesh to nvdiffrast's 2**24 index cap before to_glb. On MPS
 # that call is both pointless (no nvdiffrast) and crashes: cumesh's Metal simplify_step is not
 # robust on ~20M-face meshes (off-by-one AcceleratorError). We skip it and CPU pre-cap instead.
 NVDIFFRAST_FACE_LIMIT = 16_777_216  # informational only; deliberately not called on MPS
-PRE_CAP_FACES_DEFAULT = 4_000_000  # old port's proven-safe budget for the Metal to_glb path
+PRE_CAP_FACES_DEFAULT = (
+    4_000_000  # old port's proven-safe budget for the Metal to_glb path
+)
 AABB = [[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]]
 
 
@@ -139,12 +160,14 @@ def border_opaque_fraction(alpha, ring: int = 2) -> float:
     arr = np.asarray(alpha)
     if arr.ndim != 2 or min(arr.shape) <= 2 * ring:
         return 0.0
-    edges = np.concatenate([
-        arr[:ring].ravel(),
-        arr[-ring:].ravel(),
-        arr[ring:-ring, :ring].ravel(),
-        arr[ring:-ring, -ring:].ravel(),
-    ])
+    edges = np.concatenate(
+        [
+            arr[:ring].ravel(),
+            arr[-ring:].ravel(),
+            arr[ring:-ring, :ring].ravel(),
+            arr[ring:-ring, -ring:].ravel(),
+        ]
+    )
     return float((edges > 250).mean())
 
 
@@ -188,7 +211,9 @@ def precap_ratio(num_faces: int, pre_cap: int) -> float:
     return 1.0 - (pre_cap / num_faces)
 
 
-def resolved_attention_dtype(sparse_attn_backend: str, env_value: str | None) -> str | None:
+def resolved_attention_dtype(
+    sparse_attn_backend: str, env_value: str | None
+) -> str | None:
     """The attention precision a run actually used, for the manifest.
 
     Precision travels by environment variable rather than by flag, so without this the
@@ -207,6 +232,86 @@ def release_mlx_memory() -> dict[str, int]:
     except ImportError:
         return {}
     return release_memory()
+
+
+def build_provenance(
+    *,
+    image: Path,
+    output: Path,
+    parameters: dict[str, Any],
+    matte_model: str | None,
+    backend_revision: str | None = None,
+) -> dict[str, Any]:
+    """The `.provenance.json` licence record, same shape as the CUDA TRELLIS writer.
+
+    DINOv3 is recorded even though this file does not load it by name: the pipeline's
+    image encoder is that model. BRIA is recorded as not loaded.
+    """
+    from datetime import datetime, timezone
+
+    from image_to_3dlab.provenance import LICENSES, MATTE_LICENSES
+
+    profile = LICENSES["trellis2"]
+    components: list[dict[str, Any]] = []
+    if matte_model:
+        components.append(
+            {
+                "component": f"rembg/{matte_model}",
+                "purpose": "background removal",
+                "license": MATTE_LICENSES.get(matte_model, "see rembg"),
+                "commercial_status": "commercial-clear",
+            }
+        )
+    components += [
+        {
+            "component": "facebook/dinov3-vitl16-pretrain-lvd1689m",
+            "purpose": "image conditioning",
+            "license": "DINOv3 License",
+            "commercial_status": "commercial-conditional",
+            "license_url": "https://ai.meta.com/resources/models-and-libraries/dinov3-license/",
+        },
+        {
+            "component": "BRIA RMBG-2.0",
+            "purpose": "background removal",
+            "loaded": False,
+            "commercial_status": "blocked",
+            "note": "Not loaded. This CLI passes load_rembg off, and the Space patch refuses the remover.",
+        },
+    ]
+    return {
+        "schema_version": 1,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "input": {
+            "path": str(image),
+            "sha256": sha256(image) if image.is_file() else None,
+            "source": "user-provided",
+        },
+        "output": {
+            "path": str(output),
+            "sha256": sha256(output) if output.is_file() else None,
+            "classification": profile.classification,
+        },
+        "model": {
+            "backend": "trellis2",
+            "route": "apple-mps",
+            "parameters": parameters,
+        },
+        "license": {
+            "name": profile.license_name,
+            "url": profile.license_url,
+            "conditions": list(profile.conditions),
+        },
+        "components": components,
+        "software": {"backend_revision": backend_revision},
+    }
+
+
+def write_provenance(output: Path, record: dict[str, Any]) -> Path:
+    path = output.with_suffix(".provenance.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+    print(f"Provenance: {path}", flush=True)
+    return path
 
 
 def build_manifest(
@@ -291,13 +396,29 @@ def verify_paths(vendor_root: Path) -> list[str]:
     checks = {
         ".venv python": vendor_root / ".venv" / "bin" / "python",
         "TRELLIS.2": vendor_root / "TRELLIS.2",
-        "pipeline module": vendor_root / "TRELLIS.2" / "trellis2" / "pipelines"
+        "pipeline module": vendor_root
+        / "TRELLIS.2"
+        / "trellis2"
+        / "pipelines"
         / "trellis2_image_to_3d.py",
-        "patched mesh/base.py": vendor_root / "TRELLIS.2" / "trellis2" / "representations"
-        / "mesh" / "base.py",
-        "o_voxel": vendor_root / "deps" / "trellis2-apple" / "o-voxel" / "o_voxel"
+        "patched mesh/base.py": vendor_root
+        / "TRELLIS.2"
+        / "trellis2"
+        / "representations"
+        / "mesh"
+        / "base.py",
+        "o_voxel": vendor_root
+        / "deps"
+        / "trellis2-apple"
+        / "o-voxel"
+        / "o_voxel"
         / "postprocess.py",
-        "remesh.metal": vendor_root / "deps" / "mtlmesh" / "src" / "metal" / "remesh.metal",
+        "remesh.metal": vendor_root
+        / "deps"
+        / "mtlmesh"
+        / "src"
+        / "metal"
+        / "remesh.metal",
     }
     for name, path in checks.items():
         if not path.exists():
@@ -344,15 +465,20 @@ def check_environment(vendor_root: Path, sparse_attn_backend: str) -> int:
     try:
         import fast_simplification  # noqa: F401
     except ImportError:
-        print("  FAIL: fast_simplification not importable (needed for the CPU pre-cap before to_glb)",
-              flush=True)
+        print(
+            "  FAIL: fast_simplification not importable (needed for the CPU pre-cap before to_glb)",
+            flush=True,
+        )
         return 1
 
     import o_voxel
     from trellis2.pipelines.trellis2_image_to_3d import Trellis2ImageTo3DPipeline
 
-    missing = [m for m in ("run", "decode_latent", "get_cond", "preprocess_image")
-               if not hasattr(Trellis2ImageTo3DPipeline, m)]
+    missing = [
+        m
+        for m in ("run", "decode_latent", "get_cond", "preprocess_image")
+        if not hasattr(Trellis2ImageTo3DPipeline, m)
+    ]
     if missing:
         print(f"  FAIL: pipeline missing methods: {missing}", flush=True)
         return 1
@@ -360,11 +486,17 @@ def check_environment(vendor_root: Path, sparse_attn_backend: str) -> int:
         print("  FAIL: o_voxel.postprocess.to_glb not found", flush=True)
         return 1
     if os.environ.get("ATTN_BACKEND") != "sdpa":
-        print(f"  FAIL: ATTN_BACKEND={os.environ.get('ATTN_BACKEND')!r}, expected 'sdpa'", flush=True)
+        print(
+            f"  FAIL: ATTN_BACKEND={os.environ.get('ATTN_BACKEND')!r}, expected 'sdpa'",
+            flush=True,
+        )
         return 1
 
-    print("  PASS: clean port present, MPS available, run/decode_latent/to_glb resolved, "
-          "ATTN_BACKEND=sdpa", flush=True)
+    print(
+        "  PASS: clean port present, MPS available, run/decode_latent/to_glb resolved, "
+        "ATTN_BACKEND=sdpa",
+        flush=True,
+    )
     return 0
 
 
@@ -392,8 +524,14 @@ def filter_degenerate_faces(mesh) -> int:
 
 
 def _decode_mesh(
-    pipeline, shape_slat, tex_slat, res, *,
-    pipeline_type: str, seed: int, image_path: Path,
+    pipeline,
+    shape_slat,
+    tex_slat,
+    res,
+    *,
+    pipeline_type: str,
+    seed: int,
+    image_path: Path,
 ) -> tuple[dict[str, Any], float]:
     """decode_latent -> drop degenerate faces -> CPU bundle. Returns (bundle, decode_seconds).
 
@@ -404,8 +542,10 @@ def _decode_mesh(
     mesh = pipeline.decode_latent(shape_slat, tex_slat, res)[0]
     removed = filter_degenerate_faces(mesh)
     if removed:
-        print(f"  filtered {removed} degenerate face(s) (out-of-range/-1 index) before bake",
-              flush=True)
+        print(
+            f"  filtered {removed} degenerate face(s) (out-of-range/-1 index) before bake",
+            flush=True,
+        )
     decode_seconds = time.time() - decode_started
     print(f"decode_latent (+face filter) done in {decode_seconds:.1f}s", flush=True)
     return (
@@ -445,7 +585,9 @@ def sample_latents_without_decode(pipeline, image, **run_kwargs):
     finally:
         pipeline.decode_latent = original_decode
     if output is not skipped_decode:
-        raise RuntimeError("TRELLIS sampling did not reach the postponed decode boundary")
+        raise RuntimeError(
+            "TRELLIS sampling did not reach the postponed decode boundary"
+        )
     return latents
 
 
@@ -519,32 +661,59 @@ def _precap_subprocess(vertices, faces, pre_cap: int, max_attempts: int = 5):
             torch.save({"vertices": vertices, "faces": faces}, in_path)
             try:
                 subprocess.run(
-                    [sys.executable, "-c", code, str(in_path), str(out_path), str(pre_cap)],
+                    [
+                        sys.executable,
+                        "-c",
+                        code,
+                        str(in_path),
+                        str(out_path),
+                        str(pre_cap),
+                    ],
                     check=True,
                     capture_output=True,
                     text=True,
                 )
-                verts_out, faces_out = torch.load(out_path, map_location="cpu", weights_only=False)
+                verts_out, faces_out = torch.load(
+                    out_path, map_location="cpu", weights_only=False
+                )
             except (subprocess.CalledProcessError, RuntimeError, OSError) as exc:
                 last_error = f"crash/failure: {exc}"
-                print(f"  pre-cap attempt {attempt}/{max_attempts} {last_error}; retrying",
-                      flush=True)
+                print(
+                    f"  pre-cap attempt {attempt}/{max_attempts} {last_error}; retrying",
+                    flush=True,
+                )
                 continue
         num_faces = int(faces_out.shape[0])
         bad = int((~valid_face_mask(faces_out.numpy(), verts_out.shape[0])).sum())
-        if bad / num_faces > 0.001:  # catastrophic corruption (usual case is a few dozen)
+        if (
+            bad / num_faces > 0.001
+        ):  # catastrophic corruption (usual case is a few dozen)
             last_error = f"{bad:,} out-of-range faces ({bad / num_faces:.1%})"
-            print(f"  pre-cap attempt {attempt}/{max_attempts}: {last_error}; retrying", flush=True)
+            print(
+                f"  pre-cap attempt {attempt}/{max_attempts}: {last_error}; retrying",
+                flush=True,
+            )
             continue
         if attempt > 1:
             print(f"  pre-cap succeeded on attempt {attempt}", flush=True)
         return verts_out, faces_out
-    raise RuntimeError(f"pre-cap failed after {max_attempts} attempts; last: {last_error}")
+    raise RuntimeError(
+        f"pre-cap failed after {max_attempts} attempts; last: {last_error}"
+    )
 
 
 def _bake_export(
-    vertices, faces, attrs, coords, attr_layout, res, output_path: Path, *,
-    decimation_target: int, texture_size: int, pre_cap: int,
+    vertices,
+    faces,
+    attrs,
+    coords,
+    attr_layout,
+    res,
+    output_path: Path,
+    *,
+    decimation_target: int,
+    texture_size: int,
+    pre_cap: int,
 ) -> tuple[dict[str, float], dict[str, Any]]:
     """CPU pre-cap the decoded mesh, then Metal to_glb -> GLB export. Shared by every entry point.
 
@@ -564,17 +733,30 @@ def _bake_export(
     num_faces = int(faces_cpu.shape[0])
     if num_faces > pre_cap:
         ratio = precap_ratio(num_faces, pre_cap)
-        print(f"  CPU pre-cap: {num_faces:,} -> ~{pre_cap:,} faces "
-              f"(fast_simplification remove {ratio:.2%}, subprocess)", flush=True)
+        print(
+            f"  CPU pre-cap: {num_faces:,} -> ~{pre_cap:,} faces "
+            f"(fast_simplification remove {ratio:.2%}, subprocess)",
+            flush=True,
+        )
         simp_verts, simp_faces = _precap_subprocess(verts_cpu, faces_cpu, pre_cap)
         verts_cpu = simp_verts
-        faces_cpu, removed_bad = filter_out_of_range_faces(simp_faces, verts_cpu.shape[0])
+        faces_cpu, removed_bad = filter_out_of_range_faces(
+            simp_faces, verts_cpu.shape[0]
+        )
         if removed_bad:
-            print(f"  filtered {removed_bad} corrupt face(s) from pre-cap output", flush=True)
-        print(f"  pre-cap done: {verts_cpu.shape[0]:,} verts, {faces_cpu.shape[0]:,} faces",
-              flush=True)
+            print(
+                f"  filtered {removed_bad} corrupt face(s) from pre-cap output",
+                flush=True,
+            )
+        print(
+            f"  pre-cap done: {verts_cpu.shape[0]:,} verts, {faces_cpu.shape[0]:,} faces",
+            flush=True,
+        )
     else:
-        print(f"  mesh at/under pre-cap ({num_faces:,} <= {pre_cap:,}); no pre-cap needed", flush=True)
+        print(
+            f"  mesh at/under pre-cap ({num_faces:,} <= {pre_cap:,}); no pre-cap needed",
+            flush=True,
+        )
 
     glb = o_voxel.postprocess.to_glb(
         vertices=verts_cpu,
@@ -594,15 +776,25 @@ def _bake_export(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     glb.export(str(output_path), extension_webp=True)
     bake_seconds = time.time() - started
-    print(f"bake (pre-cap + to_glb + export) done in {bake_seconds:.1f}s -> {output_path}",
-          flush=True)
+    print(
+        f"bake (pre-cap + to_glb + export) done in {bake_seconds:.1f}s -> {output_path}",
+        flush=True,
+    )
     return ({"bake": bake_seconds}, {"glb": _artifact(output_path)})
 
 
 def _decode_and_cache(
-    pipeline, shape_slat, tex_slat, res, output_path: Path, *,
-    save_decode: bool, decode_path: Path | None,
-    pipeline_type: str, seed: int, image_path: Path,
+    pipeline,
+    shape_slat,
+    tex_slat,
+    res,
+    output_path: Path,
+    *,
+    save_decode: bool,
+    decode_path: Path | None,
+    pipeline_type: str,
+    seed: int,
+    image_path: Path,
 ) -> tuple[dict[str, Any], float]:
     """decode -> filter -> (save the CPU bundle) -> return (bundle, decode_seconds).
 
@@ -612,8 +804,13 @@ def _decode_and_cache(
     the bake does not need the pipeline.
     """
     bundle, decode_seconds = _decode_mesh(
-        pipeline, shape_slat, tex_slat, res,
-        pipeline_type=pipeline_type, seed=seed, image_path=image_path,
+        pipeline,
+        shape_slat,
+        tex_slat,
+        res,
+        pipeline_type=pipeline_type,
+        seed=seed,
+        image_path=image_path,
     )
     if save_decode:
         if decode_path is None:
@@ -625,8 +822,29 @@ def _decode_and_cache(
     return bundle, decode_seconds
 
 
-def load_pipeline(vendor_root: Path, sparse_attn_backend: str, load_rembg: bool):
+def _from_pretrained(model: str, load_rembg: bool):
+    """The one call that would download. Tests stub this and assert it was not reached."""
+    from trellis2.pipelines.trellis2_image_to_3d import Trellis2ImageTo3DPipeline
+
+    return Trellis2ImageTo3DPipeline.from_pretrained(model, load_rembg=load_rembg)
+
+
+def load_pipeline(
+    vendor_root: Path,
+    sparse_attn_backend: str,
+    load_rembg: bool,
+    *,
+    confirm_download: bool = False,
+):
     """Configure the Mac env, import TRELLIS, load the 4B pipeline onto MPS. Returns the pipeline."""
+    import trellis_route
+
+    # Before torch, and before from_pretrained. No local pipeline.json and no --yes stops here.
+    model = trellis_route.resolve_weights(
+        route_label="Apple / trellis-space-mac",
+        confirm=confirm_download,
+        extra=(vendor_root / "models" / trellis_route.LOCAL_MODEL_DIR,),
+    )
     configure_environment(vendor_root, sparse_attn_backend)
     sys.path.insert(0, str(vendor_root / "TRELLIS.2"))
     stubs = vendor_root / "stubs"
@@ -635,12 +853,9 @@ def load_pipeline(vendor_root: Path, sparse_attn_backend: str, load_rembg: bool)
     require_flex_gemm()
 
     import torch
-    from trellis2.pipelines.trellis2_image_to_3d import Trellis2ImageTo3DPipeline
 
     print(f"Loading TRELLIS.2 pipeline (load_rembg={load_rembg})...", flush=True)
-    pipeline = Trellis2ImageTo3DPipeline.from_pretrained(
-        "microsoft/TRELLIS.2-4B", load_rembg=load_rembg
-    )
+    pipeline = _from_pretrained(model, load_rembg)
     pipeline.to(torch.device("mps"))
     return pipeline
 
@@ -655,6 +870,7 @@ def generate_from_latents(
     pre_cap: int,
     decimation_target: int = DEMO_PARAMS["decimation_target"],
     texture_size: int = DEMO_PARAMS["texture_size"],
+    confirm_download: bool = False,
 ) -> dict[str, Any]:
     """Resume from a cached ``*_latents.pt``: skip the ~78-min sampling, just decode + bake.
 
@@ -662,7 +878,12 @@ def generate_from_latents(
     does (but on MPS), then runs the shared decode+bake path.
     """
     started = time.time()
-    pipeline = load_pipeline(vendor_root, sparse_attn_backend, load_rembg=False)
+    pipeline = load_pipeline(
+        vendor_root,
+        sparse_attn_backend,
+        load_rembg=False,
+        confirm_download=confirm_download,
+    )
     load_seconds = time.time() - started
     print(f"Pipeline loaded in {load_seconds:.1f}s", flush=True)
 
@@ -678,24 +899,45 @@ def generate_from_latents(
     )
     tex_slat = shape_slat.replace(bundle["tex_slat_feats"].to(device))
     res = int(bundle["res"])
-    pipeline_type = bundle.get("pipeline_type", pipeline_type_for_resolution(DEMO_PARAMS["resolution"]))
+    pipeline_type = bundle.get(
+        "pipeline_type", pipeline_type_for_resolution(DEMO_PARAMS["resolution"])
+    )
 
     decode_path = None
     if save_decode:
         decode_path = output_path.with_name(output_path.stem + "_decode.pt")
-    image_path = Path(str(bundle["images"][0])) if bundle.get("images") else Path("<from latents>")
+    image_path = (
+        Path(str(bundle["images"][0]))
+        if bundle.get("images")
+        else Path("<from latents>")
+    )
     mesh_bundle, decode_seconds = _decode_and_cache(
-        pipeline, shape_slat, tex_slat, res, output_path,
-        save_decode=save_decode, decode_path=decode_path,
-        pipeline_type=pipeline_type, seed=int(bundle.get("seed", -1)),
+        pipeline,
+        shape_slat,
+        tex_slat,
+        res,
+        output_path,
+        save_decode=save_decode,
+        decode_path=decode_path,
+        pipeline_type=pipeline_type,
+        seed=int(bundle.get("seed", -1)),
         image_path=image_path,
     )
-    del pipeline  # free the 4B model before the memory-heavy bake (see _release_mps_memory)
+    del (
+        pipeline
+    )  # free the 4B model before the memory-heavy bake (see _release_mps_memory)
     _release_mps_memory()
     bake_timings, bake_artifacts = _bake_export(
-        mesh_bundle["vertices"], mesh_bundle["faces"], mesh_bundle["attrs"],
-        mesh_bundle["coords"], mesh_bundle["attr_layout"], mesh_bundle["res"], output_path,
-        decimation_target=decimation_target, texture_size=texture_size, pre_cap=pre_cap,
+        mesh_bundle["vertices"],
+        mesh_bundle["faces"],
+        mesh_bundle["attrs"],
+        mesh_bundle["coords"],
+        mesh_bundle["attr_layout"],
+        mesh_bundle["res"],
+        output_path,
+        decimation_target=decimation_target,
+        texture_size=texture_size,
+        pre_cap=pre_cap,
     )
     decode_timings = {"decode_latent": decode_seconds, **bake_timings}
     artifacts = bake_artifacts
@@ -703,9 +945,16 @@ def generate_from_latents(
     if decode_path is not None and decode_path.is_file():
         artifacts["decode"] = _artifact(decode_path)
 
-    timings = {"pipeline_load": load_seconds, **decode_timings, "total": time.time() - started}
-    effective_params = {**DEMO_PARAMS, "decimation_target": decimation_target,
-                        "texture_size": texture_size}
+    timings = {
+        "pipeline_load": load_seconds,
+        **decode_timings,
+        "total": time.time() - started,
+    }
+    effective_params = {
+        **DEMO_PARAMS,
+        "decimation_target": decimation_target,
+        "texture_size": texture_size,
+    }
     manifest = build_manifest(
         image=str(bundle.get("images", ["<from latents>"])[0]),
         output=str(output_path),
@@ -725,6 +974,18 @@ def generate_from_latents(
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     print(f"Manifest: {manifest_path}", flush=True)
+    image_for_record = Path(str(bundle.get("images", [latents_path])[0]))
+    if not image_for_record.is_file():
+        image_for_record = latents_path
+    write_provenance(
+        output_path,
+        build_provenance(
+            image=image_for_record,
+            output=output_path,
+            parameters=effective_params,
+            matte_model=None,
+        ),
+    )
     print(f"Total (decode+bake, no resample): {timings['total']:.1f}s", flush=True)
     return manifest
 
@@ -744,6 +1005,7 @@ def generate(
     resolution: str = DEMO_PARAMS["resolution"],
     decimation_target: int = DEMO_PARAMS["decimation_target"],
     texture_size: int = DEMO_PARAMS["texture_size"],
+    confirm_download: bool = False,
 ) -> dict[str, Any]:
     """Run the full clean-port pipeline on MPS and export a GLB. Returns the manifest dict."""
     from PIL import Image
@@ -773,7 +1035,12 @@ def generate(
     tex = sampler_params("tex_slat")
 
     started = time.time()
-    pipeline = load_pipeline(vendor_root, sparse_attn_backend, load_rembg)
+    pipeline = load_pipeline(
+        vendor_root,
+        sparse_attn_backend,
+        load_rembg,
+        confirm_download=confirm_download,
+    )
     load_seconds = time.time() - started
     print(f"Pipeline loaded in {load_seconds:.1f}s", flush=True)
 
@@ -798,7 +1065,9 @@ def generate(
         pipeline_type=pipeline_type,
     )
     run_seconds = time.time() - run_started
-    print(f"pipeline.run() sampling (stages 1-3) done in {run_seconds:.1f}s", flush=True)
+    print(
+        f"pipeline.run() sampling (stages 1-3) done in {run_seconds:.1f}s", flush=True
+    )
 
     # Hand MLX's reserved Metal memory back before decode.
     #
@@ -849,16 +1118,32 @@ def generate(
     if save_decode:
         decode_path = output_path.with_name(output_path.stem + "_decode.pt")
     mesh_bundle, decode_seconds = _decode_and_cache(
-        pipeline, shape_slat, tex_slat, res, output_path,
-        save_decode=save_decode, decode_path=decode_path,
-        pipeline_type=pipeline_type, seed=seed, image_path=image_path,
+        pipeline,
+        shape_slat,
+        tex_slat,
+        res,
+        output_path,
+        save_decode=save_decode,
+        decode_path=decode_path,
+        pipeline_type=pipeline_type,
+        seed=seed,
+        image_path=image_path,
     )
-    del pipeline  # free the 4B model before the memory-heavy bake (see _release_mps_memory)
+    del (
+        pipeline
+    )  # free the 4B model before the memory-heavy bake (see _release_mps_memory)
     _release_mps_memory()
     bake_timings, bake_artifacts = _bake_export(
-        mesh_bundle["vertices"], mesh_bundle["faces"], mesh_bundle["attrs"],
-        mesh_bundle["coords"], mesh_bundle["attr_layout"], mesh_bundle["res"], output_path,
-        decimation_target=decimation_target, texture_size=texture_size, pre_cap=pre_cap,
+        mesh_bundle["vertices"],
+        mesh_bundle["faces"],
+        mesh_bundle["attrs"],
+        mesh_bundle["coords"],
+        mesh_bundle["attr_layout"],
+        mesh_bundle["res"],
+        output_path,
+        decimation_target=decimation_target,
+        texture_size=texture_size,
+        pre_cap=pre_cap,
     )
     decode_timings = {"decode_latent": decode_seconds, **bake_timings}
     artifacts.update(bake_artifacts)
@@ -874,9 +1159,12 @@ def generate(
         **decode_timings,
         "total": time.time() - started,
     }
-    effective_params = {**DEMO_PARAMS, "resolution": resolution,
-                        "decimation_target": decimation_target,
-                        "texture_size": texture_size}
+    effective_params = {
+        **DEMO_PARAMS,
+        "resolution": resolution,
+        "decimation_target": decimation_target,
+        "texture_size": texture_size,
+    }
     manifest = build_manifest(
         image=str(image_path),
         output=str(output_path),
@@ -895,6 +1183,15 @@ def generate(
     manifest_path = output_path.with_suffix(".json")
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     print(f"Manifest: {manifest_path}", flush=True)
+    write_provenance(
+        output_path,
+        build_provenance(
+            image=image_path,
+            output=output_path,
+            parameters=effective_params,
+            matte_model=matted_with,
+        ),
+    )
     print(f"Total: {timings['total']:.1f}s", flush=True)
     return manifest
 
@@ -920,20 +1217,35 @@ def generate_from_decode(
     bundle = torch.load(decode_path, map_location="cpu", weights_only=False)
     res = int(bundle["res"])
     bake_timings, bake_artifacts = _bake_export(
-        bundle["vertices"], bundle["faces"], bundle["attrs"], bundle["coords"],
-        bundle["attr_layout"], res, output_path,
-        decimation_target=decimation_target, texture_size=texture_size, pre_cap=pre_cap,
+        bundle["vertices"],
+        bundle["faces"],
+        bundle["attrs"],
+        bundle["coords"],
+        bundle["attr_layout"],
+        res,
+        output_path,
+        decimation_target=decimation_target,
+        texture_size=texture_size,
+        pre_cap=pre_cap,
     )
     bake_artifacts["decode"] = _artifact(decode_path)
-    timings = {"load_decode_bundle": time.time() - started, **bake_timings,
-               "total": time.time() - started}
+    timings = {
+        "load_decode_bundle": time.time() - started,
+        **bake_timings,
+        "total": time.time() - started,
+    }
     manifest = build_manifest(
         image=str(bundle.get("images", ["<from decode>"])[0]),
         output=str(output_path),
-        params={**DEMO_PARAMS, "decimation_target": decimation_target,
-                "texture_size": texture_size, "pre_cap_faces": pre_cap},
+        params={
+            **DEMO_PARAMS,
+            "decimation_target": decimation_target,
+            "texture_size": texture_size,
+            "pre_cap_faces": pre_cap,
+        },
         pipeline_type=bundle.get(
-            "pipeline_type", pipeline_type_for_resolution(DEMO_PARAMS["resolution"])),
+            "pipeline_type", pipeline_type_for_resolution(DEMO_PARAMS["resolution"])
+        ),
         seed=int(bundle.get("seed", -1)),
         timings=timings,
         artifacts=bake_artifacts,
@@ -945,51 +1257,114 @@ def generate_from_decode(
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     print(f"Manifest: {manifest_path}", flush=True)
+    image_for_record = Path(str(bundle.get("images", [decode_path])[0]))
+    if not image_for_record.is_file():
+        image_for_record = decode_path
+    write_provenance(
+        output_path,
+        build_provenance(
+            image=image_for_record,
+            output=output_path,
+            parameters=manifest["params"],
+            matte_model=None,
+        ),
+    )
     print(f"Total (pre-cap + bake, no decode): {timings['total']:.1f}s", flush=True)
     return manifest
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("image", type=Path, nargs="?", help="input image (transparent alpha foreground)")
+    parser.add_argument(
+        "image", type=Path, nargs="?", help="input image (transparent alpha foreground)"
+    )
     parser.add_argument("output", type=Path, nargs="?", help="GLB to write")
-    parser.add_argument("--vendor-root", type=Path, default=DEFAULT_VENDOR,
-                        help="the clean trellis-space-mac build (with .venv + deps)")
-    parser.add_argument("--resolution", choices=("512", "1024", "1536"),
-                        default=DEMO_PARAMS["resolution"],
-                        help="demo resolution / pipeline cascade")
+    parser.add_argument(
+        "--vendor-root",
+        type=Path,
+        default=DEFAULT_VENDOR,
+        help="the clean trellis-space-mac build (with .venv + deps)",
+    )
+    parser.add_argument(
+        "--resolution",
+        choices=("512", "1024", "1536"),
+        default=DEMO_PARAMS["resolution"],
+        help="demo resolution / pipeline cascade",
+    )
     parser.add_argument("--seed", type=int, default=DEMO_PARAMS["seed"])
-    parser.add_argument("--decimation-target", type=int, default=DEMO_PARAMS["decimation_target"],
-                        help="final face/vertex budget the mesh is simplified DOWN to "
-                             "(our app.py demo default 300000; the live HF demo may use 3000000)")
+    parser.add_argument(
+        "--decimation-target",
+        type=int,
+        default=DEMO_PARAMS["decimation_target"],
+        help="final face/vertex budget the mesh is simplified DOWN to "
+        "(our app.py demo default 300000; the live HF demo may use 3000000)",
+    )
     parser.add_argument("--texture-size", type=int, default=DEMO_PARAMS["texture_size"])
-    parser.add_argument("--sparse-attn-backend", default="sdpa",
-                        choices=("sdpa", "metal_flash", "mlx"),
-                        help="sdpa is the default unfused MPS path; mlx routes attention "
-                             "through MLX's fused Metal kernel (needs "
-                             "scripts/patch_trellis_mlx_attention.py applied and mlx "
-                             "installed in the vendor venv)")
-    parser.add_argument("--matted-with", default=None,
-                        help="the remover that cut the input out (recorded in the manifest)")
-    parser.add_argument("--allow-uncut", action="store_true",
-                        help="permit an alpha image whose subject was never cut out of its "
-                             "background (the background becomes 3D geometry)")
-    parser.add_argument("--no-save-latents", dest="save_latents", action="store_false",
-                        help="do not write <out>_latents.pt")
-    parser.add_argument("--no-save-decode", dest="save_decode", action="store_false",
-                        default=True,
-                        help="do not write <out>_decode.pt (the resumeable decoded-mesh cache)")
-    parser.add_argument("--pre-cap", type=int, default=PRE_CAP_FACES_DEFAULT,
-                        help="CPU fast_simplification face budget before the Metal to_glb "
-                             "(default %(default)s; the old port's proven-safe threshold)")
-    parser.add_argument("--from-decode", type=Path, default=None,
-                        help="resume from a cached *_decode.pt: no model load, no decode, only "
-                             "CPU pre-cap + to_glb bake. Give the output GLB path positionally.")
-    parser.add_argument("--from-latents", type=Path, default=None,
-                        help="resume from a cached *_latents.pt: skip the ~78-min sampling, only "
-                             "decode + bake. Give the output GLB path as the positional argument.")
-    parser.add_argument("--check", action="store_true",
-                        help="verify the environment and exit (no model load, no sampling)")
+    parser.add_argument(
+        "--sparse-attn-backend",
+        default="sdpa",
+        choices=("sdpa", "metal_flash", "mlx"),
+        help="sdpa is the default unfused MPS path; mlx routes attention "
+        "through MLX's fused Metal kernel (needs "
+        "scripts/patch_trellis_mlx_attention.py applied and mlx "
+        "installed in the vendor venv)",
+    )
+    parser.add_argument(
+        "--matted-with",
+        default=None,
+        help="the remover that cut the input out (recorded in the manifest)",
+    )
+    parser.add_argument(
+        "--allow-uncut",
+        action="store_true",
+        help="permit an alpha image whose subject was never cut out of its "
+        "background (the background becomes 3D geometry)",
+    )
+    parser.add_argument(
+        "--no-save-latents",
+        dest="save_latents",
+        action="store_false",
+        help="do not write <out>_latents.pt",
+    )
+    parser.add_argument(
+        "--no-save-decode",
+        dest="save_decode",
+        action="store_false",
+        default=True,
+        help="do not write <out>_decode.pt (the resumeable decoded-mesh cache)",
+    )
+    parser.add_argument(
+        "--pre-cap",
+        type=int,
+        default=PRE_CAP_FACES_DEFAULT,
+        help="CPU fast_simplification face budget before the Metal to_glb "
+        "(default %(default)s; the old port's proven-safe threshold)",
+    )
+    parser.add_argument(
+        "--from-decode",
+        type=Path,
+        default=None,
+        help="resume from a cached *_decode.pt: no model load, no decode, only "
+        "CPU pre-cap + to_glb bake. Give the output GLB path positionally.",
+    )
+    parser.add_argument(
+        "--from-latents",
+        type=Path,
+        default=None,
+        help="resume from a cached *_latents.pt: skip the ~78-min sampling, only "
+        "decode + bake. Give the output GLB path as the positional argument.",
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="download TRELLIS.2-4B when pipeline.json is not already on disk "
+        "(names the size first; default is to refuse)",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="verify the environment and exit (no model load, no sampling)",
+    )
     return parser.parse_args(argv)
 
 
@@ -1003,11 +1378,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.from_decode is not None:
         out = args.output or args.image  # accept the GLB path in either positional slot
         if out is None:
-            raise SystemExit("provide the output GLB path (positional) with --from-decode")
+            raise SystemExit(
+                "provide the output GLB path (positional) with --from-decode"
+            )
         if not args.from_decode.is_file():
             raise SystemExit(f"missing decode bundle: {args.from_decode}")
         generate_from_decode(
-            args.from_decode, out, vendor_root,
+            args.from_decode,
+            out,
+            vendor_root,
             decimation_target=args.decimation_target,
             texture_size=args.texture_size,
             pre_cap=args.pre_cap,
@@ -1017,16 +1396,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.from_latents is not None:
         out = args.output or args.image  # accept the GLB path in either positional slot
         if out is None:
-            raise SystemExit("provide the output GLB path (positional) with --from-latents")
+            raise SystemExit(
+                "provide the output GLB path (positional) with --from-latents"
+            )
         if not args.from_latents.is_file():
             raise SystemExit(f"missing latents bundle: {args.from_latents}")
         generate_from_latents(
-            args.from_latents, out, vendor_root,
+            args.from_latents,
+            out,
+            vendor_root,
             sparse_attn_backend=args.sparse_attn_backend,
             save_decode=args.save_decode,
             pre_cap=args.pre_cap,
             decimation_target=args.decimation_target,
             texture_size=args.texture_size,
+            confirm_download=args.yes,
         )
         return 0
 
@@ -1049,6 +1433,7 @@ def main(argv: list[str] | None = None) -> int:
         resolution=args.resolution,
         decimation_target=args.decimation_target,
         texture_size=args.texture_size,
+        confirm_download=args.yes,
     )
     return 0
 

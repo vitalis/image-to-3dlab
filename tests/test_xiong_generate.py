@@ -24,6 +24,7 @@ from unittest import mock
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "hunyuan_mlx_xiong_generate.py"
 
+
 def _make_mlx_stubs():
     # mx.clear_cache is the current API; mx.metal.clear_cache is deprecated
     # (MLX 0.31 prints a warning) and deliberately absent here, so a regression
@@ -77,13 +78,20 @@ class OrchestrationTest(unittest.TestCase):
                 raise paint_error
             output.write_bytes(b"fake glb")
 
-        argv = ["xiong_generate.py", "/fake/ref.png", str(tmp / "chest.glb"),
-                "--seed", "42"]
-        with mock.patch.dict(sys.modules, stubs), \
-                mock.patch.object(sys, "argv", argv), \
-                mock.patch.object(mod, "run_shape", fake_run_shape), \
-                mock.patch.object(mod, "run_remesh", fake_run_remesh), \
-                mock.patch.object(mod, "run_paint", fake_run_paint):
+        argv = [
+            "xiong_generate.py",
+            "/fake/ref.png",
+            str(tmp / "chest.glb"),
+            "--seed",
+            "42",
+        ]
+        with (
+            mock.patch.dict(sys.modules, stubs),
+            mock.patch.object(sys, "argv", argv),
+            mock.patch.object(mod, "run_shape", fake_run_shape),
+            mock.patch.object(mod, "run_remesh", fake_run_remesh),
+            mock.patch.object(mod, "run_paint", fake_run_paint),
+        ):
             mod.main()
         return calls
 
@@ -91,41 +99,87 @@ class OrchestrationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td_s:
             td = Path(td_s)
             calls = self._run_main(td, None)
-            self.assertTrue(calls["cache_cleared_before_paint"],
-                            "MLX cache must be released before the paint child starts")
+            self.assertTrue(
+                calls["cache_cleared_before_paint"],
+                "MLX cache must be released before the paint child starts",
+            )
             out = td / "chest.glb"
             obj = td / "chest_shape.obj"
             manifest_path = td / "chest.json"  # <stem>.json per production code
             self.assertTrue(out.is_file(), "output GLB not written")
             self.assertTrue(obj.is_file(), "shape OBJ not exported")
             m = json.loads(manifest_path.read_text())
-            self.assertEqual(m["vertices"], 1234, "vertex count lost across the mesh release")
-            self.assertEqual(m["faces"], 5678, "face count lost across the mesh release")
+            self.assertEqual(
+                m["vertices"], 1234, "vertex count lost across the mesh release"
+            )
+            self.assertEqual(
+                m["faces"], 5678, "face count lost across the mesh release"
+            )
             self.assertEqual(m["parameters"]["seed"], 42)
             self.assertEqual(Path(m["output"]).name, "chest.glb")
             self.assertEqual(m["schema_version"], 1)
+            prov = json.loads((td / "chest.provenance.json").read_text())
+            self.assertIn("license", prov)
+            self.assertTrue(prov["license"]["name"])
+            self.assertEqual(prov["model"]["backend"], "hunyuan-mlx-xiong")
+            self.assertIsNone(prov["input"]["sha256"])
 
     def test_paint_failure_propagates_without_success_manifest(self):
         with tempfile.TemporaryDirectory() as td_s:
             td = Path(td_s)
-            argv = ["xiong_generate.py", "/fake/ref.png", str(td / "chest.glb"), "--seed", "42"]
-            with mock.patch.dict(sys.modules, _make_mlx_stubs()), \
-                    mock.patch.object(sys, "argv", argv):
+            argv = [
+                "xiong_generate.py",
+                "/fake/ref.png",
+                str(td / "chest.glb"),
+                "--seed",
+                "42",
+            ]
+            with (
+                mock.patch.dict(sys.modules, _make_mlx_stubs()),
+                mock.patch.object(sys, "argv", argv),
+            ):
                 mod = load_script()
                 mesh = FakeMesh(10, 10)
 
                 def boom(*a, **k):
                     raise RuntimeError("paint stage exploded")
 
-                with mock.patch.object(mod, "run_shape", lambda *a, **k: mesh), \
-                        mock.patch.object(mod, "run_remesh", lambda m, t, t0: (m, False)), \
-                        mock.patch.object(mod, "run_paint", boom):
+                with (
+                    mock.patch.object(mod, "run_shape", lambda *a, **k: mesh),
+                    mock.patch.object(mod, "run_remesh", lambda m, t, t0: (m, False)),
+                    mock.patch.object(mod, "run_paint", boom),
+                ):
                     with self.assertRaisesRegex(RuntimeError, "paint stage exploded"):
                         mod.main()
-            self.assertFalse((td / "chest.json").exists(),
-                             "success manifest written despite paint failure")
-            self.assertTrue((td / "chest_shape.obj").is_file(),
-                            "shape OBJ should survive a paint failure")
+            self.assertFalse(
+                (td / "chest.json").exists(),
+                "success manifest written despite paint failure",
+            )
+            self.assertFalse((td / "chest.provenance.json").exists())
+            self.assertTrue(
+                (td / "chest_shape.obj").is_file(),
+                "shape OBJ should survive a paint failure",
+            )
+
+
+class PaintPathTest(unittest.TestCase):
+    def test_two_outputs_do_not_share_a_paint_folder(self):
+        mod = load_script()
+        one = mod.paint_work_dir(Path("/tmp/runs/one.glb"))
+        two = mod.paint_work_dir(Path("/tmp/runs/two.glb"))
+        self.assertNotEqual(one, two)
+        self.assertEqual(one.name, "one__paint")
+        env = mod.paint_env(
+            Path("/tmp/mesh.obj"),
+            Path("/tmp/in.png"),
+            Path("/tmp/runs/one.glb"),
+            0,
+            512,
+            15,
+            4096,
+        )
+        self.assertEqual(env["PAINT_OUT"], str(one.resolve()))
+        self.assertNotIn(str(mod.PAINT_ROOT / "outputs"), env["PAINT_OUT"])
 
 
 if __name__ == "__main__":

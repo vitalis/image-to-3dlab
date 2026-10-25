@@ -59,7 +59,9 @@ def load_payload(path: Path, torch_module) -> dict:
         )
     geometry = torch_module.load(geometry_path, weights_only=False)
     merged = dict(geometry)
-    merged.update({key: value for key, value in payload.items() if key != "geometry_ref"})
+    merged.update(
+        {key: value for key, value in payload.items() if key != "geometry_ref"}
+    )
     return merged
 
 
@@ -70,14 +72,23 @@ def build_to_glb_kwargs(payload: dict, args: argparse.Namespace) -> dict:
     upstream docstring says "target number of vertices for mesh simplification", while the
     port's own flag is named `--bake-target-faces` and feeds a face count straight into it.
     That unit confusion propagated into our manifests; this script does not repeat it.
+
+    A legacy cache stores ``layout`` and ``voxel_size``. A clean-port Stage-3 cache stores
+    ``attr_layout`` and ``res`` (the clean bake passes that as ``grid_size``).
     """
+    if "attr_layout" in payload and "res" in payload:
+        layout = payload["attr_layout"]
+        sizing = {"grid_size": int(payload["res"])}
+    else:
+        layout = payload["layout"]
+        sizing = {"voxel_size": payload["voxel_size"]}
     return {
         "vertices": payload["vertices"],
         "faces": payload["faces"],
         "attr_volume": payload["attrs"],
         "coords": payload["coords"],
-        "attr_layout": payload["layout"],
-        "voxel_size": payload["voxel_size"],
+        "attr_layout": layout,
+        **sizing,
         "aabb": [[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
         "decimation_target": args.decimation_target,
         "texture_size": args.texture_size,
@@ -95,7 +106,9 @@ def summarise(payload: dict) -> str:
     )
 
 
-def replace_geometry_from_glb(payload: dict, glb_path: Path, torch_module, trimesh_module):
+def replace_geometry_from_glb(
+    payload: dict, glb_path: Path, torch_module, trimesh_module
+):
     """Use an accepted GLB mesh while retaining this cache's voxel material field."""
     mesh = trimesh_module.load(str(glb_path), force="mesh", process=False)
     if len(mesh.vertices) == 0 or len(mesh.faces) == 0:
@@ -125,14 +138,17 @@ def main() -> int:
     parser.add_argument("decode", type=Path, help="cached decode from --dump-decode")
     parser.add_argument("output", type=Path, help="GLB to write")
     parser.add_argument(
-        "--remesh", action="store_true",
+        "--remesh",
+        action="store_true",
         help="use to_glb's Branch 2 (dual-contouring rebuild). The reference demo has this "
-             "ON and hardcoded; Branch 1 (clean+simplify) is what we have always run",
+        "ON and hardcoded; Branch 1 (clean+simplify) is what we have always run",
     )
     parser.add_argument("--remesh-band", type=float, default=1.0)
     parser.add_argument("--remesh-project", type=float, default=0.0)
     parser.add_argument(
-        "--decimation-target", type=int, default=500_000,
+        "--decimation-target",
+        type=int,
+        default=500_000,
         help="target VERTICES (not faces). Demo slider default is 500000",
     )
     parser.add_argument("--texture-size", type=int, default=3072)
@@ -142,14 +158,17 @@ def main() -> int:
         help="preview on an accepted GLB mesh while retaining this cache's material field",
     )
     parser.add_argument(
-        "--no-webp", action="store_true",
+        "--no-webp",
+        action="store_true",
         help="skip WebP texture compression. The reference exports with it, and its "
-             "EXT_texture_webp is how we identified which pipeline made the controls",
+        "EXT_texture_webp is how we identified which pipeline made the controls",
     )
     args = parser.parse_args()
 
     if not args.decode.is_file():
-        parser.error(f"{args.decode} does not exist — run generate.py --dump-decode first")
+        parser.error(
+            f"{args.decode} does not exist — run generate.py --dump-decode first"
+        )
 
     import o_voxel
     import torch
@@ -164,7 +183,9 @@ def main() -> int:
     print(f"Loaded decode: {summarise(payload)}")
     if args.geometry_glb:
         print(f"Preview geometry: {args.geometry_glb}")
-    print(f"Branch: {'2 (remesh/DC rebuild)' if args.remesh else '1 (clean + simplify)'}")
+    print(
+        f"Branch: {'2 (remesh/DC rebuild)' if args.remesh else '1 (clean + simplify)'}"
+    )
 
     started = time.time()
     glb = o_voxel.postprocess.to_glb(**build_to_glb_kwargs(payload, args))

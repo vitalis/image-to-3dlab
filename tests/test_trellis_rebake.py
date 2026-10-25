@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -34,17 +35,25 @@ patch = _load("patch_dump_decode", "patch_trellis_dump_decode.py")
 
 # --- the to_glb argument mapping ---------------------------------------------------
 
+
 def _args(**kw):
     defaults = {
-        "decimation_target": 500_000, "texture_size": 3072,
-        "remesh": False, "remesh_band": 1.0, "remesh_project": 0.0,
+        "decimation_target": 500_000,
+        "texture_size": 3072,
+        "remesh": False,
+        "remesh_band": 1.0,
+        "remesh_project": 0.0,
     }
     return argparse.Namespace(**{**defaults, **kw})
 
 
 PAYLOAD = {
-    "vertices": "V", "faces": "F", "attrs": "A",
-    "coords": "C", "layout": "L", "voxel_size": 0.5,
+    "vertices": "V",
+    "faces": "F",
+    "attrs": "A",
+    "coords": "C",
+    "layout": "L",
+    "voxel_size": 0.5,
 }
 
 
@@ -59,11 +68,48 @@ def test_maps_every_payload_field_to_its_to_glb_name():
     assert kwargs["voxel_size"] == 0.5
 
 
+def test_a_clean_port_stage3_payload_uses_grid_size():
+    """The real Stage-3 builder's clean schema, not a hand-typed copy of its keys."""
+    import torch
+
+    stage3 = _load("trellis_stage3_for_rebake", "trellis_stage3.py")
+
+    class _Voxel:
+        feats = torch.ones((2, 4))
+        coords = torch.tensor([[0, 1, 2, 3], [0, 4, 5, 6]])
+
+    geometry = {
+        "vertices": "V",
+        "faces": "F",
+        "attrs": "old",
+        "coords": "old",
+        "attr_layout": {"base_color": slice(0, 3)},
+        "res": 256,
+    }
+    bundle = {
+        "shape_slat_feats": torch.zeros((2, 4)),
+        "coords": torch.zeros((2, 4), dtype=torch.int32),
+        "res": 512,
+        "pipeline_type": "512",
+        "images": ["in.png"],
+    }
+    payload = stage3.build_material_payload(
+        geometry, _Voxel(), bundle, 3, {"steps": 12}
+    )
+    kwargs = rebake.build_to_glb_kwargs(payload, _args())
+    assert kwargs["attr_layout"] == {"base_color": slice(0, 3)}
+    assert kwargs["grid_size"] == 512
+    assert "voxel_size" not in kwargs
+
+
 def test_decimation_target_passes_through_unconverted():
     """It is a VERTEX budget. Any face/vertex arithmetic here would repeat the old bug."""
-    assert rebake.build_to_glb_kwargs(PAYLOAD, _args(decimation_target=500_000))[
-        "decimation_target"
-    ] == 500_000
+    assert (
+        rebake.build_to_glb_kwargs(PAYLOAD, _args(decimation_target=500_000))[
+            "decimation_target"
+        ]
+        == 500_000
+    )
 
 
 def test_remesh_defaults_off_but_is_expressible():
@@ -159,13 +205,13 @@ def test_existing_glb_geometry_replaces_only_vertices_and_faces():
 
 # --- the generate.py patch ---------------------------------------------------------
 
-GENERATE = '''\
+GENERATE = """\
     parser.add_argument("--remesh-band", type=float, default=1.0)
     parser.add_argument("--remesh-project", type=float, default=0.9)
 
     mesh_out = outputs[0] if isinstance(outputs, list) else outputs
     t_gen = time.time() - t0
-'''
+"""
 
 
 def test_detects_absent_then_applied():
@@ -194,6 +240,20 @@ def test_half_patched_source_is_refused():
 def test_missing_anchor_raises():
     with pytest.raises(RuntimeError, match="anchor missing"):
         patch.state("def main():\n    pass\n")
+
+
+def test_check_without_the_quality_patch_does_not_traceback(
+    tmp_path, monkeypatch, capsys
+):
+    path = tmp_path / "generate.py"
+    path.write_text("def main():\n    pass\n")
+    monkeypatch.setattr(
+        sys, "argv", ["patch_trellis_dump_decode.py", "--check", "--path", str(path)]
+    )
+    assert patch.main() == 1
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.err
+    assert "quality" in (captured.err + captured.out).lower()
 
 
 def test_dump_imports_what_it_uses():

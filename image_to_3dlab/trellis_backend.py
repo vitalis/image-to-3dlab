@@ -34,10 +34,17 @@ def read_glb(path: Path) -> tuple[dict, list[list], int, int]:
         json_index = next(i for i, c in enumerate(chunks) if c[0] == _GLB_JSON_CHUNK)
     except StopIteration as exc:
         raise RuntimeError(f"{path} has no glTF JSON chunk") from exc
-    return json.loads(chunks[json_index][1].decode("utf-8")), chunks, json_index, version
+    return (
+        json.loads(chunks[json_index][1].decode("utf-8")),
+        chunks,
+        json_index,
+        version,
+    )
 
 
-def write_glb(path: Path, gltf: dict, chunks: list[list], json_index: int, version: int) -> None:
+def write_glb(
+    path: Path, gltf: dict, chunks: list[list], json_index: int, version: int
+) -> None:
     """Write chunks back out with `gltf` replacing the JSON chunk.
 
     Chunks must be padded to a 4-byte boundary — JSON with spaces, binary with zeros —
@@ -214,16 +221,38 @@ def build_generate_command(
     return command
 
 
+_PIPELINE_TYPES = {"512", "1024", "1024_cascade"}
+_TEXTURE_SIZES = {512, 1024, 2048}
+_MATERIAL_MODES = {"matte", "pbr"}
+
+
+def check_choices(options: TrellisOptions) -> None:
+    """Refuse a manifest typo before the long run. The CLI flag does this; a manifest did not."""
+    if options.pipeline_type not in _PIPELINE_TYPES:
+        raise ValueError(
+            f"pipeline type must be one of {', '.join(sorted(_PIPELINE_TYPES))}, "
+            f"got {options.pipeline_type!r}"
+        )
+    if options.texture_size not in _TEXTURE_SIZES:
+        raise ValueError(
+            f"texture size must be one of {', '.join(str(n) for n in sorted(_TEXTURE_SIZES))}, "
+            f"got {options.texture_size!r}"
+        )
+    if options.material_mode not in _MATERIAL_MODES:
+        raise ValueError(
+            f"material mode must be 'matte' or 'pbr', got {options.material_mode!r}"
+        )
+
+
 def _prepare_rgba(image: Path, destination: Path) -> Path:
     from PIL import Image
 
-    from image_to_3dlab.matte import cut_out
+    from image_to_3dlab.matte import cut_out, is_matted
 
     source = Image.open(image).convert("RGBA")
-    alpha = source.getchannel("A")
-    if alpha.getextrema()[0] == 255:
+    if not is_matted(source):
         source, _ = cut_out(source)
-    if source.getchannel("A").getextrema()[0] == 255:
+    if not is_matted(source):
         raise RuntimeError(
             "TRELLIS preprocessing did not produce a transparent foreground"
         )
@@ -234,6 +263,7 @@ def _prepare_rgba(image: Path, destination: Path) -> Path:
 def generate_trellis(
     image: Path | Sequence[Path], output_dir: Path, options: TrellisOptions
 ) -> TrellisResult:
+    check_choices(options)
     repo = options.repo.expanduser().resolve()
     python = repo / ".venv" / "bin" / "python"
     generator = repo / "generate.py"
@@ -267,7 +297,9 @@ def generate_trellis(
     output_base = output_dir / f"{views[0].stem}_trellis2"
     cpu_basecolor = Path(f"{output_base}_basecolor.png")
     cpu_basecolor.unlink(missing_ok=True)
-    command = build_generate_command(python, generator, prepared_views, output_base, options)
+    command = build_generate_command(
+        python, generator, prepared_views, output_base, options
+    )
     env = os.environ.copy()
     env["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
     if options.pre_simplify_cap is not None:

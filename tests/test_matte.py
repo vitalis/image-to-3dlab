@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 from PIL import Image
 
 from image_to_3dlab.matte import is_matted
@@ -55,13 +56,13 @@ def test_falling_back_says_how_to_get_lite():
 
 def test_edge_pixels_take_the_subjects_colour_not_the_backdrops():
     rgba = np.zeros((5, 5, 4), dtype=np.uint8)
-    rgba[:, :3] = (200, 30, 30, 255)            # solid red subject, left
-    rgba[:, 3] = (40, 40, 40, 128)              # soft edge still carrying grey backdrop
-    rgba[:, 4] = (40, 40, 40, 0)                # backdrop
+    rgba[:, :3] = (200, 30, 30, 255)  # solid red subject, left
+    rgba[:, 3] = (40, 40, 40, 128)  # soft edge still carrying grey backdrop
+    rgba[:, 4] = (40, 40, 40, 0)  # backdrop
     out = mt.clean_edges(rgba)
-    assert tuple(out[2, 3]) == (200, 30, 30, 128)   # red now, same transparency
-    assert (out[..., 3] == rgba[..., 3]).all()      # alpha never changes
-    assert (out[:, :3] == rgba[:, :3]).all()        # solid pixels untouched
+    assert tuple(out[2, 3]) == (200, 30, 30, 128)  # red now, same transparency
+    assert (out[..., 3] == rgba[..., 3]).all()  # alpha never changes
+    assert (out[:, :3] == rgba[:, :3]).all()  # solid pixels untouched
 
 
 def test_edge_cleaning_reaches_only_so_far():
@@ -78,6 +79,22 @@ def test_the_lite_download_is_pinned_to_a_known_file():
     assert mt.LITE_BYTES == 224_005_088 and len(mt.LITE_MD5) == 32
 
 
+def test_a_missing_remover_is_not_downloaded(tmp_path, monkeypatch):
+    import sys
+    import types
+
+    monkeypatch.setattr(mt, "model_home", lambda: tmp_path)
+    monkeypatch.setitem(
+        sys.modules,
+        "rembg",
+        types.SimpleNamespace(
+            new_session=lambda name: (_ for _ in ()).throw(AssertionError("downloaded"))
+        ),
+    )
+    with pytest.raises(RuntimeError, match="Setup & Status"):
+        mt.new_session("u2net")
+
+
 def test_every_rembg_looks_in_the_same_model_folder(tmp_path, monkeypatch):
     # Seen on an NVIDIA pod: TRELLIS's newer rembg kept models in ~/.rembg/models, so it
     # could not see BiRefNet-lite in ~/.u2net and quietly fetched u2net mid-generation.
@@ -85,9 +102,14 @@ def test_every_rembg_looks_in_the_same_model_folder(tmp_path, monkeypatch):
     import types
 
     seen = {}
-    fake = types.SimpleNamespace(new_session=lambda name: seen.setdefault("home", __import__("os").environ.get("U2NET_HOME")))
+    fake = types.SimpleNamespace(
+        new_session=lambda name: seen.setdefault(
+            "home", __import__("os").environ.get("U2NET_HOME")
+        )
+    )
     monkeypatch.setitem(sys.modules, "rembg", fake)
     monkeypatch.delenv("U2NET_HOME", raising=False)
     monkeypatch.setattr(mt, "model_home", lambda: tmp_path)
+    (tmp_path / "u2net.onnx").write_bytes(b"present")
     mt.new_session("u2net")
     assert seen["home"] == str(tmp_path)

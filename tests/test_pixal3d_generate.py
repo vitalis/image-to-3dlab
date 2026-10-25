@@ -34,8 +34,14 @@ px = _load()
 
 def test_a_matted_image_uses_the_single_view_path():
     command = px.build_command(
-        Path("fox.png"), Path("out.glb"), res=1024, seed=42, fov=px.DEFAULT_FOV,
-        models=Path("/m"), cli=Path("/bin/trellis-cli"), matted=True,
+        Path("fox.png"),
+        Path("out.glb"),
+        res=1024,
+        seed=42,
+        fov=px.DEFAULT_FOV,
+        models=Path("/m"),
+        cli=Path("/bin/trellis-cli"),
+        matted=True,
     )
     assert "--sv-image" in command
     assert command[command.index("--sv-image") + 1] == "fox.png"
@@ -48,8 +54,14 @@ def test_an_unmatted_image_is_handed_to_birefnet():
     # It passed because `has_alpha` never returned False, so the branch it describes had
     # never once been executed. A test can only pin behaviour something actually runs.
     command = px.build_command(
-        Path("fox.jpg"), Path("out.glb"), res=1024, seed=42, fov=px.DEFAULT_FOV,
-        models=Path("/m"), cli=Path("/bin/trellis-cli"), matted=False,
+        Path("fox.jpg"),
+        Path("out.glb"),
+        res=1024,
+        seed=42,
+        fov=px.DEFAULT_FOV,
+        models=Path("/m"),
+        cli=Path("/bin/trellis-cli"),
+        matted=False,
     )
     assert "--sv-image" in command
     assert command[command.index("--bg-removal") + 1] == "birefnet"
@@ -57,8 +69,14 @@ def test_an_unmatted_image_is_handed_to_birefnet():
 
 def test_the_gauge_camera_and_weight_family_are_always_passed():
     command = px.build_command(
-        Path("fox.png"), Path("out.glb"), 1024, 42, px.DEFAULT_FOV,
-        Path("/m"), Path("/bin/trellis-cli"), True,
+        Path("fox.png"),
+        Path("out.glb"),
+        1024,
+        42,
+        px.DEFAULT_FOV,
+        Path("/m"),
+        Path("/bin/trellis-cli"),
+        True,
     )
     assert command[command.index("--fov") + 1] == str(px.DEFAULT_FOV)
     assert command[command.index("--pixal3d-weights") + 1] == "sv"
@@ -75,7 +93,10 @@ def test_the_default_fov_is_twenty_degrees():
     "line,expected",
     [
         ("[2/6] SS proj conditioning + flow", ("ss", 33)),
-        ("[3/6] shape SLAT flow (LR 512 -> upsample -> HR 1024 cascade)", ("shape", 50)),
+        (
+            "[3/6] shape SLAT flow (LR 512 -> upsample -> HR 1024 cascade)",
+            ("shape", 50),
+        ),
         ("[6/6] write out.glb", ("write", 100)),
     ],
 )
@@ -93,16 +114,21 @@ def test_the_bar_never_reaches_a_hundred_before_the_run_ends():
 def test_ordinary_output_is_not_a_stage():
     assert px.stage_from_banner("done in 349.9s -> out.glb") is None
     assert px.stage_from_banner("[cond] flow (load + runner + sampler) (77.6s)") is None
-    assert px.stage_from_banner("ggml_metal_library_compile_pipeline: loaded kernel") is None
+    assert (
+        px.stage_from_banner("ggml_metal_library_compile_pipeline: loaded kernel")
+        is None
+    )
 
 
 def test_kernel_chatter_is_dropped_on_every_backend():
     """ggml names its kernels after the backend, and a run emits hundreds of these lines.
     Left in, they bury the six stage banners the progress panel reads."""
-    for line in ("ggml_metal_library_compile_pipeline: loaded kernel",
-                 "ggml_hip_init: found 1 devices",
-                 "ggml_cuda_init: found 1 CUDA devices",
-                 "  loaded kernel flash_attn_ext"):
+    for line in (
+        "ggml_metal_library_compile_pipeline: loaded kernel",
+        "ggml_hip_init: found 1 devices",
+        "ggml_cuda_init: found 1 CUDA devices",
+        "  loaded kernel flash_attn_ext",
+    ):
         assert px.kernel_noise(line) is True
     for line in ("[3/6] flow (sampling)", "done in 349.9s -> out.glb", ""):
         assert px.kernel_noise(line) is False
@@ -141,8 +167,14 @@ def test_guidance_strength_is_always_passed_and_defaults_to_ten():
     states it on every run.
     """
     command = px.build_command(
-        Path("fox.png"), Path("out.glb"), 1024, 42, px.DEFAULT_FOV,
-        Path("/m"), Path("/bin/trellis-cli"), True,
+        Path("fox.png"),
+        Path("out.glb"),
+        1024,
+        42,
+        px.DEFAULT_FOV,
+        Path("/m"),
+        Path("/bin/trellis-cli"),
+        True,
     )
     assert command[command.index("--gss") + 1] == "10.0"
     assert px.DEFAULT_GSS == 10.0
@@ -151,14 +183,28 @@ def test_guidance_strength_is_always_passed_and_defaults_to_ten():
 def test_shape_guidance_is_omitted_unless_asked_for():
     """`--gsh` has no tested value here, so an unset one must leave the runtime default."""
     without = px.build_command(
-        Path("fox.png"), Path("out.glb"), 1024, 42, px.DEFAULT_FOV,
-        Path("/m"), Path("/bin/trellis-cli"), True,
+        Path("fox.png"),
+        Path("out.glb"),
+        1024,
+        42,
+        px.DEFAULT_FOV,
+        Path("/m"),
+        Path("/bin/trellis-cli"),
+        True,
     )
     assert "--gsh" not in without
 
     with_gsh = px.build_command(
-        Path("fox.png"), Path("out.glb"), 1024, 42, px.DEFAULT_FOV,
-        Path("/m"), Path("/bin/trellis-cli"), True, gss=10.0, gsh=3.5,
+        Path("fox.png"),
+        Path("out.glb"),
+        1024,
+        42,
+        px.DEFAULT_FOV,
+        Path("/m"),
+        Path("/bin/trellis-cli"),
+        True,
+        gss=10.0,
+        gsh=3.5,
     )
     assert with_gsh[with_gsh.index("--gsh") + 1] == "3.5"
     assert with_gsh[-1] == "out.glb"  # output stays positional and last
@@ -182,7 +228,9 @@ def test_paths_reach_the_cli_absolute(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(px, "readiness", lambda *a, **k: {"ready": True})
     monkeypatch.setattr(px.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(
-        sys, "argv", ["pixal3d_generate.py", "gnome.png", "out/gnome.glb"],
+        sys,
+        "argv",
+        ["pixal3d_generate.py", "gnome.png", "out/gnome.glb"],
     )
 
     with pytest.raises(SystemExit):
@@ -206,7 +254,10 @@ def test_paths_reach_the_cli_absolute(tmp_path, monkeypatch, capsys):
 
 def _image(tmp_path, mode, alpha=None, name="i.png"):
     from PIL import Image
-    im = Image.new(mode, (64, 64), (200, 120, 60) if mode == "RGB" else (200, 120, 60, 255))
+
+    im = Image.new(
+        mode, (64, 64), (200, 120, 60) if mode == "RGB" else (200, 120, 60, 255)
+    )
     if alpha is not None:
         im.putalpha(Image.fromarray(alpha))
     path = tmp_path / name
@@ -217,6 +268,7 @@ def _image(tmp_path, mode, alpha=None, name="i.png"):
 def test_an_opaque_alpha_channel_does_not_count_as_matted(tmp_path):
     """The actual bug: RGBA, no transparency, so it must still be sent to BiRefNet."""
     import numpy as np
+
     noise = np.random.default_rng(0).integers(219, 256, (64, 64), dtype=np.uint8)
     assert px.has_alpha(_image(tmp_path, "RGBA", noise)) is False
 
@@ -224,8 +276,9 @@ def test_an_opaque_alpha_channel_does_not_count_as_matted(tmp_path):
 def test_a_real_cutout_counts_as_matted(tmp_path):
     """A genuine matte leaves large regions fully transparent, corners included."""
     import numpy as np
+
     a = np.zeros((64, 64), dtype=np.uint8)
-    a[16:48, 16:48] = 255            # subject in the middle, background cut away
+    a[16:48, 16:48] = 255  # subject in the middle, background cut away
     assert px.has_alpha(_image(tmp_path, "RGBA", a)) is True
 
 
@@ -236,8 +289,9 @@ def test_an_image_with_no_alpha_channel_is_not_matted(tmp_path):
 def test_a_barely_transparent_edge_is_not_mistaken_for_a_matte(tmp_path):
     """Antialiasing or a soft vignette is not a cutout, and must not skip BiRefNet."""
     import numpy as np
+
     a = np.full((64, 64), 255, dtype=np.uint8)
-    a[0, 0] = 0                       # a single transparent pixel
+    a[0, 0] = 0  # a single transparent pixel
     assert px.has_alpha(_image(tmp_path, "RGBA", a)) is False
 
 
@@ -249,7 +303,9 @@ def test_an_unmatted_image_still_uses_the_single_view_path():
     `has_alpha` never returned False until the alpha check was fixed on 2026-09-22 --
     so this branch had been dead and broken at the same time.
     """
-    command = px.build_command(Path("i.png"), Path("o.glb"), 1024, 42, 0.349, matted=False)
+    command = px.build_command(
+        Path("i.png"), Path("o.glb"), 1024, 42, 0.349, matted=False
+    )
     assert "--sv-image" in command
     # BiRefNet does the cutting, since we have not done it ourselves.
     assert command[command.index("--bg-removal") + 1] == "birefnet"
@@ -259,7 +315,9 @@ def test_an_unmatted_image_still_uses_the_single_view_path():
 
 
 def test_a_matted_image_is_not_sent_through_birefnet_again():
-    command = px.build_command(Path("i.png"), Path("o.glb"), 1024, 42, 0.349, matted=True)
+    command = px.build_command(
+        Path("i.png"), Path("o.glb"), 1024, 42, 0.349, matted=True
+    )
     assert "--sv-image" in command
     assert "--bg-removal" not in command
 
@@ -277,6 +335,10 @@ def test_matting_writes_a_real_cutout_beside_the_source(tmp_path, monkeypatch):
     import numpy as np
     from PIL import Image
 
+    home = tmp_path / "removers"
+    home.mkdir()
+    (home / "u2net.onnx").write_bytes(b"not-a-model")
+    monkeypatch.setenv("U2NET_HOME", str(home))
     source = tmp_path / "fox.png"
     Image.new("RGB", (32, 32), (200, 120, 60)).save(source)
 
@@ -293,6 +355,18 @@ def test_matting_writes_a_real_cutout_beside_the_source(tmp_path, monkeypatch):
     assert matted.is_file()
     # And the result must satisfy our own matte test, or we have solved nothing.
     assert px.has_alpha(matted) is True
+
+
+def test_matting_refuses_when_the_remover_file_is_missing(tmp_path, monkeypatch):
+    from PIL import Image
+
+    monkeypatch.setenv("U2NET_HOME", str(tmp_path / "empty"))
+    (tmp_path / "empty").mkdir()
+    monkeypatch.setattr(px, "_rembg_remove", lambda image: pytest.fail("session"))
+    source = tmp_path / "plain.png"
+    Image.new("RGB", (8, 8), "white").save(source)
+    with pytest.raises(SystemExit, match="bootstrap_matte.py"):
+        px.matte(source)
 
 
 def test_the_matte_is_named_so_it_is_obvious_it_is_not_the_original(tmp_path):
@@ -315,11 +389,13 @@ def test_the_matted_path_reaches_the_cli_absolute(tmp_path, monkeypatch):
         recorded["command"] = command
         raise SystemExit(0)
 
-    monkeypatch.setattr(px, "has_alpha", lambda _: False)          # forces the matte branch
+    monkeypatch.setattr(px, "has_alpha", lambda _: False)  # forces the matte branch
     monkeypatch.setattr(px, "matte", lambda p, d=None: (px.matte_path(p), "u2net"))
     monkeypatch.setattr(px, "readiness", lambda *a, **k: {"ready": True})
     monkeypatch.setattr(px.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(sys, "argv", ["pixal3d_generate.py", "gnome.png", "out/gnome.glb"])
+    monkeypatch.setattr(
+        sys, "argv", ["pixal3d_generate.py", "gnome.png", "out/gnome.glb"]
+    )
     with pytest.raises(SystemExit):
         px.main()
 
@@ -342,13 +418,33 @@ def test_the_manifest_carries_the_licence_from_the_catalogue(tmp_path):
     image.write_bytes(b"orc")
     output = tmp_path / "orc.glb"
     output.write_bytes(b"glb")
-    record = px.manifest(image, output, res=1024, seed=42, fov=0.35, gss=10.0, gsh=None,
-                         matted=True, matted_here=False, seconds=12.34)
+    record = px.manifest(
+        image,
+        output,
+        res=1024,
+        seed=42,
+        fov=0.35,
+        gss=10.0,
+        gsh=None,
+        matted=True,
+        matted_here=False,
+        seconds=12.34,
+    )
     catalogue = resolve("pixal3d")
     assert record["backend"] == "pixal3d"
-    assert record["license"] == {"name": catalogue.license_name, "url": catalogue.license_url}
-    assert record["parameters"] == {"res": 1024, "seed": 42, "fov": 0.35, "gss": 10.0,
-                                    "gsh": None, "matted": True, "steps": 12}
+    assert record["license"] == {
+        "name": catalogue.license_name,
+        "url": catalogue.license_url,
+    }
+    assert record["parameters"] == {
+        "res": 1024,
+        "seed": 42,
+        "fov": 0.35,
+        "gss": 10.0,
+        "gsh": None,
+        "matted": True,
+        "steps": 12,
+    }
     assert len(record["input"]["sha256"]) == 64
     assert len(record["output"]["sha256"]) == 64
     assert record["timings_seconds"]["total"] == 12.3
@@ -359,12 +455,34 @@ def test_background_removal_is_named_only_when_this_run_did_it(tmp_path):
     image.write_bytes(b"a")
     output = tmp_path / "a.glb"
     output.write_bytes(b"b")
-    ran = px.manifest(image, output, res=1024, seed=1, fov=0.35, gss=10.0, gsh=None,
-                      matted=True, matted_here=True, seconds=1.0,
-                      matte_model="birefnet-general-lite")
-    given = px.manifest(image, output, res=1024, seed=1, fov=0.35, gss=10.0, gsh=None,
-                        matted=True, matted_here=False, seconds=1.0)
-    assert [c["component"] for c in ran["components"]] == ["rembg/birefnet-general-lite"]
+    ran = px.manifest(
+        image,
+        output,
+        res=1024,
+        seed=1,
+        fov=0.35,
+        gss=10.0,
+        gsh=None,
+        matted=True,
+        matted_here=True,
+        seconds=1.0,
+        matte_model="birefnet-general-lite",
+    )
+    given = px.manifest(
+        image,
+        output,
+        res=1024,
+        seed=1,
+        fov=0.35,
+        gss=10.0,
+        gsh=None,
+        matted=True,
+        matted_here=False,
+        seconds=1.0,
+    )
+    assert [c["component"] for c in ran["components"]] == [
+        "rembg/birefnet-general-lite"
+    ]
     assert ran["components"][0]["license"] == "MIT (BiRefNet)"
     assert given["components"] == []
 
@@ -383,8 +501,18 @@ def test_a_successful_run_writes_its_manifest_beside_the_glb(tmp_path, monkeypat
             # What trellis-cli leaves: a GLB facing -Z, and the camera it staged.
             output.write_bytes(make_glb([[0.1, 0.2, 0.3]]))
             views.mkdir()
-            (views / "transforms.json").write_text(json.dumps(
-                {"frames": [{"file_path": "input.png", "transform_matrix": np.eye(4).tolist()}]}))
+            (views / "transforms.json").write_text(
+                json.dumps(
+                    {
+                        "frames": [
+                            {
+                                "file_path": "input.png",
+                                "transform_matrix": np.eye(4).tolist(),
+                            }
+                        ]
+                    }
+                )
+            )
             return 0
 
     monkeypatch.setattr(px, "has_alpha", lambda _: True)
@@ -439,6 +567,7 @@ def test_fewer_steps_on_an_unpatched_source_is_refused(tmp_path):
 
 def test_a_binary_older_than_the_patch_is_refused(tmp_path):
     import os
+
     source = _flow_source(tmp_path, patched=True)
     cli = tmp_path / "trellis-cli"
     cli.write_text("")
@@ -448,6 +577,7 @@ def test_a_binary_older_than_the_patch_is_refused(tmp_path):
 
 def test_a_rebuilt_patched_binary_is_accepted(tmp_path):
     import os
+
     source = _flow_source(tmp_path, patched=True)
     os.utime(source, (1, 1))
     cli = tmp_path / "trellis-cli"
@@ -513,7 +643,9 @@ def test_a_flow_starting_without_the_override_stops_the_run():
     assert px.steps_not_applied(progress, 8, seen_override=False)
     assert not px.steps_not_applied(progress, 8, seen_override=True)
     assert not px.steps_not_applied(progress, None, seen_override=False)
-    assert not px.steps_not_applied("[2/6] SS proj conditioning", 8, seen_override=False)
+    assert not px.steps_not_applied(
+        "[2/6] SS proj conditioning", 8, seen_override=False
+    )
 
 
 def test_the_manifest_records_the_steps(tmp_path):
@@ -521,13 +653,25 @@ def test_the_manifest_records_the_steps(tmp_path):
     output = tmp_path / "o.glb"
     image.write_bytes(b"i")
     output.write_bytes(b"o")
-    record = px.manifest(image, output, res=1024, seed=42, fov=0.349, gss=10.0, gsh=None,
-                         matted=True, matted_here=False, seconds=1.0, steps=8)
+    record = px.manifest(
+        image,
+        output,
+        res=1024,
+        seed=42,
+        fov=0.349,
+        gss=10.0,
+        gsh=None,
+        matted=True,
+        matted_here=False,
+        seconds=1.0,
+        steps=8,
+    )
     assert record["parameters"]["steps"] == 8
 
 
 def _built(tmp_path, patched):
     import os
+
     source = _flow_source(tmp_path, patched=patched)
     os.utime(source, (1, 1))
     cli = tmp_path / "trellis-cli"
@@ -566,13 +710,29 @@ def test_the_manifest_records_the_licence_class_props_inherit(tmp_path):
     output = tmp_path / "o.glb"
     image.write_bytes(b"i")
     output.write_bytes(b"o")
-    record = px.manifest(image, output, res=1024, seed=42, fov=0.349, gss=10.0, gsh=None,
-                         matted=True, matted_here=False, seconds=1.0)
+    record = px.manifest(
+        image,
+        output,
+        res=1024,
+        seed=42,
+        fov=0.349,
+        gss=10.0,
+        gsh=None,
+        matted=True,
+        matted_here=False,
+        seconds=1.0,
+    )
     profile = LICENSES["pixal3d"]
-    assert record["output"]["classification"] == profile.classification == "commercial-conditional"
+    assert (
+        record["output"]["classification"]
+        == profile.classification
+        == "commercial-conditional"
+    )
     catalogue = resolve("pixal3d")
-    assert (profile.license_name, profile.license_url) == (catalogue.license_name,
-                                                           catalogue.license_url)
+    assert (profile.license_name, profile.license_url) == (
+        catalogue.license_name,
+        catalogue.license_url,
+    )
 
 
 # --- front + back (multi-view) ---------------------------------------------------------------
@@ -580,6 +740,7 @@ def test_the_manifest_records_the_licence_class_props_inherit(tmp_path):
 
 def _cut(width: int, height: int, box):
     from PIL import Image
+
     rgba = np.zeros((height, width, 4), dtype=np.uint8)
     x0, y0, x1, y1 = box
     rgba[y0:y1, x0:x1] = (200, 50, 50, 255)
@@ -602,7 +763,10 @@ def test_a_wide_t_pose_is_fitted_by_its_width_and_stays_inside():
 
 
 def test_front_and_back_views_share_one_rig_half_a_turn_apart(tmp_path):
-    front, back = _cut(400, 400, (150, 40, 250, 360)), _cut(400, 400, (150, 40, 250, 360))
+    front, back = (
+        _cut(400, 400, (150, 40, 250, 360)),
+        _cut(400, 400, (150, 40, 250, 360)),
+    )
     model_dir, paint_dir = tmp_path / "in", tmp_path / "out.svviews"
     px.write_front_back_views(front, back, model_dir, paint_dir)
     for folder, size in ((model_dir, 768), (paint_dir, 768)):
@@ -613,6 +777,7 @@ def test_front_and_back_views_share_one_rig_half_a_turn_apart(tmp_path):
         assert np.allclose(c180, np.diag([-1.0, -1.0, 1.0, 1.0]) @ c0)
         assert rig["camera_angle_x"] == pytest.approx(px.DEFAULT_FOV)
         from PIL import Image
+
         assert Image.open(folder / "view_000.png").size == (size, size)
 
 
@@ -620,13 +785,20 @@ def test_paint_copies_keep_a_bigger_pictures_detail(tmp_path):
     big = _cut(1024, 1024, (400, 50, 620, 980))
     px.write_front_back_views(big, big, tmp_path / "in", tmp_path / "out.svviews")
     from PIL import Image
+
     assert Image.open(tmp_path / "in" / "view_000.png").size == (768, 768)
     assert Image.open(tmp_path / "out.svviews" / "view_000.png").size == (1024, 1024)
 
 
 def test_the_front_back_command_uses_the_views_and_the_multiview_weights():
-    command = px.build_multiview_command(Path("/v"), Path("/o.glb"), res=1024, seed=42,
-                                         models=Path("/mv"), cli=Path("/bin/trellis-cli"))
+    command = px.build_multiview_command(
+        Path("/v"),
+        Path("/o.glb"),
+        res=1024,
+        seed=42,
+        models=Path("/mv"),
+        cli=Path("/bin/trellis-cli"),
+    )
     assert command[command.index("--views") + 1] == "/v"
     assert command[command.index("--pixal3d-weights") + 1] == "mv"
     assert command[command.index("--models") + 1] == "/mv"
@@ -640,8 +812,9 @@ def test_multiview_readiness_checks_the_manifests_files(tmp_path):
     models = tmp_path / "mv"
     models.mkdir()
     names = ["a.gguf", "b.gguf"]
-    (models / "pixal3d-models.json").write_text(json.dumps(
-        {"files": [{"name": n, "required": True} for n in names]}))
+    (models / "pixal3d-models.json").write_text(
+        json.dumps({"files": [{"name": n, "required": True} for n in names]})
+    )
     (models / "a.gguf").write_text("")
     state = px.multiview_readiness(cli, models)
     assert not state["ready"] and state["missing"] == ["b.gguf"]
@@ -668,7 +841,9 @@ def test_a_binary_without_it_runs_as_before(tmp_path):
 
 
 def test_the_dump_flag_goes_before_the_output():
-    command = px.with_dump(["trellis-cli", "--sv-image", "a.png", "out.glb"], Path("out.post.bin"))
+    command = px.with_dump(
+        ["trellis-cli", "--sv-image", "a.png", "out.glb"], Path("out.post.bin")
+    )
     assert command[-1] == "out.glb"
     assert command[-3:-1] == ["--dump-post", "out.post.bin"]
 
@@ -707,8 +882,12 @@ def test_a_normal_run_saves_its_shape(no_rocm):
 
 def test_a_repaint_loads_the_shape_and_saves_nothing(no_rocm):
     """The repaint's shape IS the saved one; writing it again would only invite a mix-up."""
-    env = px.run_env(None, base={}, save_shape=Path("/new.shape.bin"),
-                     load_shape=Path("/old.shape.bin"))
+    env = px.run_env(
+        None,
+        base={},
+        save_shape=Path("/new.shape.bin"),
+        load_shape=Path("/old.shape.bin"),
+    )
     assert env[px.SHAPE_LOAD_ENV] == "/old.shape.bin"
     assert px.SHAPE_SAVE_ENV not in env
 
@@ -722,7 +901,8 @@ def test_stray_shape_variables_in_the_shell_are_dropped(no_rocm):
 def test_the_marker_is_what_the_patch_puts_in_the_binary():
     """shape_supported looks for the load variable's name, which only the patched code holds."""
     spec = importlib.util.spec_from_file_location(
-        "shape_patch", SCRIPT.with_name("patch_pixal3d_shape_reuse.py"))
+        "shape_patch", SCRIPT.with_name("patch_pixal3d_shape_reuse.py")
+    )
     patch = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(patch)
     assert px.SHAPE_LOAD_ENV == patch.LOAD_ENV and px.SHAPE_SAVE_ENV == patch.SAVE_ENV

@@ -31,16 +31,43 @@ def test_pipeline_type_rejects_unknown():
 
 
 def test_demo_resolution_is_1024_cascade():
-    assert gen.pipeline_type_for_resolution(gen.DEMO_PARAMS["resolution"]) == "1024_cascade"
+    assert (
+        gen.pipeline_type_for_resolution(gen.DEMO_PARAMS["resolution"])
+        == "1024_cascade"
+    )
 
 
 # --- sampler params come straight from the demo defaults, as fresh copies ---
 @pytest.mark.parametrize(
     "stage,expected",
     [
-        ("sparse_structure", {"steps": 12, "guidance_strength": 7.5, "guidance_rescale": 0.7, "rescale_t": 5.0}),
-        ("shape_slat", {"steps": 12, "guidance_strength": 7.5, "guidance_rescale": 0.5, "rescale_t": 3.0}),
-        ("tex_slat", {"steps": 12, "guidance_strength": 1.0, "guidance_rescale": 0.0, "rescale_t": 3.0}),
+        (
+            "sparse_structure",
+            {
+                "steps": 12,
+                "guidance_strength": 7.5,
+                "guidance_rescale": 0.7,
+                "rescale_t": 5.0,
+            },
+        ),
+        (
+            "shape_slat",
+            {
+                "steps": 12,
+                "guidance_strength": 7.5,
+                "guidance_rescale": 0.5,
+                "rescale_t": 3.0,
+            },
+        ),
+        (
+            "tex_slat",
+            {
+                "steps": 12,
+                "guidance_strength": 1.0,
+                "guidance_rescale": 0.0,
+                "rescale_t": 3.0,
+            },
+        ),
     ],
 )
 def test_sampler_params_match_demo(stage, expected):
@@ -64,9 +91,9 @@ def test_sampler_params_rejects_unknown_stage():
     [
         ("RGBA", 0, True),
         ("RGBA", 254, True),
-        ("RGBA", 255, False),   # fully opaque = no real foreground mask
+        ("RGBA", 255, False),  # fully opaque = no real foreground mask
         ("RGB", None, False),
-        ("LA", 0, False),       # not RGBA
+        ("LA", 0, False),  # not RGBA
     ],
 )
 def test_alpha_is_transparent(mode, alpha_min, expected):
@@ -126,7 +153,7 @@ def test_border_opaque_fraction_survives_degenerate_input():
 def test_uncut_foreground_message_is_actionable():
     msg = gen.uncut_foreground_message("dog.png", 0.39)
     assert "dog.png" in msg
-    assert "39%" in msg           # the measurement, so the user can judge it
+    assert "39%" in msg  # the measurement, so the user can judge it
     assert "--allow-uncut" in msg  # the override, so it is not a dead end
 
 
@@ -247,7 +274,7 @@ def test_generate_checkpoints_latents_before_decode_failure(monkeypatch, tmp_pat
         coords=torch.tensor([[0, 1, 2, 3]]),
     )
     texture = SimpleNamespace(feats=torch.tensor([[4.0, 5.0]]))
-    monkeypatch.setattr(gen, "load_pipeline", lambda *_args: FakePipeline())
+    monkeypatch.setattr(gen, "load_pipeline", lambda *_args, **_kwargs: FakePipeline())
     monkeypatch.setattr(
         gen,
         "sample_latents_without_decode",
@@ -257,7 +284,9 @@ def test_generate_checkpoints_latents_before_decode_failure(monkeypatch, tmp_pat
     checkpoint = tmp_path / "model_latents.pt"
 
     def fail_decode(*_args, **_kwargs):
-        assert checkpoint.is_file(), "recovery checkpoint must exist before decode starts"
+        assert checkpoint.is_file(), (
+            "recovery checkpoint must exist before decode starts"
+        )
         saved = torch.load(checkpoint, map_location="cpu", weights_only=False)
         assert saved["seed"] == 19
         raise RuntimeError("decode failed")
@@ -280,7 +309,9 @@ def test_generate_checkpoints_latents_before_decode_failure(monkeypatch, tmp_pat
             texture_size=1024,
         )
 
-    assert checkpoint.is_file(), "failed non-debug runs must retain their recovery checkpoint"
+    assert checkpoint.is_file(), (
+        "failed non-debug runs must retain their recovery checkpoint"
+    )
 
 
 def test_generate_removes_temporary_checkpoint_after_success(monkeypatch, tmp_path):
@@ -306,7 +337,7 @@ def test_generate_removes_temporary_checkpoint_after_success(monkeypatch, tmp_pa
         coords=torch.tensor([[0, 1, 2, 3]]),
     )
     texture = SimpleNamespace(feats=torch.tensor([[4.0, 5.0]]))
-    monkeypatch.setattr(gen, "load_pipeline", lambda *_args: FakePipeline())
+    monkeypatch.setattr(gen, "load_pipeline", lambda *_args, **_kwargs: FakePipeline())
     monkeypatch.setattr(
         gen,
         "sample_latents_without_decode",
@@ -357,11 +388,16 @@ def test_generate_removes_temporary_checkpoint_after_success(monkeypatch, tmp_pa
 
 # --- environment configuration ---
 def test_configure_environment_sets_sdpa(monkeypatch, tmp_path):
-    for key in ("ATTN_BACKEND", "SPARSE_ATTN_BACKEND", "PYTORCH_ENABLE_MPS_FALLBACK",
-                "FLEX_GEMM_AUTOTUNE_CACHE_PATH"):
+    for key in (
+        "ATTN_BACKEND",
+        "SPARSE_ATTN_BACKEND",
+        "PYTORCH_ENABLE_MPS_FALLBACK",
+        "FLEX_GEMM_AUTOTUNE_CACHE_PATH",
+    ):
         monkeypatch.delenv(key, raising=False)
     gen.configure_environment(tmp_path, "sdpa")
     import os
+
     assert os.environ["ATTN_BACKEND"] == "sdpa"
     assert os.environ["SPARSE_ATTN_BACKEND"] == "sdpa"
     assert os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] == "1"
@@ -413,10 +449,15 @@ def test_verify_paths_flags_missing_build(tmp_path):
 # --- manifest builder ---
 def test_build_manifest_shape():
     m = gen.build_manifest(
-        image="in.png", output="out.glb",
-        params={"decimation_target": 300000}, pipeline_type="1024_cascade", seed=0,
-        timings={"total": 1.0}, artifacts={"glb": {"bytes": 10}},
-        load_rembg=False, sparse_attn_backend="sdpa",
+        image="in.png",
+        output="out.glb",
+        params={"decimation_target": 300000},
+        pipeline_type="1024_cascade",
+        seed=0,
+        timings={"total": 1.0},
+        artifacts={"glb": {"bytes": 10}},
+        load_rembg=False,
+        sparse_attn_backend="sdpa",
     )
     assert m["schema_version"] == 1
     assert m["attn_backend"] == "sdpa"
@@ -427,14 +468,17 @@ def test_build_manifest_shape():
     assert m["timings_seconds"]["total"] == 1.0
 
 
-@pytest.mark.parametrize("backend,env,expected", [
-    ("mlx", "fp16", "fp16"),
-    ("mlx", "FP16", "fp16"),
-    ("mlx", "fp32", "fp32"),
-    ("mlx", None, "fp32"),
-    ("sdpa", "fp16", None),
-    ("metal_flash", None, None),
-])
+@pytest.mark.parametrize(
+    "backend,env,expected",
+    [
+        ("mlx", "fp16", "fp16"),
+        ("mlx", "FP16", "fp16"),
+        ("mlx", "fp32", "fp32"),
+        ("mlx", None, "fp32"),
+        ("sdpa", "fp16", None),
+        ("metal_flash", None, None),
+    ],
+)
 def test_resolved_attention_dtype(backend, env, expected):
     assert gen.resolved_attention_dtype(backend, env) == expected
 
@@ -446,8 +490,15 @@ def test_manifest_records_the_attention_precision():
     comparison made days later cannot be interpreted.
     """
     m = gen.build_manifest(
-        image="in.png", output="out.glb", params={}, pipeline_type="512", seed=1,
-        timings={}, artifacts={}, load_rembg=False, sparse_attn_backend="mlx",
+        image="in.png",
+        output="out.glb",
+        params={},
+        pipeline_type="512",
+        seed=1,
+        timings={},
+        artifacts={},
+        load_rembg=False,
+        sparse_attn_backend="mlx",
         sparse_attn_dtype=gen.resolved_attention_dtype("mlx", "fp16"),
     )
     assert m["sparse_attn_dtype"] == "fp16"
@@ -455,8 +506,15 @@ def test_manifest_records_the_attention_precision():
 
 def test_manifest_reports_no_precision_for_non_mlx_backends():
     m = gen.build_manifest(
-        image="in.png", output="out.glb", params={}, pipeline_type="512", seed=1,
-        timings={}, artifacts={}, load_rembg=False, sparse_attn_backend="sdpa",
+        image="in.png",
+        output="out.glb",
+        params={},
+        pipeline_type="512",
+        seed=1,
+        timings={},
+        artifacts={},
+        load_rembg=False,
+        sparse_attn_backend="sdpa",
         sparse_attn_dtype=gen.resolved_attention_dtype("sdpa", "fp16"),
     )
     # None, not "fp32": the stock path has no MLX precision to report, and a default here
@@ -489,7 +547,11 @@ def test_demo_params_integrity():
     # positive int rather than pinning a value we may deliberately change.
     assert isinstance(gen.DEMO_PARAMS["decimation_target"], int)
     assert gen.DEMO_PARAMS["decimation_target"] > 0
-    assert gen.DEMO_PARAMS["remesh"] == {"remesh": True, "remesh_band": 1, "remesh_project": 0}
+    assert gen.DEMO_PARAMS["remesh"] == {
+        "remesh": True,
+        "remesh_band": 1,
+        "remesh_project": 0,
+    }
     for stage in ("sparse_structure", "shape_slat", "tex_slat"):
         assert gen.DEMO_PARAMS[stage]["steps"] == 12
 
@@ -524,12 +586,67 @@ def test_filter_out_of_range_faces_negative_index():
 
 
 def test_manifest_records_our_matte_and_never_bria():
-    m = gen.build_manifest(image="i.png", output="o.glb", params={}, pipeline_type="512", seed=0,
-                           timings={}, artifacts={}, load_rembg=False, sparse_attn_backend="sdpa",
-                           matte_model="birefnet-general-lite")
+    m = gen.build_manifest(
+        image="i.png",
+        output="o.glb",
+        params={},
+        pipeline_type="512",
+        seed=0,
+        timings={},
+        artifacts={},
+        load_rembg=False,
+        sparse_attn_backend="sdpa",
+        matte_model="birefnet-general-lite",
+    )
     assert m["matte_model"] == "birefnet-general-lite" and m["load_rembg"] is False
 
 
 def test_wrapper_no_longer_offers_bria():
     source = Path(gen.__file__).read_text()
     assert "--allow-rembg" not in source and "--matted-with" in source
+
+
+def test_provenance_names_the_licence_and_leaves_bria_unloaded(tmp_path):
+    image = tmp_path / "in.png"
+    output = tmp_path / "out.glb"
+    image.write_bytes(b"png")
+    output.write_bytes(b"glb")
+    record = gen.build_provenance(
+        image=image, output=output, parameters={"seed": 1}, matte_model=None
+    )
+    assert record["license"]["name"]
+    assert record["model"]["route"] == "apple-mps"
+    by_name = {item["component"]: item for item in record["components"]}
+    assert by_name["facebook/dinov3-vitl16-pretrain-lvd1689m"]["commercial_status"] == (
+        "commercial-conditional"
+    )
+    assert by_name["BRIA RMBG-2.0"]["loaded"] is False
+    path = gen.write_provenance(output, record)
+    assert path == output.with_suffix(".provenance.json")
+    assert path.is_file()
+
+
+def test_a_missing_tree_does_not_call_from_pretrained(monkeypatch, tmp_path):
+    import dataclasses
+
+    import trellis_route
+
+    monkeypatch.delenv("I2L_TRELLIS_MODEL_PATH", raising=False)
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "hub"))
+    monkeypatch.setattr(
+        trellis_route,
+        "CUDA",
+        dataclasses.replace(trellis_route.CUDA, vendor=tmp_path / "c"),
+    )
+    monkeypatch.setattr(
+        trellis_route,
+        "ROCM",
+        dataclasses.replace(trellis_route.ROCM, vendor=tmp_path / "r"),
+    )
+    monkeypatch.setattr(
+        gen, "_from_pretrained", lambda *a, **k: pytest.fail("from_pretrained")
+    )
+    with pytest.raises(SystemExit, match="GB") as refused:
+        gen.load_pipeline(tmp_path / "vendor", "sdpa", False, confirm_download=False)
+    assert "TRELLIS.2" in str(refused.value)
+    assert "--yes" in str(refused.value)
