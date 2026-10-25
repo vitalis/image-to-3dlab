@@ -87,6 +87,31 @@ def test_close_bones_are_within_slack_of_the_nearest_not_across_the_body():
     assert "toe" not in cw.close_bones(np.array([0.30, -0.12, 0]), segments, slack=0.05)
 
 
+def test_an_ear_above_the_head_tied_to_a_hand_goes_to_the_head():
+    """A fingertip parked inside an ear sits above the head joint. A real hand sits
+    below it. The walk then drags the ear out with the arm."""
+    import numpy as np
+    up = np.array([0.0, 0.0, 1.0])
+    head_at = np.array([0.0, 0.0, 0.4])
+    hands = {"finger", "hand"}
+    ear = cw.retie_head_weight(
+        {"finger": 0.7, "hand": 0.3}, np.array([0.3, 0.0, 0.72]), "head", head_at, hands, up)
+    assert ear == {"head": 1.0}
+    held = {"finger": 1.0}
+    hand = cw.retie_head_weight(held, np.array([0.3, 0.0, 0.37]), "head", head_at, hands, up)
+    assert hand is held
+    neck = {"neck": 1.0}
+    same = cw.retie_head_weight(neck, np.array([0.3, 0.0, 0.72]), "head", head_at, hands, up)
+    assert same is neck
+
+
+def test_a_body_that_is_not_two_legged_is_not_retied():
+    import numpy as np
+    parents = {"root": None, "a": "root", "b": "root", "c": "root"}
+    heads = {name: np.zeros(3) for name in parents}
+    assert cw.head_and_hands(parents, heads, np.array([0.0, 0.0, 1.0])) == (None, set())
+
+
 def test_the_toe_is_still_dropped_from_a_fingertip_when_it_is_far_away():
     import numpy as np
     hops = cw.tree_hops(PARENTS)

@@ -73,6 +73,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The 2.1 checkpoint conversion no longer unpickles.** A safe load that fails stops. The `.ckpt` is deleted only after the safetensors file opens and has the shape tensors.
 
 ### Fixed
+- **A point above the head that is tied to a hand is given to the head.** A fingertip left in an ear no longer follows the arm when the walk plays.
 - **A winding repair that fails leaves the finished file as it was.** The repair writes a temporary file and replaces the model only after that write finishes.
 - **Smooth leaves a loose piece where it is** when the brush covers that piece and nothing around it. A smooth that does not settle does not write the file.
 - **Winding repair no longer flips a textured box that was already facing out.** A UV seam is not treated as a separate piece. The file keeps its own vertices.
