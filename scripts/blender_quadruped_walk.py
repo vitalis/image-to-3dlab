@@ -49,8 +49,12 @@ from quadruped_gait import (
     shoulder_angle,
 )
 
-LEG_PARENTS = ("front_thigh_parent.L", "front_thigh_parent.R",
-               "thigh_parent.L", "thigh_parent.R")
+LEG_PARENTS = (
+    "front_thigh_parent.L",
+    "front_thigh_parent.R",
+    "thigh_parent.L",
+    "thigh_parent.R",
+)
 HIND_CHAIN = ("thigh.L", "shin.L", "foot.L")
 FRONT_CHAIN = ("front_thigh.L", "front_shin.L", "front_foot.L")
 
@@ -58,14 +62,16 @@ FRONT_CHAIN = ("front_thigh.L", "front_shin.L", "front_foot.L")
 def find_rig(objects):
     """The generated Rigify rig -- the one carrying DEF- bones, not the metarig."""
     armatures = [o for o in objects if o.type == "ARMATURE"]
-    generated = [a for a in armatures
-                 if any(b.name.startswith("DEF-") for b in a.data.bones)]
+    generated = [
+        a for a in armatures if any(b.name.startswith("DEF-") for b in a.data.bones)
+    ]
     if len(generated) == 1:
         return generated[0]
     if not generated:
         raise RuntimeError(
             "no generated Rigify rig found (no DEF- bones); generate the rig first, "
-            "e.g. blender_bind_rig.py --generate-rigify")
+            "e.g. blender_bind_rig.py --generate-rigify"
+        )
     raise RuntimeError(f"several generated rigs: {[a.name for a in generated]}")
 
 
@@ -76,8 +82,10 @@ def chain_length(rig, metarig, names) -> float:
             continue
         bones = source.data.bones
         if all(prefix + n in bones for n in names):
-            return sum((bones[prefix + n].tail_local
-                        - bones[prefix + n].head_local).length for n in names)
+            return sum(
+                (bones[prefix + n].tail_local - bones[prefix + n].head_local).length
+                for n in names
+            )
     raise RuntimeError(f"cannot measure limb {names}: no metarig and no ORG- bones")
 
 
@@ -85,12 +93,17 @@ def forward_axis(rig) -> tuple[int, float]:
     """Which world axis the creature faces, as (index, sign).
 
     Derived from the rig rather than assumed: a head control ahead of the hips defines
-    forward, so a rig built facing +Y works as well as one facing -Y.
+    forward, so a rig built facing +Y works as well as one facing -Y. With no rig, or
+    no head and hips, the fallback is -Y, which is where an imported glTF faces.
     """
+    if rig is None:
+        return 1, -1.0
     bones = rig.pose.bones
     if "head" not in bones or "hips" not in bones:
         return 1, -1.0
-    delta = (rig.matrix_world @ bones["head"].head) - (rig.matrix_world @ bones["hips"].head)
+    delta = (rig.matrix_world @ bones["head"].head) - (
+        rig.matrix_world @ bones["hips"].head
+    )
     index = max((0, 1), key=lambda i: abs(delta[i]))
     return index, (1.0 if delta[index] > 0 else -1.0)
 
@@ -123,22 +136,38 @@ def swing_axis(bpy, rig, bone_name, tip_name=None, probe=0.15):
     bpy.context.view_layer.update()
     return axis_index, axis_sign
 
+
 def reach_geometry(rig, metarig, upper, lower):
     """Rest geometry of one two-bone IK chain: its length, and where its ankle sits.
 
-    Taken from rest bone data rather than the posed rig, so the answer does not depend on
-    whatever frame the scene happens to be sitting on.
+    Chain length and ankle offset are both in the same armature's world space, so a
+    scaled rig does not compare a local bone to a world gap. The horizontal stance
+    uses the axis ``forward_axis`` already returns, not a hard-coded Y.
     """
-    bones = (metarig or rig).data.bones
-    prefix = "" if metarig else "ORG-"
-    chain = sum((bones[prefix + n].tail_local - bones[prefix + n].head_local).length
-                for n in (upper, lower))
-    shoulder = rig.matrix_world @ rig.data.bones["ORG-" + upper].head_local
-    ankle = rig.matrix_world @ rig.data.bones["ORG-" + lower].tail_local
-    offset = ankle - shoulder
-    return {"chain_length": chain,
-            "vertical_drop": abs(offset.z),
-            "horizontal_at_rest": abs(offset.y)}
+    org_names = ("ORG-" + upper, "ORG-" + lower)
+    if all(name in rig.data.bones for name in org_names):
+        source, prefix = rig, "ORG-"
+    elif metarig is not None:
+        source, prefix = metarig, ""
+    else:
+        source, prefix = rig, "ORG-"
+    matrix = source.matrix_world
+    bones = source.data.bones
+
+    def ends(name):
+        bone = bones[prefix + name]
+        return matrix @ bone.head_local, matrix @ bone.tail_local
+
+    upper_head, upper_tail = ends(upper)
+    lower_head, lower_tail = ends(lower)
+    chain = (upper_tail - upper_head).length + (lower_tail - lower_head).length
+    offset = lower_tail - upper_head
+    forward_index, _sign = forward_axis(rig)
+    return {
+        "chain_length": chain,
+        "vertical_drop": abs(offset.z),
+        "horizontal_at_rest": abs(offset[forward_index]),
+    }
 
 
 def axis_for(bpy, rig, bone_name, tip_name, component, probe=0.12):
@@ -168,7 +197,9 @@ def axis_for(bpy, rig, bone_name, tip_name, component, probe=0.12):
     return axis_index, axis_sign
 
 
-def measured_head_yaw(rig, mesh, head_group="DEF-spine.011", neck_group="DEF-spine.010"):
+def measured_head_yaw(
+    rig, mesh, head_group="DEF-spine.011", neck_group="DEF-spine.010"
+):
     """How far the head points off the body's axis, read from the mesh it deforms.
 
     Generated meshes inherit the pose of their source image; this fox's head sits about
@@ -184,8 +215,11 @@ def measured_head_yaw(rig, mesh, head_group="DEF-spine.011", neck_group="DEF-spi
         index = groups.get(name)
         if index is None:
             return None
-        points = [mesh.matrix_world @ v.co for v in mesh.data.vertices
-                  if any(g.group == index and g.weight >= 0.5 for g in v.groups)]
+        points = [
+            mesh.matrix_world @ v.co
+            for v in mesh.data.vertices
+            if any(g.group == index and g.weight >= 0.5 for g in v.groups)
+        ]
         return sum(points, Vector()) / len(points) if points else None
 
     head, neck = centroid(head_group), centroid(neck_group)
@@ -225,16 +259,21 @@ def audit_cycle(bpy, rig, scene, *, body_height, leg_lengths, axis):
         torso_z.append((evaluated.matrix_world @ pose["torso"].head).z)
         top = evaluated.matrix_world @ pose[RAKE_CHAIN[0]].tail
         bottom = evaluated.matrix_world @ pose[RAKE_CHAIN[1]].tail
-        leans.append(math.degrees(math.atan2(-(bottom[axis] - top[axis]),
-                                             max(top.z - bottom.z, 1e-6))))
+        leans.append(
+            math.degrees(
+                math.atan2(-(bottom[axis] - top[axis]), max(top.z - bottom.z, 1e-6))
+            )
+        )
         sample = Vector((tracks["FL"][-1][0], tracks["FL"][-1][1], torso_z[-1]))
         first = sample if first is None else first
         last = sample
 
-    measured = {"body_bob_pct_height": (max(torso_z) - min(torso_z)) / body_height,
-                "front_rake_excursion_deg": max(leans) - min(leans),
-                "loop_gap": (first - last).length,
-                "limbs": {}}
+    measured = {
+        "body_bob_pct_height": (max(torso_z) - min(torso_z)) / body_height,
+        "front_rake_excursion_deg": max(leans) - min(leans),
+        "loop_gap": (first - last).length,
+        "limbs": {},
+    }
     for limb in LIMBS:
         fore = [p[0] for p in tracks[limb]]
         up = [p[1] for p in tracks[limb]]
@@ -251,40 +290,85 @@ def audit_cycle(bpy, rig, scene, *, body_height, leg_lengths, axis):
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gait", choices=("walk", "trot", "scamper"), default="walk")
-    parser.add_argument("--frames", type=int, default=None,
-                        help="Cycle length; defaults to the gait's own natural cadence")
-    parser.add_argument("--name", default=None, help="Action name (default: Quad<Gait>)")
-    parser.add_argument("--scale", type=float, default=1.0,
-                        help="Multiply stride, lift and bob; 1.0 matches the reference walk")
-    parser.add_argument("--head-yaw", default="0",
-                        help="Degrees of yaw correction for a head that does not face "
-                             "forward, SPLIT across neck and head so no single deform "
-                             "bone drags its vertices far enough to crush the muzzle; "
-                             "'auto' measures the offset from the mesh, 0 disables")
-    parser.add_argument("--neck-offset", default=None,
-                        help="Static neck rotation 'x,y,z' in degrees, added to the "
-                             "cycle; use with --head-offset to keep a hand-made fix")
-    parser.add_argument("--head-offset", default=None,
-                        help="Static head rotation 'x,y,z' in degrees, added to the cycle")
-    parser.add_argument("--tail-swing", type=float, default=None,
-                        help="Degrees of tail side-to-side swing (default 7)")
-    parser.add_argument("--spend-reach", action="store_true",
-                        help="Grow the stride to fill the reach the body drop creates; "
-                             "without it a bigger lift just marches on the spot")
-    parser.add_argument("--reach-fill", type=float, default=0.9,
-                        help="Fraction of available reach to stride into (default 0.9)")
-    parser.add_argument("--body-sway", type=float, default=None,
-                        help="Lateral roll as a fraction of the vertical bob "
-                             "(default 0.35; 1.0 gives the Bee Gees strut)")
-    parser.add_argument("--body-drop", type=float, default=None,
-                        help="Lower the body by this much to buy IK reach; off by "
-                             "default because it distorts forelegs with no headroom")
-    parser.add_argument("--shoulder-share", type=float, default=None,
-                        help="Fraction of the foreleg's reach carried by the shoulder "
-                             "rather than by bending the limb; higher keeps the lower "
-                             "foreleg more upright")
-    parser.add_argument("--skip-audit", action="store_true",
-                        help="Do not check the authored cycle against known failures")
+    parser.add_argument(
+        "--frames",
+        type=int,
+        default=None,
+        help="Cycle length; defaults to the gait's own natural cadence",
+    )
+    parser.add_argument(
+        "--name", default=None, help="Action name (default: Quad<Gait>)"
+    )
+    parser.add_argument(
+        "--scale",
+        type=float,
+        default=1.0,
+        help="Multiply stride, lift and bob; 1.0 matches the reference walk",
+    )
+    parser.add_argument(
+        "--head-yaw",
+        default="0",
+        help="Degrees of yaw correction for a head that does not face "
+        "forward, SPLIT across neck and head so no single deform "
+        "bone drags its vertices far enough to crush the muzzle; "
+        "'auto' measures the offset from the mesh, 0 disables",
+    )
+    parser.add_argument(
+        "--neck-offset",
+        default=None,
+        help="Static neck rotation 'x,y,z' in degrees, added to the "
+        "cycle; use with --head-offset to keep a hand-made fix",
+    )
+    parser.add_argument(
+        "--head-offset",
+        default=None,
+        help="Static head rotation 'x,y,z' in degrees, added to the cycle",
+    )
+    parser.add_argument(
+        "--tail-swing",
+        type=float,
+        default=None,
+        help="Degrees of tail side-to-side swing (default 7)",
+    )
+    parser.add_argument(
+        "--spend-reach",
+        action="store_true",
+        help="Grow the stride to fill the reach the body drop creates; "
+        "without it a bigger lift just marches on the spot",
+    )
+    parser.add_argument(
+        "--reach-fill",
+        type=float,
+        default=0.9,
+        help="Fraction of available reach to stride into (default 0.9)",
+    )
+    parser.add_argument(
+        "--body-sway",
+        type=float,
+        default=None,
+        help="Lateral roll as a fraction of the vertical bob "
+        "(default 0.35; 1.0 gives the Bee Gees strut)",
+    )
+    parser.add_argument(
+        "--body-drop",
+        type=float,
+        default=None,
+        help="Lower the body by this much to buy IK reach; off by "
+        "default because it distorts forelegs with no headroom",
+    )
+    parser.add_argument(
+        "--shoulder-share",
+        type=float,
+        default=None,
+        help="Fraction of the foreleg's reach carried by the shoulder "
+        "rather than by bending the limb; higher keeps the lower "
+        "foreleg more upright",
+    )
+    parser.add_argument(
+        "--skip-audit",
+        action="store_true",
+        help="Do not check the authored cycle against known failures",
+    )
     parser.add_argument("--out", default=None, help="Save the result to this .blend")
     args = parser.parse_args(argv if argv is not None else _script_args())
 
@@ -295,19 +379,28 @@ def main(argv: list[str] | None = None) -> int:
         bpy.ops.object.mode_set(mode="OBJECT")
 
     rig = find_rig(list(bpy.data.objects))
-    metarig = next((o for o in bpy.data.objects
-                    if o.type == "ARMATURE" and o is not rig), None)
-    mesh = max((o for o in bpy.data.objects
-                if o.type == "MESH" and not o.name.startswith("WGT-")),
-               key=lambda o: len(o.data.vertices), default=None)
+    metarig = next(
+        (o for o in bpy.data.objects if o.type == "ARMATURE" and o is not rig), None
+    )
+    mesh = max(
+        (
+            o
+            for o in bpy.data.objects
+            if o.type == "MESH" and not o.name.startswith("WGT-")
+        ),
+        key=lambda o: len(o.data.vertices),
+        default=None,
+    )
     if mesh is None:
         raise RuntimeError("no mesh found to measure body height from")
 
-    required = (list(FOOT_IK.values()) + list(BODY_CHAIN) + list(SHOULDER.values()))
+    required = list(FOOT_IK.values()) + list(BODY_CHAIN) + list(SHOULDER.values())
     missing = [n for n in required if n not in rig.pose.bones]
     if missing:
-        raise RuntimeError(f"rig {rig.name!r} is missing controls {missing}; "
-                           f"this script targets the Rigify basic_quadruped rig")
+        raise RuntimeError(
+            f"rig {rig.name!r} is missing controls {missing}; "
+            f"this script targets the Rigify basic_quadruped rig"
+        )
 
     front_length = chain_length(rig, metarig, FRONT_CHAIN)
     hind_length = chain_length(rig, metarig, HIND_CHAIN)
@@ -321,15 +414,20 @@ def main(argv: list[str] | None = None) -> int:
     stride_override = None
     if args.spend_reach:
         fill = args.reach_fill
-        fore_room = max_half_stride(**dict(fore_geo,
-                                           vertical_drop=fore_geo["vertical_drop"] - drop_now))
-        hind_room = max_half_stride(**dict(hind_geo,
-                                           vertical_drop=hind_geo["vertical_drop"] - drop_now))
-        stride_override = {"front_stride": 2.0 * fill * fore_room,
-                           "hind_stride": 2.0 * fill * hind_room}
+        fore_room = max_half_stride(
+            **dict(fore_geo, vertical_drop=fore_geo["vertical_drop"] - drop_now)
+        )
+        hind_room = max_half_stride(
+            **dict(hind_geo, vertical_drop=hind_geo["vertical_drop"] - drop_now)
+        )
+        stride_override = {
+            "front_stride": 2.0 * fill * fore_room,
+            "hind_stride": 2.0 * fill * hind_room,
+        }
 
     plan = gait_plan(
-        frames, args.gait,
+        frames,
+        args.gait,
         front_leg_length=front_length,
         hind_leg_length=hind_length,
         body_height=body_height,
@@ -355,7 +453,7 @@ def main(argv: list[str] | None = None) -> int:
     animation = rig.animation_data or rig.animation_data_create()
     animation.action = action
     try:  # Blender 4.4+ slotted actions need a slot bound before curves land
-        slot = action.slots.new(id_type='OBJECT', name=rig.name)
+        slot = action.slots.new(id_type="OBJECT", name=rig.name)
         animation.action_slot = slot
     except Exception:  # noqa: S110 - older Blender has no slots, and needs none
         pass
@@ -398,18 +496,27 @@ def main(argv: list[str] | None = None) -> int:
     # the shoulder, and reusing it rotated the scapula the wrong way, deepening the very
     # forward rake the shoulder exists to absorb (lean widened to -0.9..17.5 degrees).
     shoulder_axis, shoulder_sign = swing_axis(
-        bpy, rig, SHOULDER["FL"], tip_name="ORG-front_thigh.L")
+        bpy, rig, SHOULDER["FL"], tip_name="ORG-front_thigh.L"
+    )
 
     tail_present = [b for b in TAIL_CHAIN if b in rig.pose.bones]
-    tail_yaw = axis_for(bpy, rig, tail_present[0], tail_present[-1], 0) if tail_present \
+    tail_yaw = (
+        axis_for(bpy, rig, tail_present[0], tail_present[-1], 0)
+        if tail_present
         else None
-    tail_pitch = axis_for(bpy, rig, tail_present[0], tail_present[-1], 2) if tail_present \
+    )
+    tail_pitch = (
+        axis_for(bpy, rig, tail_present[0], tail_present[-1], 2)
+        if tail_present
         else None
+    )
     head_present = [b for b in HEAD_CHAIN if b in rig.pose.bones]
-    head_yaw_axis = axis_for(bpy, rig, "head", "head", 0) if "head" in rig.pose.bones \
-        else None
-    head_pitch_axis = axis_for(bpy, rig, "head", "head", 2) if "head" in rig.pose.bones \
-        else None
+    head_yaw_axis = (
+        axis_for(bpy, rig, "head", "head", 0) if "head" in rig.pose.bones else None
+    )
+    head_pitch_axis = (
+        axis_for(bpy, rig, "head", "head", 2) if "head" in rig.pose.bones else None
+    )
 
     import math as _math
 
@@ -428,11 +535,15 @@ def main(argv: list[str] | None = None) -> int:
             return (0.0, 0.0, 0.0)
         parts = [float(v) for v in text.replace(" ", "").split(",")]
         if len(parts) != 3:
-            raise RuntimeError(f"offset needs three comma-separated degrees, got {text!r}")
+            raise RuntimeError(
+                f"offset needs three comma-separated degrees, got {text!r}"
+            )
         return tuple(_math.radians(v) for v in parts)
 
-    static_offset = {"neck": parse_offset(args.neck_offset),
-                     "head": parse_offset(args.head_offset)}
+    static_offset = {
+        "neck": parse_offset(args.neck_offset),
+        "head": parse_offset(args.head_offset),
+    }
 
     def to_local(bone, world_delta):
         rest = bone.bone.matrix_local.to_3x3()
@@ -460,8 +571,11 @@ def main(argv: list[str] | None = None) -> int:
     torso = rig.pose.bones["torso"]
 
     def key_rotation(bone, frame):
-        channel = ("rotation_quaternion" if bone.rotation_mode == "QUATERNION"
-                   else "rotation_euler")
+        channel = (
+            "rotation_quaternion"
+            if bone.rotation_mode == "QUATERNION"
+            else "rotation_euler"
+        )
         bone.keyframe_insert(channel, frame=frame)
 
     # The body is posed first and the depsgraph flushed, because each foot IK control
@@ -510,10 +624,12 @@ def main(argv: list[str] | None = None) -> int:
             bone.rotation_euler = (0.0, 0.0, 0.0)
             if tail_yaw:
                 bone.rotation_euler[tail_yaw[0]] = (
-                    tail_yaw[1] * tail_plan[segment]["swing"])
+                    tail_yaw[1] * tail_plan[segment]["swing"]
+                )
             if tail_pitch and tail_pitch[0] != tail_yaw[0]:
                 bone.rotation_euler[tail_pitch[0]] = (
-                    tail_pitch[1] * tail_plan[segment]["lift"])
+                    tail_pitch[1] * tail_plan[segment]["lift"]
+                )
             bone.keyframe_insert("rotation_euler", frame=frame)
 
         head_plan = plan["head"][index]
@@ -528,10 +644,13 @@ def main(argv: list[str] | None = None) -> int:
             if head_yaw_axis:
                 bone.rotation_euler[head_yaw_axis[0]] = (
                     offset[head_yaw_axis[0]]
-                    + head_yaw_axis[1] * angles["yaw"] + yaw_split[bone_name])
+                    + head_yaw_axis[1] * angles["yaw"]
+                    + yaw_split[bone_name]
+                )
             if head_pitch_axis and head_pitch_axis[0] != head_yaw_axis[0]:
                 bone.rotation_euler[head_pitch_axis[0]] = (
-                    offset[head_pitch_axis[0]] + head_pitch_axis[1] * angles["nod"])
+                    offset[head_pitch_axis[0]] + head_pitch_axis[1] * angles["nod"]
+                )
             bone.keyframe_insert("rotation_euler", frame=frame)
 
         # The shoulder carries part of each foreleg's reach so the wrist does not have
@@ -542,22 +661,34 @@ def main(argv: list[str] | None = None) -> int:
                 bone.rotation_mode = "XYZ"
             bone.rotation_euler = (0.0, 0.0, 0.0)
             bone.rotation_euler[shoulder_axis] = shoulder_sign * shoulder_angle(
-                plan["feet"][limb][index]["fore_aft"], front_length,
-                *( (args.shoulder_share,) if args.shoulder_share is not None else () ))
+                plan["feet"][limb][index]["fore_aft"],
+                front_length,
+                *((args.shoulder_share,) if args.shoulder_share is not None else ()),
+            )
             bone.keyframe_insert("rotation_euler", frame=frame)
 
     report = {
-        "action": action_name, "gait": args.gait,
+        "action": action_name,
+        "gait": args.gait,
         "frames": [scene.frame_start, scene.frame_end],
         "sizes": {k: round(v, 4) for k, v in plan["sizes"].items()},
-        "body_bob": round(max(b["up"] for b in plan["body"])
-                          - min(b["up"] for b in plan["body"]), 4),
+        "body_bob": round(
+            max(b["up"] for b in plan["body"]) - min(b["up"] for b in plan["body"]), 4
+        ),
         "forward_axis": ("XYZ"[axis], sign),
         "fore_reach": {k: round(v, 4) for k, v in fore_reach.items()},
         "fore_extension_at_rest_pct": round(
-            100 * ((fore_reach["vertical_drop"] ** 2
-                    + fore_reach["horizontal_at_rest"] ** 2) ** 0.5)
-            / fore_reach["chain_length"], 1),
+            100
+            * (
+                (
+                    fore_reach["vertical_drop"] ** 2
+                    + fore_reach["horizontal_at_rest"] ** 2
+                )
+                ** 0.5
+            )
+            / fore_reach["chain_length"],
+            1,
+        ),
         "fore_headroom_before_drop": round(max_half_stride(**fore_reach), 4),
         "half_stride_requested": round(half_stride, 4),
         "body_drop_applied": round(body_drop, 4),
@@ -566,23 +697,38 @@ def main(argv: list[str] | None = None) -> int:
         "front_swing_axis": ("XYZ"[front_axis], front_sign),
         "shoulder_axis": ("XYZ"[shoulder_axis], shoulder_sign),
         "shoulder_share": args.shoulder_share,
-        "head_yaw_split_deg": {k: round(_math.degrees(v), 2)
-                               for k, v in yaw_split.items()},
+        "head_yaw_split_deg": {
+            k: round(_math.degrees(v), 2) for k, v in yaw_split.items()
+        },
         "tail_bones": tail_present,
-        "driven": sorted(list(FOOT_IK.values()) + list(SHOULDER.values())
-                         + tail_present + head_present + ["torso"]),
+        "driven": sorted(
+            list(FOOT_IK.values())
+            + list(SHOULDER.values())
+            + tail_present
+            + head_present
+            + ["torso"]
+        ),
     }
     problems = []
     if not args.skip_audit:
         measured = audit_cycle(
-            bpy, rig, scene, body_height=body_height,
-            leg_lengths={"F": front_length, "B": hind_length}, axis=axis)
+            bpy,
+            rig,
+            scene,
+            body_height=body_height,
+            leg_lengths={"F": front_length, "B": hind_length},
+            axis=axis,
+        )
         problems = check_gait(measured, args.gait)
-        report["audit"] = {k: (round(v, 4) if isinstance(v, float) else v)
-                           for k, v in measured.items() if k != "limbs"}
+        report["audit"] = {
+            k: (round(v, 4) if isinstance(v, float) else v)
+            for k, v in measured.items()
+            if k != "limbs"
+        }
         report["audit"]["limbs"] = {
             limb: {k: round(v, 4) for k, v in stats.items()}
-            for limb, stats in measured["limbs"].items()}
+            for limb, stats in measured["limbs"].items()
+        }
         report["audit"]["problems"] = problems
 
     if args.out:
@@ -592,13 +738,14 @@ def main(argv: list[str] | None = None) -> int:
         report["saved"] = str(out)
     print("I2L_GAIT_REPORT " + json.dumps(report))
     if problems:
-        raise RuntimeError("authored cycle failed its audit:\n  - "
-                           + "\n  - ".join(problems))
+        raise RuntimeError(
+            "authored cycle failed its audit:\n  - " + "\n  - ".join(problems)
+        )
     return 0
 
 
 def _script_args() -> list[str]:
-    return sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+    return sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else []
 
 
 if __name__ == "__main__":

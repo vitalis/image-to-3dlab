@@ -43,14 +43,62 @@ SKELETON: list[tuple[str, str, str, str | None, bool]] = [
 ]
 for _side in ("L", "R"):
     SKELETON += [
-        (f"front{_side}_upperarm", f"front{_side}_shoulder", f"front{_side}_elbow", "spine_02", False),
-        (f"front{_side}_forearm", f"front{_side}_elbow", f"front{_side}_wrist", f"front{_side}_upperarm", True),
-        (f"front{_side}_paw", f"front{_side}_wrist", f"front{_side}_paw", f"front{_side}_forearm", True),
-        (f"front{_side}_toe", f"front{_side}_paw", f"front{_side}_toe", f"front{_side}_paw", True),
-        (f"back{_side}_thigh", f"back{_side}_hip", f"back{_side}_stifle", "spine_01", False),
-        (f"back{_side}_shin", f"back{_side}_stifle", f"back{_side}_ankle", f"back{_side}_thigh", True),
-        (f"back{_side}_paw", f"back{_side}_ankle", f"back{_side}_paw", f"back{_side}_shin", True),
-        (f"back{_side}_toe", f"back{_side}_paw", f"back{_side}_toe", f"back{_side}_paw", True),
+        (
+            f"front{_side}_upperarm",
+            f"front{_side}_shoulder",
+            f"front{_side}_elbow",
+            "spine_02",
+            False,
+        ),
+        (
+            f"front{_side}_forearm",
+            f"front{_side}_elbow",
+            f"front{_side}_wrist",
+            f"front{_side}_upperarm",
+            True,
+        ),
+        (
+            f"front{_side}_paw",
+            f"front{_side}_wrist",
+            f"front{_side}_paw",
+            f"front{_side}_forearm",
+            True,
+        ),
+        (
+            f"front{_side}_toe",
+            f"front{_side}_paw",
+            f"front{_side}_toe",
+            f"front{_side}_paw",
+            True,
+        ),
+        (
+            f"back{_side}_thigh",
+            f"back{_side}_hip",
+            f"back{_side}_stifle",
+            "spine_01",
+            False,
+        ),
+        (
+            f"back{_side}_shin",
+            f"back{_side}_stifle",
+            f"back{_side}_ankle",
+            f"back{_side}_thigh",
+            True,
+        ),
+        (
+            f"back{_side}_paw",
+            f"back{_side}_ankle",
+            f"back{_side}_paw",
+            f"back{_side}_shin",
+            True,
+        ),
+        (
+            f"back{_side}_toe",
+            f"back{_side}_paw",
+            f"back{_side}_toe",
+            f"back{_side}_paw",
+            True,
+        ),
     ]
 
 # Ears have only a base marker, so their bone is extrapolated outward from the head
@@ -60,9 +108,14 @@ EAR_BONES = [("ear_L", "ear_L"), ("ear_R", "ear_R")]
 
 
 def build_code(ear_length: float, weight_threshold: float) -> str:
-    return f'''
-import bpy, json
+    return f"""
+import bpy, json, sys
 from mathutils import Vector
+sys.path.insert(0, {str(Path(__file__).resolve().parent)!r})
+import importlib
+import leg_reach
+importlib.reload(leg_reach)
+from leg_reach import height_span, reaches_head
 
 # Parsed rather than interpolated as a literal: a None parent renders as JSON `null`,
 # which is not valid Python, so the table has to cross as a string.
@@ -137,20 +190,20 @@ except RuntimeError as exc:
 # how high up the body they reach. A leg bone whose influence reaches the head is the
 # envelope-fallback signature.
 groups = {{vg.index: vg.name for vg in mesh.vertex_groups}}
-zs = [v.co.z for v in mesh.data.vertices]
-z_lo, z_hi = min(zs), max(zs)
-span = z_hi - z_lo
+world_zs = [(mesh.matrix_world @ v.co).z for v in mesh.data.vertices]
+span = height_span(world_zs)
 head_z = markers["head"].z
 influence = {{}}
 for v in mesh.data.vertices:
+    world_z = (mesh.matrix_world @ v.co).z
     for g in v.groups:
         if g.weight >= THRESH:
             name = groups.get(g.group)
             if name:
                 rec = influence.setdefault(name, [0, -1e9, 1e9])
                 rec[0] += 1
-                rec[1] = max(rec[1], v.co.z)
-                rec[2] = min(rec[2], v.co.z)
+                rec[1] = max(rec[1], world_z)
+                rec[2] = min(rec[2], world_z)
 
 report = {{}}
 for name in [b[0] for b in skeleton] + [b[0] for b in ear_bones]:
@@ -161,7 +214,7 @@ for name in [b[0] for b in skeleton] + [b[0] for b in ear_bones]:
         report[name] = {{
             "verts": rec[0],
             "max_z": round(rec[1], 4),
-            "reaches_head": bool(rec[1] > head_z - span * 0.05),
+            "reaches_head": reaches_head(rec[1], head_z, span),
         }}
 
 leg_bones = [n for n in report if ("front" in n or "back" in n)]
@@ -183,7 +236,7 @@ print(json.dumps({{
     "verdict": "ENVELOPE FALLBACK" if contaminated else ("EMPTY GROUPS" if empty else "CLEAN"),
     "report": report,
 }}, indent=2))
-'''
+"""
 
 
 def main() -> int:
@@ -191,14 +244,21 @@ def main() -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=9876)
     parser.add_argument(
-        "--ear-length", type=float, default=0.09,
+        "--ear-length",
+        type=float,
+        default=0.09,
         help="Ear bones are extrapolated from the head through the ear base, so an "
-             "over-long value pushes their tips outside the mesh",
+        "over-long value pushes their tips outside the mesh",
     )
     parser.add_argument("--weight-threshold", type=float, default=0.15)
     args = parser.parse_args()
-    print(send(build_code(args.ear_length, args.weight_threshold), args.host, args.port))
-    return 0
+    from leg_reach import bind_exit, verdict_from_reply
+
+    reply = send(
+        build_code(args.ear_length, args.weight_threshold), args.host, args.port
+    )
+    print(reply)
+    return bind_exit(verdict_from_reply(reply))
 
 
 if __name__ == "__main__":

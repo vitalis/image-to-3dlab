@@ -21,42 +21,81 @@ otherwise wildly different apparent sizes.
 import math
 import sys
 
-import bpy
-from mathutils import Vector
-
 SPACING = 1.7
 FRAMES = 150
 FPS = 30
 YAW_DEGREES = -25.0
 
 
+def shared_scale(z_extents: list[tuple[float, float]]) -> float:
+    """One scale so the combined height is 1. Not a scale per part."""
+    if not z_extents:
+        return 1.0
+    min_z = min(low for low, _high in z_extents)
+    max_z = max(high for _low, high in z_extents)
+    height = max_z - min_z
+    if height <= 1e-9:
+        return 1.0
+    return 1.0 / height
+
+
 def clear_scene() -> None:
+    import bpy
+
     for obj in list(bpy.data.objects):
         bpy.data.objects.remove(obj, do_unlink=True)
-    for block in (bpy.data.meshes, bpy.data.materials, bpy.data.images,
-                  bpy.data.cameras, bpy.data.lights, bpy.data.actions):
+    for block in (
+        bpy.data.meshes,
+        bpy.data.materials,
+        bpy.data.images,
+        bpy.data.cameras,
+        bpy.data.lights,
+        bpy.data.actions,
+    ):
         for item in list(block):
             if item.users == 0:
                 block.remove(item)
 
 
 def import_asset(path: str, label: str, index: int, count: int) -> list:
+    import bpy
+    from mathutils import Vector
+
     before = set(bpy.data.objects)
     bpy.ops.import_scene.gltf(filepath=path)
     fresh = [o for o in bpy.data.objects if o not in before and o.type == "MESH"]
+    if not fresh:
+        return fresh
+    extents = []
     for obj in fresh:
-        obj.name = label
-        height = obj.dimensions.z or 1.0
-        obj.scale = (1.0 / height,) * 3
-        bpy.context.view_layer.update()
-        corners = [obj.matrix_world @ Vector(c) for c in obj.bound_box]
-        obj.location.z -= min(c.z for c in corners)
-        obj.location.x = index * SPACING - (count - 1) * SPACING / 2
+        corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
+        extents.append(
+            (min(corner.z for corner in corners), max(corner.z for corner in corners))
+        )
+    scale = shared_scale(extents)
+    for obj in fresh:
+        obj.scale = (scale, scale, scale)
+    bpy.context.view_layer.update()
+    grounded = [
+        obj.matrix_world @ Vector(corner) for obj in fresh for corner in obj.bound_box
+    ]
+    lift = min(corner.z for corner in grounded)
+    center_x = (
+        min(corner.x for corner in grounded) + max(corner.x for corner in grounded)
+    ) * 0.5
+    mark = index * SPACING - (count - 1) * SPACING / 2
+    shift_x = mark - center_x
+    fresh[0].name = label
+    for obj in fresh:
+        obj.location.z -= lift
+        obj.location.x += shift_x
         obj.rotation_euler[2] = math.radians(YAW_DEGREES)
     return fresh
 
 
 def build_environment() -> None:
+    import bpy
+
     bpy.ops.mesh.primitive_plane_add(size=400, location=(0, 0, 0))
     floor = bpy.context.active_object
     floor.name = "Floor"
@@ -89,6 +128,8 @@ def build_environment() -> None:
 
 
 def build_camera(count: int) -> None:
+    import bpy
+
     cam_data = bpy.data.cameras.new("Cam")
     cam_data.lens = 40
     cam = bpy.data.objects.new("Cam", cam_data)
@@ -121,11 +162,16 @@ def build_camera(count: int) -> None:
 
 
 def configure_render(output: str) -> None:
+    import bpy
+
     scene = bpy.context.scene
-    engines = {item.identifier for item in
-               bpy.types.RenderSettings.bl_rna.properties["engine"].enum_items}
-    scene.render.engine = ("BLENDER_EEVEE_NEXT" if "BLENDER_EEVEE_NEXT" in engines
-                           else "BLENDER_EEVEE")
+    engines = {
+        item.identifier
+        for item in bpy.types.RenderSettings.bl_rna.properties["engine"].enum_items
+    }
+    scene.render.engine = (
+        "BLENDER_EEVEE_NEXT" if "BLENDER_EEVEE_NEXT" in engines else "BLENDER_EEVEE"
+    )
     scene.render.resolution_x = 1280
     scene.render.resolution_y = 720
     scene.render.resolution_percentage = 100
@@ -139,7 +185,9 @@ def configure_render(output: str) -> None:
 
 
 def main() -> None:
-    argv = sys.argv[sys.argv.index("--") + 1:]
+    import bpy
+
+    argv = sys.argv[sys.argv.index("--") + 1 :]
     output, specs = argv[0], argv[1:]
 
     clear_scene()
@@ -149,8 +197,10 @@ def main() -> None:
     build_environment()
     build_camera(len(specs))
     configure_render(output)
-    print(f"LINEUP:: {len(specs)} assets, {FRAMES} frames, engine "
-          f"{bpy.context.scene.render.engine}")
+    print(
+        f"LINEUP:: {len(specs)} assets, {FRAMES} frames, engine "
+        f"{bpy.context.scene.render.engine}"
+    )
     bpy.ops.render.render(animation=True)
     print(f"LINEUP:: wrote {output}")
 

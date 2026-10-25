@@ -34,11 +34,16 @@ Two details that decide whether the bake is usable:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from blender_joint_markers import send
+from blender_own_scene import own_scene_body
+
+_SCRIPTS = str(Path(__file__).resolve().parent)
+_CLEAR = own_scene_body("IMG3D normal bake")
 
 # glTF is Y-up and Blender is Z-up, so the importer maps (x, y, z) -> (x, -z, y). The
 # high-poly PLY never goes through that: it is written straight out of the generator and
@@ -115,10 +120,53 @@ def resolve_tangent_sign(pixels):
     return encoded, float(flipped.mean())
 
 
-TEMPLATE = '''
-import bpy, json, math, time
+def meshes_to_bake(count: int) -> str:
+    """One mesh is baked as it is. Several are joined. None is a refusal."""
+    if count < 1:
+        raise ValueError("no mesh to bake")
+    if count == 1:
+        return "single"
+    return "join"
+
+
+def normal_bake_exit(written, png_exists: bool) -> int:
+    """Missing map or a null write is a failed bake, even when the sign is left alone."""
+    if written is None or not png_exists:
+        return 1
+    return 0
+
+
+def written_from_reply(reply: str):
+    decoder = json.JSONDecoder()
+    found = None
+    for index, char in enumerate(reply):
+        if char != "{":
+            continue
+        try:
+            obj, _end = decoder.raw_decode(reply[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and "written" in obj:
+            found = obj["written"]
+    return found
+
+
+TEMPLATE = (
+    """
+import bpy, json, math, time, sys
 from mathutils import Vector
 
+sys.path.insert(0, {scripts!r})
+import importlib
+import blender_own_scene
+import blender_bake_normals
+importlib.reload(blender_own_scene)
+importlib.reload(blender_bake_normals)
+from blender_own_scene import objects_exclusive_to_scene
+meshes_to_bake = blender_bake_normals.meshes_to_bake
+"""
+    + _CLEAR
+    + """
 LOW = {low!r}
 HIGH = {high!r}
 OUT = {out!r}
@@ -132,22 +180,19 @@ DEVICE = {device!r}
 MAX_RAY = {max_ray}
 
 t0 = time.time()
-# Preserve anything that represents manual work. Joint markers are hand-placed and
-# exist nowhere but the scene until saved, and the armature is built from them; clearing
-# either has already destroyed ~40 minutes of placement once, unrecoverably.
-def _is_precious(o):
-    return o.name.startswith("JOINT_") or o.type == "ARMATURE"
-
-for obj in list(bpy.data.objects):
-    if not _is_precious(obj):
-        bpy.data.objects.remove(obj, do_unlink=True)
-for coll in list(bpy.data.collections):
-    if coll.name != "JOINT_MARKERS" and not coll.objects:
-        bpy.data.collections.remove(coll)
 
 before = set(bpy.data.objects)
 bpy.ops.import_scene.gltf(filepath=LOW)
-low = [o for o in bpy.data.objects if o not in before and o.type == "MESH"][0]
+low_meshes = [o for o in bpy.data.objects if o not in before and o.type == "MESH"]
+if meshes_to_bake(len(low_meshes)) == "join":
+    bpy.ops.object.select_all(action="DESELECT")
+    for _mesh in low_meshes:
+        _mesh.select_set(True)
+    bpy.context.view_layer.objects.active = low_meshes[0]
+    bpy.ops.object.join()
+    low = bpy.context.view_layer.objects.active
+else:
+    low = low_meshes[0]
 low.name = "LOWPOLY"
 
 before = set(bpy.data.objects)
@@ -271,7 +316,8 @@ print(json.dumps({{
     "written": None if err else OUT,
     "seconds": round(time.time() - t0, 1),
 }}, indent=2))
-'''
+"""
+)
 
 
 def main() -> int:
@@ -283,42 +329,52 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=9876)
     parser.add_argument("--size", type=int, default=2048)
     parser.add_argument(
-        "--ray", type=float, default=0.02,
+        "--ray",
+        type=float,
+        default=0.02,
         help="How far rays search for the high-poly surface, in world units. Too short "
-             "misses detail; too long jumps a gap and bakes the wrong surface, which is "
-             "very visible on thin geometry like ears and leaf tips",
+        "misses detail; too long jumps a gap and bakes the wrong surface, which is "
+        "very visible on thin geometry like ears and leaf tips",
     )
     parser.add_argument(
-        "--decimate-to", type=int, default=1_500_000,
+        "--decimate-to",
+        type=int,
+        default=1_500_000,
         help="Decimate the bake source to this many triangles first. 6M is slow to "
-             "ray-cast against and a 2048 map cannot represent that much detail anyway. "
-             "0 disables",
+        "ray-cast against and a 2048 map cannot represent that much detail anyway. "
+        "0 disables",
     )
     parser.add_argument("--samples", type=int, default=1)
     parser.add_argument("--device", choices=("CPU", "GPU"), default="GPU")
     parser.add_argument(
-        "--keep-sign", action="store_true",
+        "--keep-sign",
+        action="store_true",
         help="Leave texels that point into the surface alone. Only for diagnosis: the "
-             "fraction negated is a direct read on how inconsistently the source is wound",
+        "fraction negated is a direct read on how inconsistently the source is wound",
     )
     parser.add_argument(
-        "--max-ray", type=float, default=0.0,
+        "--max-ray",
+        type=float,
+        default=0.0,
         help="Hard limit on how far a ray may travel, in world units. 0 is no limit and "
-             "is the right default: the cage already decides where rays start, and "
-             "limiting them to the extrusion distance stops them at the surface itself",
+        "is the right default: the cage already decides where rays start, and "
+        "limiting them to the extrusion distance stops them at the surface itself",
     )
     parser.add_argument(
-        "--flat-source", action="store_true",
+        "--flat-source",
+        action="store_true",
         help="Leave the high-poly flat-shaded. Only useful for diagnosis: a decode PLY "
-             "has no vertex normals, and flat shading bakes each facet as one constant "
-             "normal, which reads as rainbow confetti rather than detail",
+        "has no vertex normals, and flat shading bakes each facet as one constant "
+        "normal, which reads as rainbow confetti rather than detail",
     )
     parser.add_argument(
-        "--permutation", choices=sorted(AXIS_PERMUTATIONS), default="none",
+        "--permutation",
+        choices=sorted(AXIS_PERMUTATIONS),
+        default="none",
         help="Axis mapping from high-poly space to the low-poly's, compared *inside "
-             "Blender*. The glTF importer already applies the Y-up to Z-up conversion, "
-             "so the two arrive aligned and the default is correctly 'none'. Comparing "
-             "raw file-space sizes instead suggests a swap that does not exist",
+        "Blender*. The glTF importer already applies the Y-up to Z-up conversion, "
+        "so the two arrive aligned and the default is correctly 'none'. Comparing "
+        "raw file-space sizes instead suggests a swap that does not exist",
     )
     args = parser.parse_args()
 
@@ -329,13 +385,21 @@ def main() -> int:
         low=str(args.low.expanduser().resolve()),
         high=str(args.high.expanduser().resolve()),
         out=str(args.out.expanduser().resolve()),
-        size=args.size, ray=args.ray, smooth_source=not args.flat_source,
-        device=args.device, max_ray=args.max_ray,
-        decimate_to=args.decimate_to, samples=args.samples,
+        size=args.size,
+        ray=args.ray,
+        smooth_source=not args.flat_source,
+        device=args.device,
+        max_ray=args.max_ray,
+        decimate_to=args.decimate_to,
+        samples=args.samples,
+        scripts=_SCRIPTS,
     )
-    print(send(code, args.host, args.port))
+    reply = send(code, args.host, args.port)
+    print(reply)
+    if normal_bake_exit(written_from_reply(reply), args.out.exists()) != 0:
+        return 1
 
-    if args.keep_sign or not args.out.exists():
+    if args.keep_sign:
         return 0
 
     import numpy as np

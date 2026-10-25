@@ -22,9 +22,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from blender_joint_markers import send
+from blender_own_scene import own_scene_body
+
+_SCRIPTS = str(Path(__file__).resolve().parent)
+_CLEAR = own_scene_body("IMG3D light orbit")
 
 
-def key_light_rotation(frame: int, frames: int, elevation: float) -> tuple[float, float, float]:
+def key_light_rotation(
+    frame: int, frames: int, elevation: float
+) -> tuple[float, float, float]:
     """Euler rotation for the key light at `frame`, as a full azimuth sweep.
 
     A Blender sun light is directional — only its rotation matters, never its position.
@@ -39,30 +45,37 @@ def key_light_rotation(frame: int, frames: int, elevation: float) -> tuple[float
     return (math.radians(elevation), 0.0, 2.0 * math.pi * t)
 
 
-TEMPLATE = '''
-import bpy, json, math
+def pick_eevee(engine_ids) -> str:
+    """The Eevee identifier this Blender actually lists. 4.2 and 5.x disagree on the name."""
+    if "BLENDER_EEVEE_NEXT" in engine_ids:
+        return "BLENDER_EEVEE_NEXT"
+    if "BLENDER_EEVEE" in engine_ids:
+        return "BLENDER_EEVEE"
+    raise ValueError("this Blender has no Eevee engine")
 
+
+TEMPLATE = (
+    """
+import bpy, json, math, sys
+sys.path.insert(0, {scripts!r})
+import importlib
+import blender_own_scene
+import blender_light_orbit
+importlib.reload(blender_own_scene)
+importlib.reload(blender_light_orbit)
+from blender_own_scene import objects_exclusive_to_scene
+pick_eevee = blender_light_orbit.pick_eevee
+"""
+    + _CLEAR
+    + """
 ASSET = {asset!r}
 OUT = {out!r}
 FRAMES = {frames}
 ELEV = {elevation}
 RES = {res}
 
-# Preserve anything that represents manual work. Joint markers are hand-placed and
-# exist nowhere but the scene until saved, and the armature is built from them; clearing
-# either has already destroyed ~40 minutes of placement once, unrecoverably.
-def _is_precious(o):
-    return o.name.startswith("JOINT_") or o.type == "ARMATURE"
-
-for obj in list(bpy.data.objects):
-    if not _is_precious(obj):
-        bpy.data.objects.remove(obj, do_unlink=True)
-for coll in list(bpy.data.collections):
-    if coll.name != "JOINT_MARKERS" and not coll.objects:
-        bpy.data.collections.remove(coll)
-
 bpy.ops.import_scene.gltf(filepath=ASSET)
-meshes = [o for o in bpy.data.objects if o.type == "MESH"]
+meshes = [o for o in bpy.context.scene.objects if o.type == "MESH"]
 if not meshes:
     raise RuntimeError("no mesh imported from " + ASSET)
 
@@ -87,7 +100,7 @@ sun("RIM", 1.4, math.radians(10), (math.radians(103), 0, math.radians(200)))
 scn.world.use_nodes = True
 scn.world.node_tree.nodes["Background"].inputs[0].default_value = (0.03, 0.033, 0.037, 1)
 
-scn.render.engine = "BLENDER_EEVEE"
+scn.render.engine = pick_eevee({{item.identifier for item in bpy.types.RenderSettings.bl_rna.properties["engine"].enum_items}})
 scn.render.resolution_x = RES; scn.render.resolution_y = RES
 scn.render.fps = 24
 scn.render.image_settings.file_format = "PNG"
@@ -100,7 +113,8 @@ for i, rot in enumerate(rotations, start=1):
     bpy.ops.render.render(write_still=True)
 
 print(json.dumps({{"asset": ASSET, "frames": len(rotations), "written_to": OUT}}))
-'''
+"""
+)
 
 
 def main() -> int:
@@ -124,8 +138,11 @@ def main() -> int:
     code = TEMPLATE.format(
         asset=str(args.asset.expanduser().resolve()),
         out=str(args.out_prefix.expanduser().resolve()),
-        frames=args.frames, elevation=args.elevation, res=args.res,
+        frames=args.frames,
+        elevation=args.elevation,
+        res=args.res,
         rotations=_json.dumps(rotations),
+        scripts=_SCRIPTS,
     )
     print(send(code, args.host, args.port))
     return 0

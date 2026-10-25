@@ -34,20 +34,26 @@ def main() -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=9876)
     parser.add_argument(
-        "--voxel-size", type=float, default=0.012,
+        "--voxel-size",
+        type=float,
+        default=0.012,
         help="Proxy resolution as a fraction of world units; smaller is finer and slower",
     )
     parser.add_argument("--weight-threshold", type=float, default=0.15)
     parser.add_argument(
-        "--keep-proxy", action="store_true",
+        "--keep-proxy",
+        action="store_true",
         help="Leave the voxel proxy in the scene for inspection",
     )
     args = parser.parse_args()
 
     from blender_joint_markers import send
+    from leg_reach import bind_exit, verdict_from_reply
+
     code = build_code(args.voxel_size, args.weight_threshold, args.keep_proxy)
-    print(send(code, args.host, args.port))
-    return 0
+    reply = send(code, args.host, args.port)
+    print(reply)
+    return bind_exit(verdict_from_reply(reply))
 
 
 if __name__ == "__main__":

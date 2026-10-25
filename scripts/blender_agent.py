@@ -93,11 +93,13 @@ def _preamble() -> str:
 def _emit(expr: str) -> str:
     """Every snippet reports through one sentinel line, so the reply can be found in
     whatever else Blender decided to print to stdout that second."""
-    return f'print({RESULT_SENTINEL!r} + json.dumps({expr}))\n'
+    return f"print({RESULT_SENTINEL!r} + json.dumps({expr}))\n"
 
 
 def build_describe_scene() -> str:
-    return _preamble() + '''
+    return (
+        _preamble()
+        + """
 bpy.context.view_layer.update()
 scene = bpy.context.scene
 objects = []
@@ -133,11 +135,17 @@ payload = {
         else None
     ),
 }
-''' + _emit("payload")
+"""
+        + _emit("payload")
+    )
 
 
-def build_render_view(output_path: str, resolution: int = 640, samples: int = 32) -> str:
-    return _preamble() + f'''
+def build_render_view(
+    output_path: str, resolution: int = 640, samples: int = 32
+) -> str:
+    return (
+        _preamble()
+        + f"""
 scene = bpy.context.scene
 scene.render.resolution_x = {int(resolution)}
 scene.render.resolution_y = {int(resolution)}
@@ -152,11 +160,15 @@ else:
     bpy.ops.render.render(write_still=True)
     payload = {{"rendered": {output_path!r},
                 "resolution": [scene.render.resolution_x, scene.render.resolution_y]}}
-''' + _emit("payload")
+"""
+        + _emit("payload")
+    )
 
 
 def build_import_asset(path: str, clear_scene: bool = True) -> str:
-    return _preamble() + f'''
+    return (
+        _preamble()
+        + f"""
 clear = {bool(clear_scene)!r}
 if clear:
     for obj in list(bpy.data.objects):
@@ -167,7 +179,9 @@ bpy.ops.import_scene.gltf(filepath={path!r})
 imported = [n for n in bpy.data.objects.keys() if n not in before]
 meshes = [n for n in imported if bpy.data.objects[n].type == "MESH"]
 payload = {{"imported": imported, "meshes": meshes}}
-''' + _emit("payload")
+"""
+        + _emit("payload")
+    )
 
 
 def build_set_camera(
@@ -184,7 +198,9 @@ def build_set_camera(
     multiplies the target's bounding-sphere radius, so the framing survives a change of
     asset scale.
     """
-    return _preamble() + f'''
+    return (
+        _preamble()
+        + f"""
 import math
 target_name = {target!r}
 candidates = [o for o in bpy.data.objects if o.type == "MESH"]
@@ -233,7 +249,9 @@ else:
                 "location": [round(v, 4) for v in cam.location],
                 "aimed_at": [round(v, 4) for v in centre],
                 "distance": round(dist, 4), "lens_mm": cam.data.lens}}
-''' + _emit("payload")
+"""
+        + _emit("payload")
+    )
 
 
 def build_set_light(
@@ -247,7 +265,9 @@ def build_set_light(
     """Lights orbit the subject on the same convention as the camera, and are named by
     role so the model can move one without disturbing the others."""
     rgb = list(color or [1.0, 1.0, 1.0])
-    return _preamble() + f'''
+    return (
+        _preamble()
+        + f"""
 import math
 role = {role!r}
 name = "AGENT_LIGHT_" + role.upper()
@@ -282,12 +302,16 @@ else:
     light.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
     payload = {{"light": name, "energy": light.data.energy,
                 "location": [round(v, 4) for v in light.location]}}
-''' + _emit("payload")
+"""
+        + _emit("payload")
+    )
 
 
 def build_set_world(strength: float, color: list[float] | None = None) -> str:
     rgb = list(color or [0.05, 0.05, 0.06])
-    return _preamble() + f'''
+    return (
+        _preamble()
+        + f"""
 scene = bpy.context.scene
 world = scene.world
 if world is None:
@@ -302,11 +326,17 @@ else:
     bg.inputs[0].default_value = (rgb[0], rgb[1], rgb[2], 1.0)
     bg.inputs[1].default_value = {float(strength)}
     payload = {{"world_strength": {float(strength)}, "world_color": list(rgb)}}
-''' + _emit("payload")
+"""
+        + _emit("payload")
+    )
 
 
-def build_move_object(name: str, dx: float = 0.0, dy: float = 0.0, dz: float = 0.0) -> str:
-    return _preamble() + f'''
+def build_move_object(
+    name: str, dx: float = 0.0, dy: float = 0.0, dz: float = 0.0
+) -> str:
+    return (
+        _preamble()
+        + f"""
 obj = bpy.data.objects.get({name!r})
 if obj is None:
     payload = {{"error": "no object named " + {name!r}}}
@@ -315,7 +345,9 @@ else:
                     obj.location.y + {float(dy)},
                     obj.location.z + {float(dz)})
     payload = {{"moved": obj.name, "location": [round(v, 4) for v in obj.location]}}
-''' + _emit("payload")
+"""
+        + _emit("payload")
+    )
 
 
 def build_set_render_settings(
@@ -329,7 +361,9 @@ def build_set_render_settings(
     `enum "BLENDER_EEVEE_NEXT" not found` against Blender 5.2. So the model names an
     engine loosely and the snippet matches it against whatever this build actually offers.
     """
-    return _preamble() + f'''
+    return (
+        _preamble()
+        + f"""
 scene = bpy.context.scene
 wanted = {engine!r}.strip().upper()
 available = [item.identifier for item in
@@ -349,7 +383,10 @@ else:
                 "film_transparent": bool(scene.render.film_transparent),
                 "exposure": round(scene.view_settings.exposure, 3),
                 "available": available}}
-''' + _emit("payload")
+"""
+        + _emit("payload")
+    )
+
 
 def build_clear_scene(keep_lights: bool = False) -> str:
     """Start from nothing.
@@ -358,7 +395,9 @@ def build_clear_scene(keep_lights: bool = False) -> str:
     it, improvised `import_asset("empty.glb")` and then fell back to deleting objects by
     guessed names. A missing verb does not stop a model; it makes one up.
     """
-    return _preamble() + f'''
+    return (
+        _preamble()
+        + f"""
 keep_lights = {bool(keep_lights)!r}
 removable = {{"MESH", "ARMATURE", "EMPTY", "CURVE", "SURFACE", "META", "FONT"}}
 if not keep_lights:
@@ -369,7 +408,9 @@ for obj in list(bpy.data.objects):
         removed.append(obj.name)
         bpy.data.objects.remove(obj, do_unlink=True)
 payload = {{"removed": removed, "count": len(removed)}}
-''' + _emit("payload")
+"""
+        + _emit("payload")
+    )
 
 
 def build_add_primitive(
@@ -392,7 +433,9 @@ def build_add_primitive(
     loc = list(location or [0.0, 0.0, 0.0])[:3] + [0.0, 0.0, 0.0]
     rot = list(rotation or [0.0, 0.0, 0.0])[:3] + [0.0, 0.0, 0.0]
     scl = list(scale or [1.0, 1.0, 1.0])[:3] + [1.0, 1.0, 1.0]
-    return _preamble() + f'''
+    return (
+        _preamble()
+        + f"""
 import math
 adders = {{
     "cube": lambda: bpy.ops.mesh.primitive_cube_add(size={float(size)}),
@@ -423,7 +466,9 @@ else:
     payload = {{"created": obj.name, "kind": kind,
                 "location": [round(v, 4) for v in obj.location],
                 "dimensions": [round(v, 4) for v in obj.dimensions]}}
-''' + _emit("payload")
+"""
+        + _emit("payload")
+    )
 
 
 def build_set_object_transform(
@@ -440,7 +485,9 @@ def build_set_object_transform(
     loc = list(location)[:3] if location is not None else None
     rot = list(rotation)[:3] if rotation is not None else None
     scl = list(scale)[:3] if scale is not None else None
-    return _preamble() + f'''
+    return (
+        _preamble()
+        + f"""
 import math
 obj = bpy.data.objects.get({name!r})
 location = {loc!r}
@@ -461,7 +508,9 @@ else:
                 "rotation_deg": [round(math.degrees(a), 2) for a in obj.rotation_euler],
                 "scale": [round(v, 4) for v in obj.scale],
                 "dimensions": [round(v, 4) for v in obj.dimensions]}}
-''' + _emit("payload")
+"""
+        + _emit("payload")
+    )
 
 
 def build_set_material(
@@ -486,7 +535,9 @@ def build_set_material(
             '{"error": "set_material needs name (one object) or names (several)"}'
         )
     rgb = (list(color)[:3] + [0.0, 0.0, 0.0])[:3]
-    return _preamble() + f'''
+    return (
+        _preamble()
+        + f"""
 targets = {targets!r}
 rgb = tuple({rgb!r})
 key = "AGENT_MAT_%.3f_%.3f_%.3f_%.2f_%.2f" % (rgb[0], rgb[1], rgb[2], {float(roughness)}, {float(metallic)})
@@ -512,7 +563,9 @@ for target in targets:
 payload = {{"coloured": coloured, "material": key, "color": list(rgb)}}
 if missing:
     payload["not_found"] = missing
-''' + _emit("payload")
+"""
+        + _emit("payload")
+    )
 
 
 def build_duplicate_grid(
@@ -526,7 +579,9 @@ def build_duplicate_grid(
     """
     counts = [max(1, int(c)) for c in (list(counts)[:3] + [1, 1, 1])[:3]]
     space = (list(spacing)[:3] + [0.0, 0.0, 0.0])[:3]
-    return _preamble() + f'''
+    return (
+        _preamble()
+        + f"""
 source = bpy.data.objects.get({name!r})
 counts = {counts!r}
 spacing = {space!r}
@@ -558,7 +613,9 @@ else:
                                  source.location.z + k * spacing[2])
                 created.append(copy.name)
     payload = {{"created": created, "count": len(created)}}
-''' + _emit("payload")
+"""
+        + _emit("payload")
+    )
 
 
 def build_mirror_object(name: str, new_name: str, axis: str = "x") -> str:
@@ -574,7 +631,9 @@ def build_mirror_object(name: str, new_name: str, axis: str = "x") -> str:
     Scale is negated rather than the mesh rebuilt, so a mirrored part stays linked in
     shape to its original.
     """
-    return _preamble() + f'''
+    return (
+        _preamble()
+        + f"""
 source = bpy.data.objects.get({name!r})
 axis = {axis!r}.strip().lower()
 index = {{"x": 0, "y": 1, "z": 2}}.get(axis)
@@ -598,18 +657,24 @@ else:
     bpy.context.view_layer.update()
     payload = {{"created": copy.name, "mirrored": source.name, "axis": axis,
                 "location": [round(v, 4) for v in copy.location]}}
-''' + _emit("payload")
+"""
+        + _emit("payload")
+    )
 
 
 def build_delete_object(name: str) -> str:
-    return _preamble() + f'''
+    return (
+        _preamble()
+        + f"""
 obj = bpy.data.objects.get({name!r})
 if obj is None:
     payload = {{"error": "no object named " + {name!r}}}
 else:
     bpy.data.objects.remove(obj, do_unlink=True)
     payload = {{"deleted": {name!r}}}
-''' + _emit("payload")
+"""
+        + _emit("payload")
+    )
 
 
 TOOLS: dict[str, Tool] = {
@@ -631,8 +696,14 @@ TOOLS: dict[str, Tool] = {
             "how you see your own work; call it after any change you want to judge.",
             _obj(
                 {
-                    "resolution": {**_NUM, "description": "Square pixel size, 256-1024."},
-                    "samples": {**_NUM, "description": "Cycles samples. 32 is enough to judge."},
+                    "resolution": {
+                        **_NUM,
+                        "description": "Square pixel size, 256-1024.",
+                    },
+                    "samples": {
+                        **_NUM,
+                        "description": "Cycles samples. 32 is enough to judge.",
+                    },
                 },
                 [],
             ),
@@ -642,8 +713,13 @@ TOOLS: dict[str, Tool] = {
             "import_asset",
             "modify",
             "Import a .glb asset into the scene, clearing any previous mesh first.",
-            _obj({"path": {**_STR, "description": "Filesystem path to the .glb."},
-                  "clear_scene": {"type": "boolean"}}, ["path"]),
+            _obj(
+                {
+                    "path": {**_STR, "description": "Filesystem path to the .glb."},
+                    "clear_scene": {"type": "boolean"},
+                },
+                ["path"],
+            ),
             build_import_asset,
         ),
         Tool(
@@ -658,9 +734,15 @@ TOOLS: dict[str, Tool] = {
             _obj(
                 {
                     "azimuth": {**_NUM, "description": "Degrees, 0 is front."},
-                    "elevation": {**_NUM, "description": "Degrees, negative looks up from below."},
+                    "elevation": {
+                        **_NUM,
+                        "description": "Degrees, negative looks up from below.",
+                    },
                     "distance_factor": _NUM,
-                    "lens_mm": {**_NUM, "description": "Focal length; 85 flatters a face, 28 distorts."},
+                    "lens_mm": {
+                        **_NUM,
+                        "description": "Focal length; 85 flatters a face, 28 distorts.",
+                    },
                     "target": {**_STR, "description": "Optional mesh name to frame."},
                 },
                 ["azimuth", "elevation"],
@@ -679,9 +761,19 @@ TOOLS: dict[str, Tool] = {
                     "role": {"type": "string", "enum": ["key", "fill", "rim"]},
                     "azimuth": _NUM,
                     "elevation": _NUM,
-                    "energy": {**_NUM, "description": "Watts. Start near 200 and judge by eye."},
-                    "size": {**_NUM, "description": "Area size as a fraction of subject radius; bigger is softer."},
-                    "color": {"type": "array", "items": _NUM, "description": "RGB 0-1."},
+                    "energy": {
+                        **_NUM,
+                        "description": "Watts. Start near 200 and judge by eye.",
+                    },
+                    "size": {
+                        **_NUM,
+                        "description": "Area size as a fraction of subject radius; bigger is softer.",
+                    },
+                    "color": {
+                        "type": "array",
+                        "items": _NUM,
+                        "description": "RGB 0-1.",
+                    },
                 },
                 ["role", "azimuth", "elevation", "energy"],
             ),
@@ -692,7 +784,10 @@ TOOLS: dict[str, Tool] = {
             "modify",
             "Set the world background colour and strength, which is the ambient light "
             "everything sits in.",
-            _obj({"strength": _NUM, "color": {"type": "array", "items": _NUM}}, ["strength"]),
+            _obj(
+                {"strength": _NUM, "color": {"type": "array", "items": _NUM}},
+                ["strength"],
+            ),
             build_set_world,
         ),
         Tool(
@@ -719,15 +814,35 @@ TOOLS: dict[str, Tool] = {
             "make it descriptive. size is the full width in Blender units.",
             _obj(
                 {
-                    "kind": {"type": "string",
-                             "enum": ["cube", "sphere", "cylinder", "cone", "torus", "plane"]},
+                    "kind": {
+                        "type": "string",
+                        "enum": [
+                            "cube",
+                            "sphere",
+                            "cylinder",
+                            "cone",
+                            "torus",
+                            "plane",
+                        ],
+                    },
                     "name": _STR,
-                    "location": {"type": "array", "items": _NUM, "description": "[x, y, z]."},
+                    "location": {
+                        "type": "array",
+                        "items": _NUM,
+                        "description": "[x, y, z].",
+                    },
                     "size": {**_NUM, "description": "Overall width before scaling."},
-                    "rotation": {"type": "array", "items": _NUM, "description": "[x, y, z] degrees."},
-                    "scale": {"type": "array", "items": _NUM,
-                              "description": "[x, y, z] stretch. Use this to make a flat "
-                                             "torso or a long limb from a cube in one call."},
+                    "rotation": {
+                        "type": "array",
+                        "items": _NUM,
+                        "description": "[x, y, z] degrees.",
+                    },
+                    "scale": {
+                        "type": "array",
+                        "items": _NUM,
+                        "description": "[x, y, z] stretch. Use this to make a flat "
+                        "torso or a long limb from a cube in one call.",
+                    },
                 },
                 ["kind", "name"],
             ),
@@ -758,9 +873,16 @@ TOOLS: dict[str, Tool] = {
             _obj(
                 {
                     "name": {**_STR, "description": "A single object to colour."},
-                    "names": {"type": "array", "items": _STR,
-                              "description": "Several objects to colour the same way."},
-                    "color": {"type": "array", "items": _NUM, "description": "RGB, each 0-1."},
+                    "names": {
+                        "type": "array",
+                        "items": _STR,
+                        "description": "Several objects to colour the same way.",
+                    },
+                    "color": {
+                        "type": "array",
+                        "items": _NUM,
+                        "description": "RGB, each 0-1.",
+                    },
                     "roughness": _NUM,
                     "metallic": _NUM,
                 },
@@ -816,9 +938,12 @@ TOOLS: dict[str, Tool] = {
             "exposure in stops. Use eevee while you are iterating.",
             _obj(
                 {
-                    "engine": {"type": "string", "enum": ["eevee", "cycles", "workbench"],
-                               "description": "eevee is fast and good enough to judge by; "
-                                              "cycles is slow and accurate."},
+                    "engine": {
+                        "type": "string",
+                        "enum": ["eevee", "cycles", "workbench"],
+                        "description": "eevee is fast and good enough to judge by; "
+                        "cycles is slow and accurate.",
+                    },
                     "film_transparent": {"type": "boolean"},
                     "exposure": _NUM,
                 },
@@ -833,8 +958,9 @@ OBSERVE_TOOLS = tuple(n for n, t in TOOLS.items() if t.kind == "observe")
 MODIFY_TOOLS = tuple(n for n, t in TOOLS.items() if t.kind == "modify")
 
 
-def build_call(name: str, arguments: dict[str, Any],
-               injected: dict[str, Any] | None = None) -> str:
+def build_call(
+    name: str, arguments: dict[str, Any], injected: dict[str, Any] | None = None
+) -> str:
     """Turn one model tool call into the bpy that runs it.
 
     Unknown tools and unknown arguments are refused rather than ignored: a model that
@@ -852,7 +978,9 @@ def build_call(name: str, arguments: dict[str, Any],
     allowed = set(tool.parameters.get("properties", {}))
     unknown = sorted(set(arguments) - allowed)
     if unknown:
-        raise TypeError(f"{name} got unknown argument(s) {unknown}; accepts {sorted(allowed)}")
+        raise TypeError(
+            f"{name} got unknown argument(s) {unknown}; accepts {sorted(allowed)}"
+        )
     missing = sorted(set(tool.parameters.get("required", [])) - set(arguments))
     if missing:
         raise TypeError(f"{name} is missing required argument(s) {missing}")
@@ -879,14 +1007,16 @@ def parse_response(raw: str) -> dict[str, Any]:
     marker = stdout.rfind(RESULT_SENTINEL)
     if marker < 0:
         return {"error": "tool produced no result line", "stdout": stdout[-500:]}
-    line = stdout[marker + len(RESULT_SENTINEL):].splitlines()[0]
+    line = stdout[marker + len(RESULT_SENTINEL) :].splitlines()[0]
     try:
         return json.loads(line)
     except json.JSONDecodeError as exc:
         return {"error": f"unparseable result line: {exc}", "raw": line[:500]}
 
 
-def send(code: str, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, timeout: int = 300) -> str:
+def send(
+    code: str, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, timeout: int = 300
+) -> str:
     """Same protocol the other blender_* scripts use: one execute_code request per call."""
     request = {"type": "execute_code", "params": {"code": code}}
     with socket.create_connection((host, port), timeout=10) as connection:
@@ -945,9 +1075,32 @@ def image_message(path: Path, note: str) -> dict[str, Any]:
         "role": "user",
         "content": [
             {"type": "text", "text": note},
-            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}},
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{encoded}"},
+            },
         ],
     }
+
+
+def tool_round_messages(tool_results, render_message):
+    """Every tool result for the round, then at most one render picture.
+
+    A picture is a user message. Putting it between tool results makes the next
+    request illegal, and the run stops instead of showing the picture.
+    """
+    messages = []
+    for result in tool_results:
+        messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": result["tool_call_id"],
+                "content": result["content"],
+            }
+        )
+    if render_message is not None:
+        messages.append(render_message)
+    return messages
 
 
 def needs_forced_render(called: list[str]) -> bool:
@@ -963,8 +1116,9 @@ def needs_forced_render(called: list[str]) -> bool:
     so it cannot be left to the model's goodwill. If a round modified the scene without
     rendering, the harness renders anyway and hands back the picture.
     """
-    modified = any(TOOLS.get(name) is not None and TOOLS[name].kind == "modify"
-                   for name in called)
+    modified = any(
+        TOOLS.get(name) is not None and TOOLS[name].kind == "modify" for name in called
+    )
     return modified and "render_view" not in called
 
 
@@ -974,7 +1128,9 @@ class RunLog:
     calls: list[dict[str, Any]] = field(default_factory=list)
     renders: list[str] = field(default_factory=list)
 
-    def record(self, name: str, arguments: dict[str, Any], result: dict[str, Any]) -> None:
+    def record(
+        self, name: str, arguments: dict[str, Any], result: dict[str, Any]
+    ) -> None:
         self.calls.append({"tool": name, "arguments": arguments, "result": result})
 
     def write(self, messages: list[dict[str, Any]]) -> None:
@@ -993,8 +1149,13 @@ class RunLog:
         (self.directory / "transcript.json").write_text(json.dumps(trimmed, indent=2))
 
 
-def chat(api: str, model: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]],
-         timeout: int = 600) -> dict[str, Any]:
+def chat(
+    api: str,
+    model: str,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    timeout: int = 600,
+) -> dict[str, Any]:
     payload = {
         "model": model,
         "messages": messages,
@@ -1011,7 +1172,9 @@ def chat(api: str, model: str, messages: list[dict[str, Any]], tools: list[dict[
         return json.loads(response.read().decode("utf-8"))
 
 
-def opening_messages(task: str, asset: Path | None, reference: Path | None) -> list[dict[str, Any]]:
+def opening_messages(
+    task: str, asset: Path | None, reference: Path | None
+) -> list[dict[str, Any]]:
     """The first user turn, which is the only place the target enters the conversation.
 
     A reference image turns the run into inverse graphics: the model is no longer staging
@@ -1026,18 +1189,30 @@ def opening_messages(task: str, asset: Path | None, reference: Path | None) -> l
         {"role": "user", "content": opening},
     ]
     if reference is not None:
-        messages.append(image_message(
-            reference,
-            "This is the reference to match. Study it, then build toward it. After every "
-            "render, compare your render against this reference and name the single "
-            "biggest difference.",
-        ))
+        messages.append(
+            image_message(
+                reference,
+                "This is the reference to match. Study it, then build toward it. After every "
+                "render, compare your render against this reference and name the single "
+                "biggest difference.",
+            )
+        )
     return messages
 
 
-def run(task: str, asset: Path | None, model: str, api: str, out_dir: Path,
-        max_rounds: int, host: str, port: int, resolution: int,
-        reference: Path | None = None, auto_render: bool = True) -> int:
+def run(
+    task: str,
+    asset: Path | None,
+    model: str,
+    api: str,
+    out_dir: Path,
+    max_rounds: int,
+    host: str,
+    port: int,
+    resolution: int,
+    reference: Path | None = None,
+    auto_render: bool = True,
+) -> int:
     # Absolute, always. The generated code runs inside Blender, whose working directory
     # is not ours, so a relative --out-dir made every render fail with "Render error
     # (Read-only file system)" while every other tool succeeded. Found on the second live
@@ -1059,8 +1234,10 @@ def run(task: str, asset: Path | None, model: str, api: str, out_dir: Path,
             reply = chat(api, model, messages, schemas)
         except urllib.error.URLError as exc:
             print(f"cannot reach the model API at {api}: {exc}", file=sys.stderr)
-            print("start LM Studio's server ('lms server start') and load the model.",
-                  file=sys.stderr)
+            print(
+                "start LM Studio's server ('lms server start') and load the model.",
+                file=sys.stderr,
+            )
             return 2
         choice = reply["choices"][0]["message"]
         messages.append(choice)
@@ -1073,6 +1250,8 @@ def run(task: str, asset: Path | None, model: str, api: str, out_dir: Path,
             break
 
         called: list[str] = []
+        tool_results = []
+        render_message = None
         for call in calls:
             name = call["function"]["name"]
             called.append(name)
@@ -1084,7 +1263,9 @@ def run(task: str, asset: Path | None, model: str, api: str, out_dir: Path,
             else:
                 injected: dict[str, Any] = {}
                 if name == "render_view":
-                    injected["output_path"] = str(out_dir / f"round{round_index:02d}.png")
+                    injected["output_path"] = str(
+                        out_dir / f"round{round_index:02d}.png"
+                    )
                     arguments.setdefault("resolution", resolution)
                 try:
                     code = build_call(name, arguments, injected)
@@ -1092,66 +1273,103 @@ def run(task: str, asset: Path | None, model: str, api: str, out_dir: Path,
                     result = {"error": str(exc)}
                 else:
                     result = parse_response(send(code, host, port))
-            print(f"    -> {name}({json.dumps(arguments)[:120]}) = {json.dumps(result)[:160]}")
+            print(
+                f"    -> {name}({json.dumps(arguments)[:120]}) = {json.dumps(result)[:160]}"
+            )
             log.record(name, arguments, result)
-            messages.append({
-                "role": "tool",
-                "tool_call_id": call.get("id", name),
-                "content": json.dumps(result),
-            })
+            tool_results.append(
+                {
+                    "tool_call_id": call.get("id", name),
+                    "content": json.dumps(result),
+                }
+            )
             if name == "render_view" and "rendered" in result:
                 path = Path(result["rendered"])
                 if path.exists():
                     log.renders.append(str(path))
-                    messages.append(image_message(path, "Here is that render. What is wrong with it?"))
+                    render_message = image_message(
+                        path, "Here is that render. What is wrong with it?"
+                    )
+        messages.extend(tool_round_messages(tool_results, render_message))
 
         if auto_render and needs_forced_render(called):
             forced = out_dir / f"round{round_index:02d}-auto.png"
-            result = parse_response(send(
-                build_call("render_view", {"resolution": resolution},
-                           {"output_path": str(forced)}), host, port))
+            result = parse_response(
+                send(
+                    build_call(
+                        "render_view",
+                        {"resolution": resolution},
+                        {"output_path": str(forced)},
+                    ),
+                    host,
+                    port,
+                )
+            )
             print(f"    -> render_view(forced) = {json.dumps(result)[:120]}")
             log.record("render_view", {"forced": True}, result)
             if "rendered" in result and forced.exists():
                 log.renders.append(str(forced))
-                messages.append(image_message(
-                    forced,
-                    "You changed the scene without looking at it, so here is the render. "
-                    "Name the single biggest thing wrong with it, then fix only that.",
-                ))
+                messages.append(
+                    image_message(
+                        forced,
+                        "You changed the scene without looking at it, so here is the render. "
+                        "Name the single biggest thing wrong with it, then fix only that.",
+                    )
+                )
 
         log.write(messages)
 
     log.write(messages)
-    print(f"\n{len(log.calls)} tool calls, {len(log.renders)} renders, logged in {out_dir}")
+    print(
+        f"\n{len(log.calls)} tool calls, {len(log.renders)} renders, logged in {out_dir}"
+    )
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--task", required=True, help="What the model should achieve.")
     parser.add_argument("--asset", type=Path, help="A .glb to import before starting.")
-    parser.add_argument("--reference", type=Path,
-                        help="A target image to build toward. Turns the run into "
-                             "inverse graphics: match this picture.")
-    parser.add_argument("--model", default="gemma-4-31b-it-qat",
-                        help="Model id as the local server reports it. gemma-4-12b-qat "
-                             "does NOT work: LM Studio cannot render tool schemas into "
-                             "its Jinja template and every request 400s.")
-    parser.add_argument("--api", default=DEFAULT_API, help="OpenAI-compatible base URL.")
-    parser.add_argument("--out-dir", type=Path, required=True,
-                        help="Where renders and the transcript are written.")
+    parser.add_argument(
+        "--reference",
+        type=Path,
+        help="A target image to build toward. Turns the run into "
+        "inverse graphics: match this picture.",
+    )
+    parser.add_argument(
+        "--model",
+        default="gemma-4-31b-it-qat",
+        help="Model id as the local server reports it. gemma-4-12b-qat "
+        "does NOT work: LM Studio cannot render tool schemas into "
+        "its Jinja template and every request 400s.",
+    )
+    parser.add_argument(
+        "--api", default=DEFAULT_API, help="OpenAI-compatible base URL."
+    )
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        required=True,
+        help="Where renders and the transcript are written.",
+    )
     parser.add_argument("--max-rounds", type=int, default=12)
-    parser.add_argument("--no-auto-render", action="store_true",
-                        help="Do not force a render after a round that changed the scene "
-                             "without looking. Only useful for measuring how well the "
-                             "model self-regulates, which on the evidence is badly.")
+    parser.add_argument(
+        "--no-auto-render",
+        action="store_true",
+        help="Do not force a render after a round that changed the scene "
+        "without looking. Only useful for measuring how well the "
+        "model self-regulates, which on the evidence is badly.",
+    )
     parser.add_argument("--resolution", type=int, default=512)
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-    parser.add_argument("--list-tools", action="store_true",
-                        help="Print the skill library and exit, without touching Blender.")
+    parser.add_argument(
+        "--list-tools",
+        action="store_true",
+        help="Print the skill library and exit, without touching Blender.",
+    )
     args = parser.parse_args(argv)
 
     if args.list_tools:
@@ -1165,9 +1383,19 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(f"no such asset: {args.asset}")
     if args.reference is not None and not args.reference.exists():
         parser.error(f"no such reference image: {args.reference}")
-    return run(args.task, args.asset, args.model, args.api, args.out_dir,
-               args.max_rounds, args.host, args.port, args.resolution, args.reference,
-               not args.no_auto_render)
+    return run(
+        args.task,
+        args.asset,
+        args.model,
+        args.api,
+        args.out_dir,
+        args.max_rounds,
+        args.host,
+        args.port,
+        args.resolution,
+        args.reference,
+        not args.no_auto_render,
+    )
 
 
 if __name__ == "__main__":

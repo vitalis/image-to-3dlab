@@ -25,7 +25,9 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 
 def _load():
     sys.path.insert(0, str(SCRIPTS))
-    spec = importlib.util.spec_from_file_location("blender_agent", SCRIPTS / "blender_agent.py")
+    spec = importlib.util.spec_from_file_location(
+        "blender_agent", SCRIPTS / "blender_agent.py"
+    )
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -41,22 +43,71 @@ SAMPLE_CALLS: dict[str, tuple[dict, dict]] = {
     "describe_scene": ({}, {}),
     "render_view": ({"resolution": 512, "samples": 16}, {"output_path": "/tmp/r.png"}),
     "import_asset": ({"path": "/tmp/a.glb", "clear_scene": True}, {}),
-    "set_camera": ({"azimuth": 35, "elevation": 12, "distance_factor": 2.5,
-                    "lens_mm": 85, "target": "Mesh"}, {}),
-    "set_light": ({"role": "key", "azimuth": -40, "elevation": 30, "energy": 250,
-                   "size": 1.5, "color": [1.0, 0.95, 0.9]}, {}),
+    "set_camera": (
+        {
+            "azimuth": 35,
+            "elevation": 12,
+            "distance_factor": 2.5,
+            "lens_mm": 85,
+            "target": "Mesh",
+        },
+        {},
+    ),
+    "set_light": (
+        {
+            "role": "key",
+            "azimuth": -40,
+            "elevation": 30,
+            "energy": 250,
+            "size": 1.5,
+            "color": [1.0, 0.95, 0.9],
+        },
+        {},
+    ),
     "set_world": ({"strength": 0.4, "color": [0.05, 0.06, 0.08]}, {}),
     "move_object": ({"name": "Mesh", "dx": 0.1, "dy": 0.0, "dz": -0.2}, {}),
-    "set_render_settings": ({"engine": "eevee", "film_transparent": False,
-                             "exposure": 0.5}, {}),
-    "add_primitive": ({"kind": "cube", "name": "cubelet", "location": [0, 0, 0],
-                       "size": 0.98, "rotation": [0, 0, 45], "scale": [1, 0.5, 2]}, {}),
-    "set_object_transform": ({"name": "cubelet", "location": [1, 0, 0],
-                              "rotation": [0, 0, 90], "scale": [1, 1, 2]}, {}),
-    "set_material": ({"name": "cubelet", "color": [0.9, 0.1, 0.1], "roughness": 0.4,
-                      "metallic": 0.0}, {}),
-    "duplicate_grid": ({"name": "cubelet", "counts": [3, 3, 3],
-                        "spacing": [1.0, 1.0, 1.0], "prefix": "cube_"}, {}),
+    "set_render_settings": (
+        {"engine": "eevee", "film_transparent": False, "exposure": 0.5},
+        {},
+    ),
+    "add_primitive": (
+        {
+            "kind": "cube",
+            "name": "cubelet",
+            "location": [0, 0, 0],
+            "size": 0.98,
+            "rotation": [0, 0, 45],
+            "scale": [1, 0.5, 2],
+        },
+        {},
+    ),
+    "set_object_transform": (
+        {
+            "name": "cubelet",
+            "location": [1, 0, 0],
+            "rotation": [0, 0, 90],
+            "scale": [1, 1, 2],
+        },
+        {},
+    ),
+    "set_material": (
+        {
+            "name": "cubelet",
+            "color": [0.9, 0.1, 0.1],
+            "roughness": 0.4,
+            "metallic": 0.0,
+        },
+        {},
+    ),
+    "duplicate_grid": (
+        {
+            "name": "cubelet",
+            "counts": [3, 3, 3],
+            "spacing": [1.0, 1.0, 1.0],
+            "prefix": "cube_",
+        },
+        {},
+    ),
     "delete_object": ({"name": "cubelet"}, {}),
     "clear_scene": ({"keep_lights": True}, {}),
     "mirror_object": ({"name": "eye_l", "new_name": "eye_r", "axis": "x"}, {}),
@@ -91,7 +142,9 @@ def test_required_arguments_only_are_enough(name):
     schema does not mark required, that is a crash mid-run."""
     tool = agent.TOOLS[name]
     arguments, injected = SAMPLE_CALLS[name]
-    minimal = {k: v for k, v in arguments.items() if k in tool.parameters.get("required", [])}
+    minimal = {
+        k: v for k, v in arguments.items() if k in tool.parameters.get("required", [])
+    }
     code = agent.build_call(name, minimal, injected)
     compile(code, f"<{name}>", "exec")
 
@@ -152,25 +205,31 @@ def test_string_arguments_cannot_break_out_of_the_snippet():
     code = agent.build_call("import_asset", {"path": nasty})
     compile(code, "<nasty>", "exec")
     tree = ast.parse(code)
-    literals = {node.value for node in ast.walk(tree) if isinstance(node, ast.Constant)
-                and isinstance(node.value, str)}
+    literals = {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
     assert nasty in literals  # present as one literal, not spliced into source
     assert "os.system" not in {
         getattr(getattr(node.func, "value", None), "id", None)
-        for node in ast.walk(tree) if isinstance(node, ast.Call)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
     }
 
 
 def test_parse_response_reads_the_result_line():
-    stdout = f"Info: some blender chatter\n{agent.RESULT_SENTINEL}{{\"camera\": \"AGENT_CAM\"}}\n"
+    stdout = f'Info: some blender chatter\n{agent.RESULT_SENTINEL}{{"camera": "AGENT_CAM"}}\n'
     raw = json.dumps({"status": "success", "result": {"result": stdout}})
     assert agent.parse_response(raw) == {"camera": "AGENT_CAM"}
 
 
 def test_parse_response_prefers_the_last_result_line():
     """Blender's stdout is shared and can still hold a previous call's line."""
-    stdout = (f"{agent.RESULT_SENTINEL}{{\"stale\": true}}\n"
-              f"{agent.RESULT_SENTINEL}{{\"fresh\": true}}\n")
+    stdout = (
+        f'{agent.RESULT_SENTINEL}{{"stale": true}}\n'
+        f'{agent.RESULT_SENTINEL}{{"fresh": true}}\n'
+    )
     raw = json.dumps({"status": "success", "result": {"result": stdout}})
     assert agent.parse_response(raw) == {"fresh": True}
 
@@ -193,7 +252,9 @@ def test_image_message_carries_a_data_uri(tmp_path):
     assert message["role"] == "user"
     kinds = [part["type"] for part in message["content"]]
     assert kinds == ["text", "image_url"]
-    assert message["content"][1]["image_url"]["url"].startswith("data:image/png;base64,")
+    assert message["content"][1]["image_url"]["url"].startswith(
+        "data:image/png;base64,"
+    )
 
 
 def test_run_log_strips_images_from_the_transcript(tmp_path):
@@ -201,10 +262,16 @@ def test_run_log_strips_images_from_the_transcript(tmp_path):
     log.record("set_camera", {"azimuth": 0, "elevation": 0}, {"camera": "AGENT_CAM"})
     messages = [
         {"role": "user", "content": "go"},
-        {"role": "user", "content": [
-            {"type": "text", "text": "look"},
-            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
-        ]},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "look"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,AAAA"},
+                },
+            ],
+        },
     ]
     log.write(messages)
     written = (tmp_path / "run" / "transcript.json").read_text()
@@ -223,7 +290,9 @@ def test_list_tools_needs_no_blender(capsys):
 def test_transform_arguments_survive_being_omitted():
     """set_object_transform takes three optional vectors; a None must reach Blender as a
     literal None, not as the string "None"."""
-    code = agent.build_call("set_object_transform", {"name": "cubelet", "scale": [2, 2, 2]})
+    code = agent.build_call(
+        "set_object_transform", {"name": "cubelet", "scale": [2, 2, 2]}
+    )
     compile(code, "<transform>", "exec")
     tree = ast.parse(code)
     names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
@@ -234,15 +303,18 @@ def test_transform_arguments_survive_being_omitted():
 def test_duplicate_grid_refuses_a_runaway():
     """A model that means 3 and types 30 gets an error, not a hung Blender. The cap lives
     in the generated code, so assert it is actually in there."""
-    code = agent.build_call("duplicate_grid",
-                            {"name": "cubelet", "counts": [30, 30, 30], "spacing": [1, 1, 1]})
+    code = agent.build_call(
+        "duplicate_grid",
+        {"name": "cubelet", "counts": [30, 30, 30], "spacing": [1, 1, 1]},
+    )
     assert "200" in code
     compile(code, "<grid>", "exec")
 
 
 def test_duplicate_grid_clamps_counts_to_at_least_one():
-    code = agent.build_call("duplicate_grid",
-                            {"name": "c", "counts": [0, -4, 3], "spacing": [1, 1, 1]})
+    code = agent.build_call(
+        "duplicate_grid", {"name": "c", "counts": [0, -4, 3], "spacing": [1, 1, 1]}
+    )
     assert "[1, 1, 3]" in code
 
 
@@ -257,9 +329,11 @@ def test_primitive_kinds_in_the_schema_all_exist_in_the_builder():
 
 def test_short_vectors_do_not_crash_the_builder():
     """Models emit [0, 0] for a 3-vector often enough that it must not raise."""
-    for args in ({"kind": "cube", "name": "a", "location": []},
-                 {"kind": "cube", "name": "b", "location": [1, 2]},
-                 {"kind": "cube", "name": "c", "rotation": [5]}):
+    for args in (
+        {"kind": "cube", "name": "a", "location": []},
+        {"kind": "cube", "name": "b", "location": [1, 2]},
+        {"kind": "cube", "name": "c", "rotation": [5]},
+    ):
         compile(agent.build_call("add_primitive", args), "<short>", "exec")
 
 
@@ -287,7 +361,9 @@ def test_opening_messages_mention_the_asset(tmp_path):
 def test_missing_reference_file_is_caught_before_the_model_loads():
     """Loading a 20 GB model and then failing on a typo'd path is a five-minute mistake."""
     with pytest.raises(SystemExit):
-        agent.main(["--task", "x", "--out-dir", "/tmp/u", "--reference", "/nope/absent.png"])
+        agent.main(
+            ["--task", "x", "--out-dir", "/tmp/u", "--reference", "/nope/absent.png"]
+        )
 
 
 def test_render_engine_is_resolved_against_the_running_blender():
@@ -304,6 +380,35 @@ def test_render_engine_schema_offers_only_loose_names():
     """The model should name an engine loosely; exact identifiers are version-specific."""
     enum = agent.TOOLS["set_render_settings"].parameters["properties"]["engine"]["enum"]
     assert all(not name.startswith("BLENDER_") for name in enum), enum
+
+
+def test_tool_results_for_a_round_come_before_the_render_image():
+    """A render picture is a user message. It must not split the tool results."""
+    messages = agent.tool_round_messages(
+        [
+            {"tool_call_id": "render", "content": '{"rendered": "a.png"}'},
+            {"tool_call_id": "move", "content": '{"ok": true}'},
+        ],
+        {"role": "user", "content": "picture"},
+    )
+    assert [message["role"] for message in messages] == ["tool", "tool", "user"]
+    assert messages[0]["tool_call_id"] == "render"
+    assert messages[1]["tool_call_id"] == "move"
+
+    quiet = agent.tool_round_messages(
+        [{"tool_call_id": "move", "content": "{}"}],
+        None,
+    )
+    assert [message["role"] for message in quiet] == ["tool"]
+
+
+def test_the_run_loop_does_not_append_the_picture_inside_the_tool_loop():
+    import inspect
+
+    source = inspect.getsource(agent.run)
+    assert "tool_round_messages" in source
+    loop = source.split("for call in calls", 1)[1].split("if auto_render", 1)[0]
+    assert "messages.append" not in loop
 
 
 def test_a_round_that_modifies_without_looking_gets_a_forced_render():
@@ -347,13 +452,25 @@ def test_run_makes_the_out_dir_absolute(tmp_path, monkeypatch):
     sent: list[str] = []
 
     def fake_chat(api, model, messages, tools, timeout=600):
-        return {"choices": [{"message": {"role": "assistant", "content": "done",
-                                         "tool_calls": []}}]}
+        return {
+            "choices": [
+                {"message": {"role": "assistant", "content": "done", "tool_calls": []}}
+            ]
+        }
 
     monkeypatch.setattr(agent, "chat", fake_chat)
     monkeypatch.setattr(agent, "send", lambda code, *a, **k: sent.append(code) or "{}")
-    agent.run("x", None, "m", "http://localhost", Path("relative/out"), 1,
-              "127.0.0.1", 9876, 256)
+    agent.run(
+        "x",
+        None,
+        "m",
+        "http://localhost",
+        Path("relative/out"),
+        1,
+        "127.0.0.1",
+        9876,
+        256,
+    )
     assert (tmp_path / "relative" / "out" / "transcript.json").exists()
 
 
@@ -361,14 +478,17 @@ def test_duplicate_grid_gives_each_copy_its_own_mesh():
     """Linked duplicates share a mesh datablock, and material slots live on the mesh. The
     first live Rubik's cube came out uniformly blue because of this: every set_material
     call repainted all 27 cubelets."""
-    code = agent.build_call("duplicate_grid",
-                            {"name": "c", "counts": [3, 3, 3], "spacing": [1, 1, 1]})
+    code = agent.build_call(
+        "duplicate_grid", {"name": "c", "counts": [3, 3, 3], "spacing": [1, 1, 1]}
+    )
     assert "source.data.copy()" in code
     assert "copy.data = source.data\n" not in code
 
 
 def test_set_material_colours_many_at_once():
-    code = agent.build_call("set_material", {"names": ["a", "b", "c"], "color": [1, 0, 0]})
+    code = agent.build_call(
+        "set_material", {"names": ["a", "b", "c"], "color": [1, 0, 0]}
+    )
     compile(code, "<mat>", "exec")
     assert "['a', 'b', 'c']" in code
 
@@ -396,7 +516,9 @@ def test_set_camera_ignores_flat_ground_by_default():
 
 def test_set_camera_honours_an_explicit_target_even_if_flat():
     """Naming the ground as the target must still frame the ground."""
-    code = agent.build_call("set_camera", {"azimuth": 0, "elevation": 0, "target": "floor"})
+    code = agent.build_call(
+        "set_camera", {"azimuth": 0, "elevation": 0, "target": "floor"}
+    )
     assert "if target_name:" in code
     compile(code, "<cam>", "exec")
 
@@ -404,8 +526,9 @@ def test_set_camera_honours_an_explicit_target_even_if_flat():
 def test_add_primitive_can_shape_in_one_call():
     """Creating then shaping as two calls doubles the round cost of every body part, and
     a forced render sits between rounds. A fifteen-part figure has to fit the budget."""
-    code = agent.build_call("add_primitive",
-                            {"kind": "cube", "name": "torso", "scale": [1.0, 0.5, 1.4]})
+    code = agent.build_call(
+        "add_primitive", {"kind": "cube", "name": "torso", "scale": [1.0, 0.5, 1.4]}
+    )
     assert "obj.scale" in code
     assert "[1.0, 0.5, 1.4]" in code
     compile(code, "<prim>", "exec")
@@ -416,12 +539,22 @@ def test_add_primitive_scale_defaults_to_unit():
     assert "[1.0, 1.0, 1.0]" in code
 
 
-@pytest.mark.parametrize("name,args,reader", [
-    ("add_primitive", {"kind": "cube", "name": "arm", "scale": [0.1, 0.1, 0.6]},
-     "obj.dimensions"),
-    ("set_object_transform", {"name": "arm", "scale": [0.1, 0.1, 0.6]}, "obj.dimensions"),
-    ("describe_scene", {}, "obj.matrix_world"),
-])
+@pytest.mark.parametrize(
+    "name,args,reader",
+    [
+        (
+            "add_primitive",
+            {"kind": "cube", "name": "arm", "scale": [0.1, 0.1, 0.6]},
+            "obj.dimensions",
+        ),
+        (
+            "set_object_transform",
+            {"name": "arm", "scale": [0.1, 0.1, 0.6]},
+            "obj.dimensions",
+        ),
+        ("describe_scene", {}, "obj.matrix_world"),
+    ],
+)
 def test_dimensions_are_read_after_the_depsgraph_refreshes(name, args, reader):
     """obj.dimensions derives from the object matrix and does not refresh until the
     dependency graph does. Without the update the payload reported the UNSCALED size: the

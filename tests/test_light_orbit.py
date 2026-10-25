@@ -48,15 +48,35 @@ def test_loop_is_seamless(mod):
 def test_elevation_is_held_constant(mod):
     """Elevation must not drift, or the highlight climbs instead of travelling."""
     frames = 36
-    elevations = {mod.key_light_rotation(f, frames, 47.0)[0] for f in range(1, frames + 1)}
+    elevations = {
+        mod.key_light_rotation(f, frames, 47.0)[0] for f in range(1, frames + 1)
+    }
     assert len(elevations) == 1
     assert elevations.pop() == pytest.approx(math.radians(47.0))
 
 
 def test_azimuth_advances_monotonically(mod):
     frames = 30
-    azimuths = [mod.key_light_rotation(f, frames, 50.0)[2] for f in range(1, frames + 1)]
+    azimuths = [
+        mod.key_light_rotation(f, frames, 50.0)[2] for f in range(1, frames + 1)
+    ]
     assert all(b > a for a, b in itertools.pairwise(azimuths))
+
+
+def test_eevee_name_comes_from_the_engines_this_blender_has(mod):
+    assert mod.pick_eevee({"BLENDER_EEVEE_NEXT", "CYCLES"}) == "BLENDER_EEVEE_NEXT"
+    assert mod.pick_eevee({"BLENDER_EEVEE", "CYCLES"}) == "BLENDER_EEVEE"
+    code = mod.TEMPLATE.format(
+        asset="a.glb",
+        out="out",
+        frames=4,
+        elevation=50.0,
+        res=32,
+        rotations="[]",
+        scripts="/scripts",
+    )
+    assert "pick_eevee(" in code
+    assert 'scn.render.engine = "BLENDER_EEVEE"' not in code
 
 
 def test_rejects_zero_frames(mod):

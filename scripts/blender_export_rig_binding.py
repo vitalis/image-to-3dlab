@@ -29,7 +29,7 @@ BONE_ID = "i2l_bone_id"
 
 
 def parse_args(argv: list[str]) -> tuple[Path, Path, Path, str]:
-    args = argv[argv.index("--") + 1:] if "--" in argv else []
+    args = argv[argv.index("--") + 1 :] if "--" in argv else []
     if len(args) != 4:
         raise SystemExit(
             "usage: blender ... --python blender_export_rig_binding.py -- "
@@ -45,15 +45,26 @@ def parse_args(argv: list[str]) -> tuple[Path, Path, Path, str]:
     return asset, scene, sidecar, args[3]
 
 
+def prepared_overwrites_open(open_path, prepared: Path) -> bool:
+    """True when saving the prepared blend would replace the file that is open."""
+    if not open_path:
+        return False
+    return (
+        Path(open_path).expanduser().resolve() == Path(prepared).expanduser().resolve()
+    )
+
+
 def _find_metarig(bpy, profile):
     tagged = [
-        obj for obj in bpy.data.objects
+        obj
+        for obj in bpy.data.objects
         if obj.type == "ARMATURE" and obj.get("i2l_adapter") == profile["id"]
     ]
     if len(tagged) == 1:
         return tagged[0]
     named = [
-        bpy.data.objects.get(name) for name in profile["blenderMetarigNames"]
+        bpy.data.objects.get(name)
+        for name in profile["blenderMetarigNames"]
         if bpy.data.objects.get(name) is not None
         and bpy.data.objects.get(name).type == "ARMATURE"
     ]
@@ -141,17 +152,25 @@ def main() -> int:
         )
     metarig = _find_metarig(bpy, profile)
     _ensure_ids(metarig, profile)
+    if prepared_overwrites_open(bpy.data.filepath, scene_path):
+        raise SystemExit(f"refusing to overwrite the open file: {scene_path}")
     scene_path.parent.mkdir(parents=True, exist_ok=True)
     sidecar_path.parent.mkdir(parents=True, exist_ok=True)
     bpy.ops.wm.save_as_mainfile(filepath=str(scene_path), check_existing=False)
     sidecar = build_sidecar(metarig, profile, asset_path, scene_path)
     sidecar_path.write_text(json.dumps(sidecar, indent=2, sort_keys=True) + "\n")
-    print("I2L_RIG_BINDING::" + json.dumps({
-        "adapter": adapter,
-        "joints": len(sidecar["joints"]),
-        "scene": str(scene_path),
-        "sidecar": str(sidecar_path),
-    }), flush=True)
+    print(
+        "I2L_RIG_BINDING::"
+        + json.dumps(
+            {
+                "adapter": adapter,
+                "joints": len(sidecar["joints"]),
+                "scene": str(scene_path),
+                "sidecar": str(sidecar_path),
+            }
+        ),
+        flush=True,
+    )
     return 0
 
 

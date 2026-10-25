@@ -92,10 +92,31 @@ print("STAGE_BAKE " + json.dumps({{
 '''
 
 
-def send(code: str, host: str, port: int) -> str:
+def frame_count(start: int | None, end: int | None, step: int) -> int | None:
+    """How many frames this call asked for. None when the action's own range is used."""
+    if start is None or end is None:
+        return None
+    if step < 1 or end < start:
+        return 0
+    return (end - start) // step + 1
+
+
+def read_timeout(count: int | None) -> float:
+    """Seconds to wait. A full action at this resolution often outlasts two minutes."""
+    if count is None:
+        return 3600.0
+    return max(120.0, count * 30.0)
+
+
+def stage_bake_exit(reply: str) -> int:
+    """The bake did not finish unless the reply carries the STAGE_BAKE line."""
+    return 0 if "STAGE_BAKE" in reply else 1
+
+
+def send(code: str, host: str, port: int, timeout: float) -> str:
     request = {"type": "execute_code", "params": {"code": code}}
     with socket.create_connection((host, port), timeout=10) as connection:
-        connection.settimeout(120)
+        connection.settimeout(timeout)
         connection.sendall(json.dumps(request).encode("utf-8"))
         chunks: list[bytes] = []
         while True:
@@ -116,27 +137,67 @@ def send(code: str, host: str, port: int) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", help="Action name already authored on the 'rig' armature")
-    parser.add_argument("--label", required=True, help="Character label used in output filenames, e.g. tempest-ram")
-    parser.add_argument("--az", type=float, required=True, help="CAM_TARGET Z rotation in degrees (35=stageFaceBL, 245=stageFaceTR)")
-    parser.add_argument("--el", type=float, default=-28.0, help="CAM_TARGET X rotation in degrees (locked dungeon-stage value)")
-    parser.add_argument("--ortho-scale", type=float, default=None, help="Override the camera's ortho scale; omit to use whatever is authored in the file")
+    parser.add_argument(
+        "action", help="Action name already authored on the 'rig' armature"
+    )
+    parser.add_argument(
+        "--label",
+        required=True,
+        help="Character label used in output filenames, e.g. tempest-ram",
+    )
+    parser.add_argument(
+        "--az",
+        type=float,
+        required=True,
+        help="CAM_TARGET Z rotation in degrees (35=stageFaceBL, 245=stageFaceTR)",
+    )
+    parser.add_argument(
+        "--el",
+        type=float,
+        default=-28.0,
+        help="CAM_TARGET X rotation in degrees (locked dungeon-stage value)",
+    )
+    parser.add_argument(
+        "--ortho-scale",
+        type=float,
+        default=None,
+        help="Override the camera's ortho scale; omit to use whatever is authored in the file",
+    )
     parser.add_argument("--frame-start", type=int, default=None)
     parser.add_argument("--frame-end", type=int, default=None)
-    parser.add_argument("--frame-step", type=int, default=1, help="1 = every native frame, 2 = half native fps, etc.")
-    parser.add_argument("--resolution", type=int, default=1024, help="Square render size; fast-preview default per the bake-spec pickup note")
+    parser.add_argument(
+        "--frame-step",
+        type=int,
+        default=1,
+        help="1 = every native frame, 2 = half native fps, etc.",
+    )
+    parser.add_argument(
+        "--resolution",
+        type=int,
+        default=1024,
+        help="Square render size; fast-preview default per the bake-spec pickup note",
+    )
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=9876)
     args = parser.parse_args()
 
     code = build_code(
-        args.action, args.az, args.el, args.ortho_scale,
-        args.frame_start, args.frame_end, args.frame_step,
-        args.resolution, args.output_dir, args.label,
+        args.action,
+        args.az,
+        args.el,
+        args.ortho_scale,
+        args.frame_start,
+        args.frame_end,
+        args.frame_step,
+        args.resolution,
+        args.output_dir,
+        args.label,
     )
-    print(send(code, args.host, args.port))
-    return 0
+    count = frame_count(args.frame_start, args.frame_end, args.frame_step)
+    reply = send(code, args.host, args.port, read_timeout(count))
+    print(reply)
+    return stage_bake_exit(reply)
 
 
 if __name__ == "__main__":

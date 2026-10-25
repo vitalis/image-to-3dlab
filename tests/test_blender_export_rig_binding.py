@@ -23,9 +23,9 @@ def test_parse_args_requires_explicit_typed_artifacts(tmp_path):
     scene = tmp_path / "prepared.blend"
     sidecar = tmp_path / "prepared.rig.json"
 
-    assert module.parse_args([
-        "blender", "--", str(asset), str(scene), str(sidecar), "adapter.v1"
-    ]) == (asset, scene, sidecar, "adapter.v1")
+    assert module.parse_args(
+        ["blender", "--", str(asset), str(scene), str(sidecar), "adapter.v1"]
+    ) == (asset, scene, sidecar, "adapter.v1")
 
 
 @pytest.mark.parametrize(
@@ -49,3 +49,14 @@ def test_exporter_stamps_persistent_scene_and_bone_ids():
     assert 'BONE_ID = "i2l_bone_id"' in source
     assert "save_as_mainfile" in source
     assert "asset_fingerprint(scene_path)" in source
+
+
+def test_prepared_path_refuses_to_be_the_open_file(tmp_path):
+    module = load_module()
+    blend = tmp_path / "open.blend"
+    blend.write_bytes(b"")
+    other = tmp_path / "prepared.blend"
+    assert module.prepared_overwrites_open(str(blend), blend) is True
+    assert module.prepared_overwrites_open(str(blend), other) is False
+    assert module.prepared_overwrites_open("", other) is False
+    assert module.prepared_overwrites_open(None, other) is False

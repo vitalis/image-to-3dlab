@@ -54,7 +54,9 @@ def parse_args(argv: list[str]) -> tuple[str, str, int, float, float]:
     angle_degrees = float(argv[3]) if len(argv) > 3 else 89.0
     island_margin = float(argv[4]) if len(argv) > 4 else 0.0002
     if not 0.0 < angle_degrees <= 89.9:
-        raise SystemExit(f"angle limit must be in (0, 89.9] degrees, got {angle_degrees}")
+        raise SystemExit(
+            f"angle limit must be in (0, 89.9] degrees, got {angle_degrees}"
+        )
     if not 0.0 <= island_margin < 0.01:
         raise SystemExit(
             f"island margin is a fraction of the atlas per island and must stay tiny; "
@@ -97,6 +99,15 @@ def main() -> int:
     meshes = [o for o in bpy.data.objects if o.type == "MESH"]
     if not meshes:
         raise SystemExit(f"no mesh found in {source}")
+    from blender_bake_normals import meshes_to_bake
+
+    if meshes_to_bake(len(meshes)) == "join":
+        bpy.ops.object.select_all(action="DESELECT")
+        for mesh in meshes:
+            mesh.select_set(True)
+        bpy.context.view_layer.objects.active = meshes[0]
+        bpy.ops.object.join()
+        meshes = [bpy.context.view_layer.objects.active]
     obj = meshes[0]
     bpy.context.view_layer.objects.active = obj
     obj.select_set(True)
@@ -131,10 +142,10 @@ def main() -> int:
     nodes, links = tree.nodes, tree.links
 
     uv_node = nodes.new("ShaderNodeUVMap")
-    uv_node.uv_map = original_uv           # read through the ORIGINAL layout
+    uv_node.uv_map = original_uv  # read through the ORIGINAL layout
     source_tex = nodes.new("ShaderNodeTexImage")
     source_tex.image = original_image
-    source_tex.interpolation = "Closest"   # keep marking edges hard through the bake
+    source_tex.interpolation = "Closest"  # keep marking edges hard through the bake
     links.new(uv_node.outputs["UV"], source_tex.inputs["Vector"])
 
     emission = nodes.new("ShaderNodeEmission")
@@ -143,7 +154,7 @@ def main() -> int:
     links.new(emission.outputs["Emission"], output.inputs["Surface"])
 
     target_tex = nodes.new("ShaderNodeTexImage")
-    target_tex.image = target             # unconnected: bake destination only
+    target_tex.image = target  # unconnected: bake destination only
     nodes.active = target_tex
     for node in nodes:
         node.select = node is target_tex
@@ -152,10 +163,10 @@ def main() -> int:
     scene.render.engine = "CYCLES"
     try:
         scene.cycles.device = "CPU"
-        scene.cycles.samples = 1          # emission bake needs exactly one sample
+        scene.cycles.samples = 1  # emission bake needs exactly one sample
     except AttributeError:
         pass
-    scene.render.bake.margin = 16         # gutter padding, now that islands are large
+    scene.render.bake.margin = 16  # gutter padding, now that islands are large
     scene.render.bake.use_clear = True
 
     print("REUNWRAP:: baking...")

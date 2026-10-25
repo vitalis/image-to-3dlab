@@ -16,7 +16,13 @@ from __future__ import annotations
 import argparse
 import json
 import socket
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from blender_own_scene import own_scene_body
+
+_SCRIPTS = str(Path(__file__).resolve().parent)
 
 
 def blender_code(
@@ -27,9 +33,14 @@ def blender_code(
     extrusion: float,
     min_component_verts: int,
 ) -> str:
-    return f'''
+    return f"""
 import bpy
+import sys
 from mathutils import Vector
+
+sys.path.insert(0, {_SCRIPTS!r})
+from blender_own_scene import objects_exclusive_to_scene
+{own_scene_body("IMG3D solidify bake")}
 
 asset_path = {str(asset)!r}
 output_path = {str(output)!r}
@@ -37,15 +48,6 @@ voxel_size = {voxel_size}
 texture_size = {texture_size}
 extrusion = {extrusion}
 min_component_verts = {min_component_verts}
-
-for obj in list(bpy.data.objects):
-    bpy.data.objects.remove(obj, do_unlink=True)
-for prior in list(bpy.data.collections):
-    bpy.data.collections.remove(prior)
-try:
-    bpy.ops.outliner.orphans_purge(do_local_ids=True, do_recursive=True)
-except RuntimeError:
-    pass
 
 before = set(bpy.data.objects)
 bpy.ops.import_scene.gltf(filepath=asset_path)
@@ -205,7 +207,7 @@ result = {{
     "debris_components_removed": components_removed,
     "output": output_path,
 }}
-'''
+"""
 
 
 def main() -> int:

@@ -26,21 +26,27 @@ from __future__ import annotations
 import argparse
 import json
 import socket
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from blender_own_scene import own_scene_body
+
+_SCRIPTS = str(Path(__file__).resolve().parent)
 
 
 def blender_code(asset: Path, output: Path) -> str:
     return f'''
 import bpy
+import sys
 import numpy as np
 
-for obj in list(bpy.data.objects):
-    bpy.data.objects.remove(obj, do_unlink=True)
-for coll in list(bpy.data.collections):
-    bpy.data.collections.remove(coll)
+sys.path.insert(0, {_SCRIPTS!r})
+from blender_own_scene import objects_exclusive_to_scene
+{own_scene_body("IMG3D fix normals")}
 
 bpy.ops.import_scene.gltf(filepath={str(asset)!r})
-meshes = [o for o in bpy.data.objects if o.type == "MESH"]
+meshes = [o for o in bpy.context.scene.objects if o.type == "MESH"]
 for o in bpy.data.objects:
     o.select_set(False)
 for o in meshes:

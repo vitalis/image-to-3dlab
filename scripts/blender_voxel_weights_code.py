@@ -6,8 +6,18 @@ in the CLI, which makes both halves hard to read and hard to lint.
 
 from __future__ import annotations
 
-TEMPLATE = '''
-import bpy, json
+from pathlib import Path
+
+_SCRIPTS = str(Path(__file__).resolve().parent)
+
+TEMPLATE = """
+import bpy, json, sys
+
+sys.path.insert(0, {scripts!r})
+import importlib
+import leg_reach
+importlib.reload(leg_reach)
+from leg_reach import height_span, reaches_head
 
 VOXEL = {voxel_size}
 THRESH = {weight_threshold}
@@ -95,19 +105,20 @@ if not KEEP_PROXY:
 markers = {{o.name[6:]: o.matrix_world.translation.copy()
            for o in bpy.data.objects if o.name.startswith("JOINT_")}}
 groups = {{vg.index: vg.name for vg in mesh.vertex_groups}}
-zs = [v.co.z for v in mesh.data.vertices]
-span = max(zs) - min(zs)
-head_z = markers["head"].z if "head" in markers else max(zs)
+world_zs = [(mesh.matrix_world @ v.co).z for v in mesh.data.vertices]
+span = height_span(world_zs)
+head_z = markers["head"].z if "head" in markers else max(world_zs)
 
 influence = {{}}
 for v in mesh.data.vertices:
+    world_z = (mesh.matrix_world @ v.co).z
     for g in v.groups:
         if g.weight >= THRESH:
             name = groups.get(g.group)
             if name:
                 rec = influence.setdefault(name, [0, -1e9])
                 rec[0] += 1
-                rec[1] = max(rec[1], v.co.z)
+                rec[1] = max(rec[1], world_z)
 
 report = {{}}
 for name in groups.values():
@@ -115,7 +126,7 @@ for name in groups.values():
     report[name] = {{
         "verts": rec[0] if rec else 0,
         "max_z": round(rec[1], 4) if rec else None,
-        "reaches_head": bool(rec and rec[1] > head_z - span * 0.05),
+        "reaches_head": bool(rec) and reaches_head(rec[1], head_z, span),
     }}
 
 legs = [n for n in report if "front" in n or "back" in n]
@@ -138,7 +149,7 @@ print(json.dumps({{
                 else "CLEAN"),
     "report": report,
 }}, indent=2))
-'''
+"""
 
 
 def build_code(voxel_size: float, weight_threshold: float, keep_proxy: bool) -> str:
@@ -146,4 +157,5 @@ def build_code(voxel_size: float, weight_threshold: float, keep_proxy: bool) -> 
         voxel_size=voxel_size,
         weight_threshold=weight_threshold,
         keep_proxy=bool(keep_proxy),
+        scripts=_SCRIPTS,
     )

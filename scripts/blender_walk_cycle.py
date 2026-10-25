@@ -54,8 +54,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from blender_joint_markers import send
 
 TEMPLATE = '''
-import bpy, json, math
+import bpy, json, math, sys
 from mathutils import Matrix
+sys.path.insert(0, {scripts!r})
+import importlib
+import walk_pose
+importlib.reload(walk_pose)
 
 FRAMES = {frames}
 SW_FRONT = math.radians({swing_front})
@@ -140,63 +144,31 @@ mk = {{o.name[6:]: o.matrix_world.translation.copy()
 paw_probe = []
 rest_floor = 0.0
 if mesh is not None:
-    rest_co = [v.co.copy() for v in mesh.data.vertices]
+    bpy.context.view_layer.update()
+    world_pts = [tuple(mesh.matrix_world @ v.co) for v in mesh.data.vertices]
     for key in ("frontL_paw", "frontR_paw", "backL_paw", "backR_paw"):
         if key in mk:
             target = mk[key]
-            paw_probe.append(min(range(len(rest_co)),
-                                 key=lambda i: (rest_co[i] - target).length_squared))
+            paw_probe.append(walk_pose.nearest_vertex(world_pts, (target.x, target.y, target.z)))
     if paw_probe:
-        rest_floor = min(rest_co[i].z for i in paw_probe)
+        rest_floor = walk_pose.paw_floor(world_pts, paw_probe)
 
 for frame in range(1, FRAMES + 2):
     t = (frame - 1) / FRAMES
     bpy.context.scene.frame_set(frame)
 
-    for leg, phase in PHASE.items():
-        upper, mid, low, swing_amp, mid_amp, low_amp = CHAIN[leg]
-        theta = 2.0 * math.pi * (t + phase)
-        swing = swing_amp * math.cos(theta)
-        if leg.startswith('front'):
-            # The front legs hang off the chest, so pitching the chest down carries
-            # them backward with it and the fox reads as flying with its arms
-            # trailing. Counter-rotate by the same amount to keep them vertical,
-            # then apply the tuck on top of that corrected zero.
-            swing += SHOULDER_TUCK - CHEST_DROP
-        else:
-            # swing_amp*cos(theta) is symmetric, so a bigger forward reach always buys
-            # an equally bigger backward kick — there is no way to get one without the
-            # other from amplitude alone. HIND_LEAD_L/R is a static bias added after the
-            # cosine: it shifts one side's swing range forward without changing its span,
-            # so the forward peak can stay put while the rearward extreme shrinks. Split
-            # by side, not shared, because hand-placed markers are rarely symmetric —
-            # one leg needing this fix doesn't mean the other one does.
-            swing += HIND_LEAD_L if leg.endswith('L') else HIND_LEAD_R
-        # Rectified sine, shaped: the exponent widens the airborne plateau so the
-        # fold eases in and out instead of snapping at the contact frames.
-        lift = max(0.0, math.sin(theta)) ** 0.7
-        # A real leg is never locked straight, even bearing weight; BASE keeps a
-        # standing bend so the limb reads as a limb rather than a stick.
-        # Front legs hang at full extension once compensated for the chest drop,
-        # while back legs carry a permanent fold — so without a matching front
-        # crouch the front paws sink below the back ones and the animal stands on
-        # two different floors.
-        crouch = (FRONT_CROUCH + CROUCH) if leg.startswith('front') else CROUCH * 0.55
-        # Which rotation sign *closes* a joint depends on the rest geometry, and the
-        # front leg's differs from the back's once the elbow sits behind the shoulder.
-        # Applying the wrong sign straightens the limb instead of folding it.
-        sign = FRONT_SIGN if leg.startswith('front') else 1.0
-        mid_fold = sign * (BASE + crouch + mid_amp * lift)
-        # The wrist/ankle folds slightly later than the elbow/knee — the joint
-        # closest to the ground is the last to leave it and the first to reach for it.
-        low_lift = max(0.0, math.sin(theta - 0.5)) ** 0.7
-        low_fold = sign * (BASE * 0.5 + crouch * 0.6 + low_amp * low_lift)
-        # Toes flex late in stance, as the foot rolls forward and pushes off, then
-        # relax while airborne. That roll is the whole reason the foot is two segments.
-        push = max(0.0, math.sin(theta + 2.2)) ** 1.4
-        toe_fold = sign * TOE * push
-        for name, value in ((upper, swing), (mid, mid_fold), (low, low_fold),
-                            (leg + "_toe", toe_fold)):
+    for leg, phase in walk_pose.PHASES["{gait}"].items():
+        angles = walk_pose.leg_pose(
+            t, leg, phase,
+            swing_front={swing_front}, swing_back={swing_back},
+            bend_front={bend_front}, bend_back={bend_back},
+            wrist={wrist}, ankle={ankle}, base_bend={base_bend},
+            front_crouch={front_crouch}, crouch={crouch},
+            front_sign={front_sign}, toe={toe},
+            shoulder_tuck={shoulder_tuck}, chest_drop={chest_drop},
+            hind_lead_l={hind_lead_l}, hind_lead_r={hind_lead_r},
+        )
+        for name, value in angles.items():
             pb = arm.pose.bones.get(name)
             if pb is None:
                 missing.append(name)
@@ -211,8 +183,9 @@ for frame in range(1, FRAMES + 2):
         bpy.context.view_layer.update()
         dg = bpy.context.evaluated_depsgraph_get()
         ev = mesh.evaluated_get(dg)
-        plant = rest_floor - min(ev.data.vertices[i].co.z for i in paw_probe)
-    arm.location.z = base_z + plant - BODY_DROP + BOB * math.cos(4.0 * math.pi * t)
+        posed_z = [(ev.matrix_world @ ev.data.vertices[i].co).z for i in paw_probe]
+        plant = walk_pose.plant_shift(rest_floor, posed_z)
+    arm.location.z = walk_pose.body_location_z(t, base_z, plant, {body_drop}, {bob})
     arm.keyframe_insert("location", frame=frame)
 
     # The subject was generated with its head turned, so a static counter-yaw is
@@ -242,15 +215,7 @@ for frame in range(1, FRAMES + 2):
             chest.rotation_euler = (crest.inverted() @ cworld @ crest).to_euler("XYZ")
             chest.keyframe_insert("rotation_euler", frame=frame)
 
-    body = {{
-        "spine_01": ("z", SWAY * math.sin(2.0 * math.pi * t)),
-        "head": ("x", HEAD_LEVEL - SWAY * 0.7 * math.cos(4.0 * math.pi * t)),
-        "tail_01": ("z", -SWAY * 1.6 * math.sin(2.0 * math.pi * t)),
-        "tail_02": ("z", -SWAY * 1.2 * math.sin(2.0 * math.pi * t - 0.6)),
-        "ear_L": ("x", SWAY * 0.8 * math.cos(4.0 * math.pi * t + 0.9)),
-        "ear_R": ("x", SWAY * 0.8 * math.cos(4.0 * math.pi * t + 0.9)),
-    }}
-    for name, (axis, value) in body.items():
+    for name, (axis, value) in walk_pose.body_pose(t, {sway}, {head_level}).items():
         pb = arm.pose.bones.get(name)
         if pb is None:
             missing.append(name)
@@ -309,105 +274,145 @@ print(json.dumps({{
 '''
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=9876)
-    parser.add_argument("--frames", type=int, default=20, help="length of one full stride")
+    parser.add_argument(
+        "--frames", type=int, default=20, help="length of one full stride"
+    )
     parser.add_argument("--swing-front", type=float, default=24.0)
     parser.add_argument("--swing-back", type=float, default=20.0)
     parser.add_argument("--bend-front", type=float, default=34.0)
     parser.add_argument("--bend-back", type=float, default=38.0)
     parser.add_argument(
-        "--wrist", type=float, default=40.0,
+        "--wrist",
+        type=float,
+        default=40.0,
         help="Front-leg wrist fold. The visible mid-leg bend on a front leg is a "
-             "wrist, and it carries most of the fold — a stiff wrist reads as a stick",
+        "wrist, and it carries most of the fold — a stiff wrist reads as a stick",
     )
-    parser.add_argument("--ankle", type=float, default=22.0, help="Back-leg ankle (hock) fold")
     parser.add_argument(
-        "--gait", choices=("trot", "walk"), default="trot",
+        "--ankle", type=float, default=22.0, help="Back-leg ankle (hock) fold"
+    )
+    parser.add_argument(
+        "--gait",
+        choices=("trot", "walk"),
+        default="trot",
         help="trot is a two-beat diagonal gait (what foxes actually do); "
-             "walk is a four-beat lateral gait",
+        "walk is a four-beat lateral gait",
     )
     parser.add_argument(
-        "--base-bend", type=float, default=8.0,
+        "--base-bend",
+        type=float,
+        default=8.0,
         help="Standing bend held all cycle; a real limb is never locked straight",
     )
     parser.add_argument("--bob", type=float, default=0.016)
     parser.add_argument(
-        "--sway", type=float, default=2.2,
+        "--sway",
+        type=float,
+        default=2.2,
         help="Lateral body roll. Too much reads as a waddle rather than a walk",
     )
     parser.add_argument(
-        "--head-yaw", type=float, default=-32.0,
+        "--head-yaw",
+        type=float,
+        default=0.0,
         help="Static counter-yaw on the neck, to straighten a head the subject was "
-             "generated with turned. Negative turns toward the character's right",
+        "generated with turned. Negative turns toward the character's right",
     )
     parser.add_argument(
-        "--head-pitch", type=float, default=0.0,
+        "--head-pitch",
+        type=float,
+        default=0.0,
         help="Drop the head forward and down. A moving fox reaches ahead and low; "
-             "an upright head reads as a standing animal with moving legs",
+        "an upright head reads as a standing animal with moving legs",
     )
     parser.add_argument(
-        "--head-level", type=float, default=0.0,
+        "--head-level",
+        type=float,
+        default=0.0,
         help="Counter-rotation on the head bone so the muzzle levels out instead of "
-             "aiming at the floor once the neck is pitched down",
+        "aiming at the floor once the neck is pitched down",
     )
     parser.add_argument(
-        "--chest-drop", type=float, default=0.0,
+        "--chest-drop",
+        type=float,
+        default=0.0,
         help="Pitch the chest down. This is what lowers the shoulders — and the neck "
-             "and head ride down with it. Rotating the neck alone only pivots the muzzle",
+        "and head ride down with it. Rotating the neck alone only pivots the muzzle",
     )
     parser.add_argument(
-        "--shoulder-tuck", type=float, default=0.0,
+        "--shoulder-tuck",
+        type=float,
+        default=0.0,
         help="Static offset pulling the front legs back under the body instead of "
-             "splaying them out ahead",
+        "splaying them out ahead",
     )
     parser.add_argument(
-        "--hind-lead-l", type=float, default=0.0,
+        "--hind-lead-l",
+        type=float,
+        default=0.0,
         help="Static forward bias on the LEFT hind leg's swing. swing-back alone is "
-             "symmetric — more forward reach always buys an equally bigger backward "
-             "kick. This shifts that side's swing range forward without changing its "
-             "span, so you can keep the forward peak and shrink the rearward extreme. "
-             "Split left/right because hand-placed markers are rarely symmetric",
+        "symmetric — more forward reach always buys an equally bigger backward "
+        "kick. This shifts that side's swing range forward without changing its "
+        "span, so you can keep the forward peak and shrink the rearward extreme. "
+        "Split left/right because hand-placed markers are rarely symmetric",
     )
     parser.add_argument(
-        "--hind-lead-r", type=float, default=0.0,
+        "--hind-lead-r",
+        type=float,
+        default=0.0,
         help="Same as --hind-lead-l, for the RIGHT hind leg.",
     )
     parser.add_argument(
-        "--front-crouch", type=float, default=0.0,
+        "--front-crouch",
+        type=float,
+        default=0.0,
         help="Static fold on the front legs so their paws sit level with the back "
-             "paws. Without it the front legs hang at full extension and sink below",
+        "paws. Without it the front legs hang at full extension and sink below",
     )
     parser.add_argument(
-        "--toe", type=float, default=20.0,
+        "--toe",
+        type=float,
+        default=20.0,
         help="Toe flex during push-off. The foot is two segments so it can roll: heel "
-             "plants, foot flattens, toes push off",
+        "plants, foot flattens, toes push off",
     )
     parser.add_argument(
-        "--front-fold-sign", type=float, default=-1.0,
+        "--front-fold-sign",
+        type=float,
+        default=-1.0,
         help="Which way the front elbow/wrist close. Depends on rest geometry: with "
-             "the elbow set behind the shoulder, negative folds and positive "
-             "straightens. Flip if the front legs extend instead of bending",
+        "the elbow set behind the shoulder, negative folds and positive "
+        "straightens. Flip if the front legs extend instead of bending",
     )
     parser.add_argument(
-        "--crouch", type=float, default=0.0,
+        "--crouch",
+        type=float,
+        default=0.0,
         help="Semi-crouch: static fold at elbow/wrist and knee/ankle so the chest and "
-             "head come down while the paws stay planted. The front gets more because "
-             "its shoulder/elbow/wrist markers sit nearly collinear, so it starts "
-             "straight while the back leg has ~44 degrees of built-in fold",
+        "head come down while the paws stay planted. The front gets more because "
+        "its shoulder/elbow/wrist markers sit nearly collinear, so it starts "
+        "straight while the back leg has ~44 degrees of built-in fold",
     )
     parser.add_argument(
-        "--no-auto-plant", dest="auto_plant", action="store_false",
+        "--no-auto-plant",
+        dest="auto_plant",
+        action="store_false",
         help="Disable re-planting the paws on the rest floor after folding the legs",
     )
     parser.add_argument(
-        "--body-drop", type=float, default=0.0,
+        "--body-drop",
+        type=float,
+        default=0.0,
         help="Lower the whole rig, for a slightly hunched travelling posture",
     )
-    args = parser.parse_args()
+    return parser
 
+
+def code_for(args) -> str:
     code = TEMPLATE.format(
         frames=args.frames,
         swing_front=args.swing_front,
@@ -433,8 +438,14 @@ def main() -> int:
         front_sign=args.front_fold_sign,
         toe=args.toe,
         auto_plant=bool(args.auto_plant),
+        scripts=str(Path(__file__).resolve().parent),
     )
-    print(send(code, args.host, args.port))
+    return code
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    print(send(code_for(args), args.host, args.port))
     return 0
 
 

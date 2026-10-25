@@ -29,7 +29,26 @@ import subprocess
 import sys
 from pathlib import Path
 
+from blender_own_scene import own_scene_body
 from blender_render_asset import ENVIRONMENTS
+
+_SCRIPTS = str(Path(__file__).resolve().parent)
+
+
+class NoRigidVertex(RuntimeError):
+    """Every labelled vertex moves, so the wind has nothing to bend around."""
+
+
+def require_rigid_anchors(points, moves):
+    """Points that stay still. An empty set is an error, not an empty tree."""
+    if len(points) != len(moves):
+        raise ValueError("label points and the move mask differ in length")
+    anchors = [tuple(point) for point, moving in zip(points, moves) if not moving]
+    if not anchors:
+        raise NoRigidVertex(
+            "no rigid vertex to anchor the wind; every labelled vertex is foliage or flower"
+        )
+    return anchors
 
 
 def blender_code(
@@ -53,11 +72,20 @@ def blender_code(
     flutter: float,
 ) -> str:
     settings = ENVIRONMENTS[env]
-    return f'''
-import bpy, math
+    return f"""
+import bpy, math, sys
 import numpy as np
 from mathutils import Vector
 from mathutils.kdtree import KDTree
+
+sys.path.insert(0, {_SCRIPTS!r})
+import importlib
+import blender_own_scene
+import blender_wind_demo
+importlib.reload(blender_own_scene)
+importlib.reload(blender_wind_demo)
+from blender_own_scene import objects_exclusive_to_scene
+require_rigid_anchors = blender_wind_demo.require_rigid_anchors
 
 mesh_path = {str(mesh)!r}
 labels_path = {str(labels)!r}
@@ -65,22 +93,17 @@ frame_dir = {str(frame_dir)!r}
 label = {label!r}
 frames = {frames}
 
-for obj in list(bpy.data.objects):
-    bpy.data.objects.remove(obj, do_unlink=True)
-for coll in list(bpy.data.collections):
-    bpy.data.collections.remove(coll)
-try:
-    bpy.ops.outliner.orphans_purge(do_local_ids=True, do_recursive=True)
-except RuntimeError:
-    pass
-
+# Look at the labels before deleting anything. An all-foliage mask used to build an
+# empty tree after the scene had already been wiped.
+_probe_scene = bpy.data.scenes.get("IMG3D wind") or bpy.data.scenes.new("IMG3D wind")
+bpy.context.window.scene = _probe_scene
 
 def load(path):
     before = set(bpy.data.objects)
     bpy.ops.import_scene.gltf(filepath=path)
     added = [o for o in bpy.data.objects if o not in before]
     meshes = [o for o in added if o.type == "MESH"]
-    for o in bpy.data.objects:
+    for o in bpy.context.scene.objects:
         o.select_set(False)
     for o in meshes:
         o.select_set(True)
@@ -89,35 +112,41 @@ def load(path):
         bpy.ops.object.join()
     return bpy.context.view_layer.objects.active
 
+def label_mask(label_obj):
+    label_mesh = label_obj.data
+    attribute = label_mesh.color_attributes[0]
+    count = len(attribute.data)
+    raw = np.zeros(count * 4, dtype=np.float32)
+    attribute.data.foreach_get("color", raw)
+    raw = raw.reshape(-1, 4)[:, :3]
+    if attribute.domain == "CORNER":
+        per_vertex = np.zeros((len(label_mesh.vertices), 3), dtype=np.float32)
+        loop_vertex = np.zeros(len(label_mesh.loops), dtype=np.int32)
+        label_mesh.loops.foreach_get("vertex_index", loop_vertex)
+        per_vertex[loop_vertex] = raw
+        raw = per_vertex
+    # glTF stores colour linearly; the palette was authored as sRGB. Only the winning
+    # channel matters here, so compare channels rather than converting.
+    is_foliage = (raw[:, 1] > raw[:, 0]) & (raw[:, 1] >= raw[:, 2])
+    is_flower = (raw[:, 2] > raw[:, 0]) & (raw[:, 2] > raw[:, 1])
+    moves = is_foliage | is_flower
+    label_points = np.zeros(len(label_mesh.vertices) * 3, dtype=np.float32)
+    label_mesh.vertices.foreach_get("co", label_points)
+    label_points = label_points.reshape(-1, 3)
+    return moves, label_points
+
+_probe = load(labels_path)
+_moves, _points = label_mask(_probe)
+require_rigid_anchors(_points.tolist(), [bool(v) for v in _moves])
+
+{own_scene_body("IMG3D wind")}
 
 body_obj = load(mesh_path)
 body_obj.name = "FOX"
 label_obj = load(labels_path)
 label_obj.name = "LABELS"
-
-# Read the label colours. glTF may land them on points or on face corners.
-label_mesh = label_obj.data
-attribute = label_mesh.color_attributes[0]
-count = len(attribute.data)
-raw = np.zeros(count * 4, dtype=np.float32)
-attribute.data.foreach_get("color", raw)
-raw = raw.reshape(-1, 4)[:, :3]
-if attribute.domain == "CORNER":
-    per_vertex = np.zeros((len(label_mesh.vertices), 3), dtype=np.float32)
-    loop_vertex = np.zeros(len(label_mesh.loops), dtype=np.int32)
-    label_mesh.loops.foreach_get("vertex_index", loop_vertex)
-    per_vertex[loop_vertex] = raw
-    raw = per_vertex
-
-# glTF stores colour linearly; the palette was authored as sRGB. Only the winning
-# channel matters here, so compare channels rather than converting.
-is_foliage = (raw[:, 1] > raw[:, 0]) & (raw[:, 1] >= raw[:, 2])
-is_flower = (raw[:, 2] > raw[:, 0]) & (raw[:, 2] > raw[:, 1])
-moves = is_foliage | is_flower
-
-label_points = np.zeros(len(label_mesh.vertices) * 3, dtype=np.float32)
-label_mesh.vertices.foreach_get("co", label_points)
-label_points = label_points.reshape(-1, 3)
+moves, label_points = label_mask(label_obj)
+require_rigid_anchors(label_points.tolist(), [bool(v) for v in moves])
 
 # Match the textured mesh to the labelled one by position: exporting through trimesh
 # does not preserve vertex order, so indices cannot be trusted between the two.
@@ -283,7 +312,7 @@ for index in range(frames):
     written.append(path)
 
 result = {{"frames": len(written)}}
-'''
+"""
 
 
 def send(host: str, port: int, code: str, timeout: float) -> str:
@@ -311,7 +340,9 @@ def send(host: str, port: int, code: str, timeout: float) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("mesh", type=Path, help="original textured .glb")
-    parser.add_argument("labels", type=Path, help="labelled .glb from project_labels.py")
+    parser.add_argument(
+        "labels", type=Path, help="labelled .glb from project_labels.py"
+    )
     parser.add_argument("output", type=Path, help="destination .mp4")
     parser.add_argument("--label", default="wind")
     parser.add_argument("--host", default="127.0.0.1")
@@ -329,7 +360,10 @@ def main() -> int:
         help="peak bend angle in degrees at the floppiest tips",
     )
     parser.add_argument(
-        "--axis-y", type=float, default=1.0, help="bend axis: horizontal sweep component"
+        "--axis-y",
+        type=float,
+        default=1.0,
+        help="bend axis: horizontal sweep component",
     )
     parser.add_argument(
         "--axis-z", type=float, default=0.35, help="bend axis: vertical lift component"
@@ -341,14 +375,23 @@ def main() -> int:
         help="clump size for independent flutter, as a fraction of the asset",
     )
     parser.add_argument(
-        "--jitter", type=float, default=0.8, help="how independently clumps flutter (0-1)"
+        "--jitter",
+        type=float,
+        default=0.8,
+        help="how independently clumps flutter (0-1)",
     )
     parser.add_argument(
         "--flutter", type=float, default=0.012, help="high-frequency tip shimmer"
     )
-    parser.add_argument("--frequency", type=float, default=2.0, help="sway cycles per loop")
-    parser.add_argument("--wave", type=float, default=5.0, help="how much the wave travels")
-    parser.add_argument("--gust", type=float, default=0.45, help="depth of the slow gust")
+    parser.add_argument(
+        "--frequency", type=float, default=2.0, help="sway cycles per loop"
+    )
+    parser.add_argument(
+        "--wave", type=float, default=5.0, help="how much the wave travels"
+    )
+    parser.add_argument(
+        "--gust", type=float, default=0.45, help="depth of the slow gust"
+    )
     parser.add_argument("--keep-frames", action="store_true")
     args = parser.parse_args()
 
@@ -383,19 +426,30 @@ def main() -> int:
 
     rendered = sorted(frame_dir.glob(f"{args.label}_*.png"))
     if len(rendered) != args.frames:
-        print(f"error: expected {args.frames} frames, found {len(rendered)}", file=sys.stderr)
+        print(
+            f"error: expected {args.frames} frames, found {len(rendered)}",
+            file=sys.stderr,
+        )
         return 1
 
     subprocess.run(
         [
-            "ffmpeg", "-y",
-            "-framerate", str(args.fps),
-            "-i", str(frame_dir / f"{args.label}_%04d.png"),
-            "-c:v", "libx264",
-            "-pix_fmt", "yuv420p",
-            "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
-            "-crf", "18",
-            "-movflags", "+faststart",
+            "ffmpeg",
+            "-y",
+            "-framerate",
+            str(args.fps),
+            "-i",
+            str(frame_dir / f"{args.label}_%04d.png"),
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-vf",
+            "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+            "-crf",
+            "18",
+            "-movflags",
+            "+faststart",
             str(output),
         ],
         check=True,

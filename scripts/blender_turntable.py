@@ -18,7 +18,10 @@ from pathlib import Path
 
 # Reuse the render environments from the still-preview helper so a turntable and a
 # preview of the same asset are lit identically.
+from blender_own_scene import own_scene_body
 from blender_render_asset import ENVIRONMENTS
+
+_SCRIPTS = str(Path(__file__).resolve().parent)
 
 
 def blender_code(
@@ -32,27 +35,21 @@ def blender_code(
     darken_backfaces: bool,
 ) -> str:
     settings = ENVIRONMENTS[env]
-    return f'''
+    return f"""
 import bpy
 import math
+import sys
 from mathutils import Vector
+
+sys.path.insert(0, {_SCRIPTS!r})
+from blender_own_scene import objects_exclusive_to_scene
+{own_scene_body("IMG3D turntable")}
 
 asset_path = {str(asset)!r}
 frame_dir = {str(frame_dir)!r}
 label = {label!r}
 frames = {frames}
 collection_name = "IMG3D_TT_" + label
-
-# Same clean-slate policy as the preview renderer: a long-lived Blender session may
-# still hold a previous asset, and every asset is grounded at the origin.
-for obj in list(bpy.data.objects):
-    bpy.data.objects.remove(obj, do_unlink=True)
-for prior in list(bpy.data.collections):
-    bpy.data.collections.remove(prior)
-try:
-    bpy.ops.outliner.orphans_purge(do_local_ids=True, do_recursive=True)
-except RuntimeError:
-    pass
 
 collection = bpy.data.collections.new(collection_name)
 bpy.context.scene.collection.children.link(collection)
@@ -191,7 +188,7 @@ for index in range(frames):
     written.append(path)
 
 result = {{"frames": len(written), "size": size, "first": written[0], "last": written[-1]}}
-'''
+"""
 
 
 def send(host: str, port: int, code: str, timeout: float) -> str:

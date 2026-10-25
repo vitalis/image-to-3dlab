@@ -185,36 +185,71 @@ print(json.dumps({{
 '''
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=9876)
-    parser.add_argument("--frames", type=int, default=96, help="one full breath, ~4s at 24fps")
-    parser.add_argument("--breath", type=float, default=2.4, help="ribcage rise, degrees")
+    parser.add_argument(
+        "--frames", type=int, default=96, help="one full breath, ~4s at 24fps"
+    )
+    parser.add_argument(
+        "--breath", type=float, default=2.4, help="ribcage rise, degrees"
+    )
     parser.add_argument("--head", type=float, default=2.0)
     parser.add_argument("--ear", type=float, default=2.5)
     parser.add_argument("--tail", type=float, default=3.5)
     parser.add_argument("--flick", type=float, default=13.0, help="ear flick amplitude")
-    parser.add_argument("--flick-at", type=float, default=0.62, help="0-1 position in the loop")
-    parser.add_argument("--head-yaw", type=float, default=-32.0)
-    parser.add_argument("--shift", type=float, default=0.004, help="vertical weight shift")
     parser.add_argument(
-        "--ear-turn", type=float, default=-62.0,
-        help="How far one ear swivels back to track a sound behind the fox. Negative "
-             "turns the ear rearward given this subject faces -Y; positive swings it "
-             "forward across the face, which is wrong. Kept inside anatomical range",
+        "--flick-at", type=float, default=0.62, help="0-1 position in the loop"
     )
-    parser.add_argument("--ear-turn-at", type=float, default=0.30, help="0-1 position in the loop")
-    parser.add_argument("--ear-turn-hold", type=float, default=0.34, help="fraction of the loop it lasts")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--head-yaw",
+        type=float,
+        default=0.0,
+        help="Static neck yaw in degrees. 0 leaves the head as the rig built it",
+    )
+    parser.add_argument(
+        "--shift", type=float, default=0.004, help="vertical weight shift"
+    )
+    parser.add_argument(
+        "--ear-turn",
+        type=float,
+        default=0.0,
+        help="How far one ear swivels, in degrees. 0 leaves the ear still. "
+        "Negative turns it rearward on a subject that faces -Y",
+    )
+    parser.add_argument(
+        "--ear-turn-at", type=float, default=0.30, help="0-1 position in the loop"
+    )
+    parser.add_argument(
+        "--ear-turn-hold",
+        type=float,
+        default=0.34,
+        help="fraction of the loop it lasts",
+    )
+    return parser
 
-    print(send(TEMPLATE.format(
-        frames=args.frames, breath=args.breath, head=args.head, ear=args.ear,
-        tail=args.tail, flick=args.flick, flick_at=args.flick_at,
-        head_yaw=args.head_yaw, shift=args.shift,
-        ear_turn=args.ear_turn, ear_turn_at=args.ear_turn_at,
+
+def code_for(args) -> str:
+    return TEMPLATE.format(
+        frames=args.frames,
+        breath=args.breath,
+        head=args.head,
+        ear=args.ear,
+        tail=args.tail,
+        flick=args.flick,
+        flick_at=args.flick_at,
+        head_yaw=args.head_yaw,
+        shift=args.shift,
+        ear_turn=args.ear_turn,
+        ear_turn_at=args.ear_turn_at,
         ear_turn_hold=args.ear_turn_hold,
-    ), args.host, args.port))
+    )
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    print(send(code_for(args), args.host, args.port))
     return 0
 
 

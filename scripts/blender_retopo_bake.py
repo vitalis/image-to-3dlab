@@ -49,7 +49,9 @@ def quadriflow_reduced(before: int, after: int, target_faces: int) -> bool:
     return after <= max(target_faces * 3, 1)
 
 
-def parse_args(argv: list[str]) -> tuple[str, str, int, int, float, float, float, float, float]:
+def parse_args(
+    argv: list[str],
+) -> tuple[str, str, int, int, float, float, float, float, float]:
     """Arguments after Blender's ``--`` separator. Kept free of ``bpy`` so it is testable."""
     if "--" in argv:
         argv = argv[argv.index("--") + 1 :]
@@ -87,15 +89,26 @@ def parse_args(argv: list[str]) -> tuple[str, str, int, int, float, float, float
             f"re-fragments the atlas. got {target_faces}"
         )
     if not 0.0 < angle_degrees <= 89.9:
-        raise SystemExit(f"angle limit must be in (0, 89.9] degrees, got {angle_degrees}")
+        raise SystemExit(
+            f"angle limit must be in (0, 89.9] degrees, got {angle_degrees}"
+        )
     if voxel_fraction != 0.0 and not 0.0005 <= voxel_fraction <= 0.05:
         raise SystemExit(
             f"voxel size is a fraction of the asset's largest dimension; too coarse melts "
             f"the subject, too fine runs out of memory, and 0 skips the remesh. "
             f"got {voxel_fraction}"
         )
-    return (argv[0], argv[1], target_faces, size, math.radians(angle_degrees),
-            voxel_fraction, metallic, roughness, ior)
+    return (
+        argv[0],
+        argv[1],
+        target_faces,
+        size,
+        math.radians(angle_degrees),
+        voxel_fraction,
+        metallic,
+        roughness,
+        ior,
+    )
 
 
 def decimate_ratio(target_faces: int, triangle_count: int) -> float:
@@ -237,8 +250,17 @@ def unwrap_finish(bpy, mesh, angle_limit: float) -> int | None:
 def main() -> int:
     import bpy
 
-    (source, destination, target_faces, size, angle_limit, voxel_fraction,
-     metallic, roughness, ior) = parse_args(list(sys.argv))
+    (
+        source,
+        destination,
+        target_faces,
+        size,
+        angle_limit,
+        voxel_fraction,
+        metallic,
+        roughness,
+        ior,
+    ) = parse_args(list(sys.argv))
 
     for obj in list(bpy.data.objects):
         bpy.data.objects.remove(obj, do_unlink=True)
@@ -247,13 +269,24 @@ def main() -> int:
     meshes = [o for o in bpy.data.objects if o.type == "MESH"]
     if not meshes:
         raise SystemExit(f"no mesh found in {source}")
+    from blender_bake_normals import meshes_to_bake
+
+    if meshes_to_bake(len(meshes)) == "join":
+        bpy.ops.object.select_all(action="DESELECT")
+        for mesh in meshes:
+            mesh.select_set(True)
+        bpy.context.view_layer.objects.active = meshes[0]
+        bpy.ops.object.join()
+        meshes = [bpy.context.view_layer.objects.active]
     original = meshes[0]
 
     material = original.data.materials[0] if original.data.materials else None
     image = base_colour_image(material)
     if image is None:
         raise SystemExit("could not find the base colour texture to transfer")
-    print(f"RETOPO:: in faces={len(original.data.polygons):,} texture={image.size[0]}px")
+    print(
+        f"RETOPO:: in faces={len(original.data.polygons):,} texture={image.size[0]}px"
+    )
 
     # --- clean topology ---------------------------------------------------------------
     # An explicit copy, NOT bpy.ops.object.duplicate(): that can produce a linked
@@ -334,7 +367,9 @@ def main() -> int:
         # geometry, because that mesh has hundreds of thousands of non-manifold edges.
         # The voxel remesh above produces a watertight surface first, and decimating that
         # preserves the silhouette.
-        print(f"RETOPO:: quadriflow declined ({before:,} unchanged); decimating instead")
+        print(
+            f"RETOPO:: quadriflow declined ({before:,} unchanged); decimating instead"
+        )
         modifier = retopo.modifiers.new("retopo_decimate", "DECIMATE")
         modifier.decimate_type = "COLLAPSE"
         # Against triangles, not polygons -- see decimate_ratio. The voxel remesh above
@@ -342,8 +377,10 @@ def main() -> int:
         retopo.data.calc_loop_triangles()
         triangles = len(retopo.data.loop_triangles)
         modifier.ratio = decimate_ratio(target_faces, triangles)
-        print(f"RETOPO:: decimating {triangles:,} triangles to {target_faces:,} "
-              f"(ratio {modifier.ratio:.4f})")
+        print(
+            f"RETOPO:: decimating {triangles:,} triangles to {target_faces:,} "
+            f"(ratio {modifier.ratio:.4f})"
+        )
         bpy.ops.object.modifier_apply(modifier=modifier.name)
         after = len(retopo.data.polygons)
 
@@ -383,7 +420,9 @@ def main() -> int:
     original.data.materials.append(emit)
 
     # --- bake target on the RETOPO ----------------------------------------------------
-    target_image = bpy.data.images.new("retopo_albedo", width=size, height=size, alpha=False)
+    target_image = bpy.data.images.new(
+        "retopo_albedo", width=size, height=size, alpha=False
+    )
     dst = bpy.data.materials.new("RETOPO_MAT")
     dst.use_nodes = True
     dnodes, dlinks = dst.node_tree.nodes, dst.node_tree.links
@@ -414,9 +453,9 @@ def main() -> int:
     bake.max_ray_distance = ray_distance(retopo.dimensions) * 2.0
 
     bpy.ops.object.select_all(action="DESELECT")
-    original.select_set(True)          # source
+    original.select_set(True)  # source
     retopo.select_set(True)
-    bpy.context.view_layer.objects.active = retopo   # destination
+    bpy.context.view_layer.objects.active = retopo  # destination
     print("RETOPO:: baking original -> retopo ...")
     bpy.ops.object.bake(type="EMIT")
 
@@ -439,7 +478,9 @@ def main() -> int:
     bpy.data.objects.remove(original, do_unlink=True)
     bpy.ops.object.select_all(action="DESELECT")
     retopo.select_set(True)
-    bpy.ops.export_scene.gltf(filepath=destination, export_format="GLB", use_selection=True)
+    bpy.ops.export_scene.gltf(
+        filepath=destination, export_format="GLB", use_selection=True
+    )
     print(f"RETOPO:: wrote {destination}")
     return 0
 

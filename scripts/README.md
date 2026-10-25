@@ -149,6 +149,7 @@ These talk to a running Blender over the `execute_code` socket on port 9876 unle
 | `blender_stage.py` | Put assets side by side in the RUNNING Blender, lit, textured and ready to look at. |
 | `blender_stage_bake.py` | Render a full frame sequence of a named Action at the locked dungeon-stage camera angle. |
 | `blender_render_asset.py` | Import a GLB into the local Blender MCP scene and render cardinal previews. |
+| `blender_own_scene.py` | Decide which objects a live Blender script may delete. |
 | `blender_turntable.py` | Render a seamlessly looping 360-degree turntable of a GLB via the Blender MCP scene. |
 | `blender_light_orbit.py` | Render a GLB under an orbiting key light, holding the camera still. |
 | `blender_lineup_sweep.py` | Render a camera sweep past a line-up of assets, headless. |
@@ -187,6 +188,7 @@ The `*_pose.py` files are pure curve maths with no `bpy`, which is why they have
 |---|---|
 | `blender_joint_markers.py` | Spawn named joint markers on a mesh in Blender, and read their placed positions back. |
 | `blender_build_rig.py` | Build a quadruped armature from placed joint markers and bind the mesh to it. |
+| `leg_reach.py` | Say whether a leg's weights reach the head, in world space. |
 | `blender_voxel_weights.py` | Weight a generated mesh via a watertight voxel proxy, then transfer the result back. |
 | `blender_voxel_weights_code.py` | The Blender-side program for `blender_voxel_weights.py`. |
 | `blender_rebind.py` | Apply browser fit-joint corrections to an opened prepared Blender scene. |
@@ -201,6 +203,7 @@ The `*_pose.py` files are pure curve maths with no `bpy`, which is why they have
 | `kimodo_retarget.py` | Play a Kimodo text-to-motion clip on a SkinTokens-rigged humanoid and export an animated GLB. |
 | `rig_check.py` | Say whether a rigged GLB fits the preset moves (a humanoid), read without Blender. |
 | `attack_pose.py` | Pose curves for a quadruped slam attack, as pure functions. |
+| `walk_pose.py` | Pose curves and paw planting for a quadruped gait, as pure functions. |
 | `rigify_walk_pose.py` | Pose curves for a quadruped trot on a Rigify-generated rig, as pure functions. |
 | `blender_walk_cycle.py` | Author a looping quadruped gait cycle on the rigged fox in the live Blender scene. |
 | `blender_rigify_walk_cycle.py` | Author a trot cycle on the Rigify-generated 'rig' armature in the live Blender scene. |
