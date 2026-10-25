@@ -20,7 +20,8 @@ What it guarantees:
   and that is exactly the defect that went unnoticed here for weeks
 * nothing selected, so no orange highlight is mistaken for a property of the mesh
 
-This drives the live GUI over the socket on 9876. It replaces whatever is in the scene.
+This drives the live GUI over the socket on 9876. It stages in its own scene and
+leaves every other scene in the open file alone.
 """
 
 from __future__ import annotations
@@ -29,6 +30,10 @@ import argparse
 import json
 import socket
 from pathlib import Path
+
+from blender_own_scene import own_scene_body
+
+_SCRIPTS = str(Path(__file__).resolve().parent)
 
 
 def spread_offsets(count: int, gap: float = 1.25) -> list[float]:
@@ -60,26 +65,25 @@ def labels_for(assets: list[str], labels: list[str] | None) -> list[str]:
     return cleaned
 
 
-def build_code(assets: list[str], names: list[str], offsets: list[float], culled: bool) -> str:
+def build_code(
+    assets: list[str], names: list[str], offsets: list[float], culled: bool
+) -> str:
     payload = json.dumps(
-        [{"path": str(Path(a).expanduser().resolve()), "name": n, "dy": d}
-         for a, n, d in zip(assets, names, offsets)]
+        [
+            {"path": str(Path(a).expanduser().resolve()), "name": n, "dy": d}
+            for a, n, d in zip(assets, names, offsets)
+        ]
     )
-    return f'''
-import bpy, json
+    return f"""
+import bpy, json, sys
 from mathutils import Vector
+
+sys.path.insert(0, {_SCRIPTS!r})
+from blender_own_scene import objects_exclusive_to_scene
+{own_scene_body("IMG3D stage")}
 
 items = json.loads({payload!r})
 culled = {culled!r}
-
-for obj in list(bpy.data.objects):
-    bpy.data.objects.remove(obj, do_unlink=True)
-for collection in list(bpy.data.collections):
-    bpy.data.collections.remove(collection)
-try:
-    bpy.ops.outliner.orphans_purge(do_local_ids=True, do_recursive=True)
-except RuntimeError:
-    pass
 
 for item in items:
     before = set(bpy.data.objects)
@@ -137,7 +141,7 @@ for area in bpy.context.screen.areas:
                     bpy.ops.view3d.view_all()
 
 print("STAGED:", ", ".join(i["name"] for i in items))
-'''
+"""
 
 
 def send(code: str, host: str, port: int) -> str:
@@ -171,7 +175,7 @@ def main() -> int:
         "--double-sided",
         action="store_true",
         help="turn backface culling OFF. Hides hollow meshes -- only for showing what a "
-             "double-sided preview flatters",
+        "double-sided preview flatters",
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=9876)
@@ -179,7 +183,13 @@ def main() -> int:
 
     names = labels_for(args.assets, args.labels)
     offsets = spread_offsets(len(args.assets), args.gap)
-    print(send(build_code(args.assets, names, offsets, not args.double_sided), args.host, args.port))
+    print(
+        send(
+            build_code(args.assets, names, offsets, not args.double_sided),
+            args.host,
+            args.port,
+        )
+    )
     return 0
 
 

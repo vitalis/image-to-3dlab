@@ -29,6 +29,10 @@ import json
 import socket
 from pathlib import Path
 
+from blender_own_scene import own_scene_body
+
+_SCRIPTS = str(Path(__file__).resolve().parent)
+
 # name -> (x, y, z) as fractions of the mesh bounding box.
 # x: 0 left, 1 right.  y: 0 front (muzzle), 1 back (tail tip).  z: 0 ground, 1 ear tips.
 QUADRUPED_MARKERS: dict[str, tuple[float, float, float]] = {
@@ -86,23 +90,19 @@ PREFIX = "JOINT_"
 
 
 def spawn_code(asset: Path) -> str:
-    return f'''
+    return f"""
 import bpy
 import json
+import sys
 from mathutils import Vector
+
+sys.path.insert(0, {_SCRIPTS!r})
+from blender_own_scene import objects_exclusive_to_scene
+{own_scene_body("IMG3D joint markers")}
 
 asset_path = {str(asset)!r}
 markers = {json.dumps(QUADRUPED_MARKERS)}
 prefix = {PREFIX!r}
-
-for obj in list(bpy.data.objects):
-    bpy.data.objects.remove(obj, do_unlink=True)
-for prior in list(bpy.data.collections):
-    bpy.data.collections.remove(prior)
-try:
-    bpy.ops.outliner.orphans_purge(do_local_ids=True, do_recursive=True)
-except RuntimeError:
-    pass
 
 before = set(bpy.data.objects)
 bpy.ops.import_scene.gltf(filepath=asset_path)
@@ -152,11 +152,11 @@ print(json.dumps({{
     "bbox_min": [round(v, 4) for v in lo],
     "bbox_max": [round(v, 4) for v in hi],
 }}))
-'''
+"""
 
 
 def read_code() -> str:
-    return f'''
+    return f"""
 import bpy
 import json
 
@@ -167,7 +167,7 @@ for obj in bpy.data.objects:
         loc = obj.matrix_world.translation
         placed[obj.name[len(prefix):]] = [round(loc.x, 5), round(loc.y, 5), round(loc.z, 5)]
 print(json.dumps(placed, indent=2, sort_keys=True))
-'''
+"""
 
 
 def send(code: str, host: str, port: int, timeout: int = 300) -> str:
@@ -196,7 +196,7 @@ def send(code: str, host: str, port: int, timeout: int = 300) -> str:
 
 
 def load_code(markers: dict[str, list[float]]) -> str:
-    return f'''
+    return f"""
 import bpy, json
 markers = json.loads({json.dumps(json.dumps(markers))})
 coll = bpy.data.collections.get("JOINT_MARKERS")
@@ -217,7 +217,7 @@ for name, loc in markers.items():
     obj.location = loc
     restored.append(name)
 print(json.dumps({{"restored": len(restored)}}))
-'''
+"""
 
 
 def main() -> int:
@@ -245,8 +245,9 @@ def main() -> int:
     if args.mode == "save":
         if args.file is None:
             raise SystemExit("save requires --file")
-        placed = json.loads(json.loads(response[response.find(chr(123)):])
-                            ["result"]["result"])
+        placed = json.loads(
+            json.loads(response[response.find(chr(123)) :])["result"]["result"]
+        )
         if not placed:
             raise SystemExit("no JOINT_ markers in the scene — nothing to save")
         args.file.parent.mkdir(parents=True, exist_ok=True)

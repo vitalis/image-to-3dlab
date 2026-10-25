@@ -73,6 +73,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The 2.1 checkpoint conversion no longer unpickles.** A safe load that fails stops. The `.ckpt` is deleted only after the safetensors file opens and has the shape tensors.
 
 ### Fixed
+- **Staging and joint-marker spawn use their own Blender scene.** They no longer delete every object in the open file. The Blender agent leaves existing objects unless a clear is asked for, and a clear or a delete only removes objects that are in the current scene and nowhere else.
 - **A Create plan sends the studio token** when it starts or cancels a job on this same server. Without it every plan stopped at the first step, and cancel said it had stopped a job that kept running.
 - **A partial ModelScope download is not reported as finished.**
 - **DDIM with 15 steps uses the next scheduled step,** not a rounded gap. 20 steps are unchanged.

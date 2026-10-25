@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 RESULT_SENTINEL = "AGENT_RESULT "
+_SCRIPTS = str(Path(__file__).resolve().parent)
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 9876
 DEFAULT_API = "http://127.0.0.1:1234/v1"
@@ -88,6 +89,23 @@ _STR = {"type": "string"}
 
 def _preamble() -> str:
     return "import bpy, json, math, mathutils\n"
+
+
+def _exclusive_names(type_expr: str) -> str:
+    """Names in the current scene of these types, shared with no other scene.
+
+    ``bpy.data.objects.remove`` deletes an object from every scene, so a clear
+    may name only objects this scene owns alone.
+    """
+    return f"""
+import sys
+sys.path.insert(0, {_SCRIPTS!r})
+from blender_own_scene import objects_exclusive_to_scene
+_here = bpy.context.scene
+_names = [obj.name for obj in _here.objects if obj.type in {type_expr}]
+_others = [obj.name for scene in bpy.data.scenes if scene != _here for obj in scene.objects]
+_exclusive = objects_exclusive_to_scene(_names, _others)
+"""
 
 
 def _emit(expr: str) -> str:
@@ -165,15 +183,20 @@ else:
     )
 
 
-def build_import_asset(path: str, clear_scene: bool = True) -> str:
+def build_import_asset(path: str, clear_scene: bool = False) -> str:
+    clearing = ""
+    if clear_scene:
+        clearing = (
+            _exclusive_names('{"MESH", "ARMATURE", "EMPTY"}')
+            + """
+for _name in _exclusive:
+    bpy.data.objects.remove(bpy.data.objects[_name], do_unlink=True)
+"""
+        )
     return (
         _preamble()
+        + clearing
         + f"""
-clear = {bool(clear_scene)!r}
-if clear:
-    for obj in list(bpy.data.objects):
-        if obj.type in {{"MESH", "ARMATURE", "EMPTY"}}:
-            bpy.data.objects.remove(obj, do_unlink=True)
 before = set(bpy.data.objects.keys())
 bpy.ops.import_scene.gltf(filepath={path!r})
 imported = [n for n in bpy.data.objects.keys() if n not in before]
@@ -402,12 +425,13 @@ keep_lights = {bool(keep_lights)!r}
 removable = {{"MESH", "ARMATURE", "EMPTY", "CURVE", "SURFACE", "META", "FONT"}}
 if not keep_lights:
     removable = removable | {{"LIGHT"}}
-removed = []
-for obj in list(bpy.data.objects):
-    if obj.type in removable:
-        removed.append(obj.name)
-        bpy.data.objects.remove(obj, do_unlink=True)
-payload = {{"removed": removed, "count": len(removed)}}
+"""
+        + _exclusive_names("removable")
+        + """
+removed = list(_exclusive)
+for _name in _exclusive:
+    bpy.data.objects.remove(bpy.data.objects[_name], do_unlink=True)
+payload = {"removed": removed, "count": len(removed)}
 """
         + _emit("payload")
     )
@@ -666,12 +690,21 @@ def build_delete_object(name: str) -> str:
     return (
         _preamble()
         + f"""
-obj = bpy.data.objects.get({name!r})
-if obj is None:
-    payload = {{"error": "no object named " + {name!r}}}
+import sys
+sys.path.insert(0, {_SCRIPTS!r})
+from blender_own_scene import objects_exclusive_to_scene
+_name = {name!r}
+obj = bpy.data.objects.get(_name)
+_here = bpy.context.scene
+if obj is None or obj.name not in _here.objects:
+    payload = {{"error": "no object named " + _name + " in this scene"}}
 else:
-    bpy.data.objects.remove(obj, do_unlink=True)
-    payload = {{"deleted": {name!r}}}
+    _others = [other.name for scene in bpy.data.scenes if scene != _here for other in scene.objects]
+    if not objects_exclusive_to_scene([obj.name], _others):
+        payload = {{"error": _name + " is also in another scene"}}
+    else:
+        bpy.data.objects.remove(obj, do_unlink=True)
+        payload = {{"deleted": _name}}
 """
         + _emit("payload")
     )
@@ -712,7 +745,9 @@ TOOLS: dict[str, Tool] = {
         Tool(
             "import_asset",
             "modify",
-            "Import a .glb asset into the scene, clearing any previous mesh first.",
+            "Import a .glb into the current scene. What is already there stays, unless "
+            "clear_scene is true. A clear removes only meshes, armatures and empties "
+            "that are in this scene and no other.",
             _obj(
                 {
                     "path": {**_STR, "description": "Filesystem path to the .glb."},
@@ -801,8 +836,9 @@ TOOLS: dict[str, Tool] = {
         Tool(
             "clear_scene",
             "modify",
-            "Delete every mesh and light in the scene so you can start from nothing. "
-            "Cameras are always kept. Set keep_lights true to keep your lighting.",
+            "Delete meshes and lights that are only in the current scene. An object that "
+            "also sits in another scene is left alone. Cameras are always kept. Set "
+            "keep_lights true to keep your lighting.",
             _obj({"keep_lights": {"type": "boolean"}}, []),
             build_clear_scene,
         ),
@@ -927,7 +963,8 @@ TOOLS: dict[str, Tool] = {
         Tool(
             "delete_object",
             "modify",
-            "Remove one object by name. Use this to undo something you regret.",
+            "Remove one object by name when it is only in the current scene. An object "
+            "shared with another scene is left alone.",
             _obj({"name": _STR}, ["name"]),
             build_delete_object,
         ),

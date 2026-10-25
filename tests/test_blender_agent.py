@@ -433,6 +433,29 @@ def test_forced_render_ignores_unknown_tool_names():
     assert not agent.needs_forced_render(["sculpt_a_dragon"])
 
 
+def test_import_leaves_existing_objects_unless_asked():
+    """An omitted clear used to delete every mesh, armature and empty."""
+    code = agent.build_call("import_asset", {"path": "/tmp/a.glb"})
+    assert "objects.remove" not in code
+    compile(code, "<import>", "exec")
+
+
+def test_clear_and_delete_stay_inside_the_current_scene():
+    """bpy.data.objects.remove deletes a shared object from every scene."""
+    from test_blender_own_scene import WIPE, _assert_private
+
+    cleared = agent.build_call("clear_scene", {})
+    _assert_private(cleared)
+    assert WIPE.search(cleared) is None
+    deleted = agent.build_call("delete_object", {"name": "cubelet"})
+    assert "objects_exclusive_to_scene" in deleted
+    assert WIPE.search(deleted) is None
+    asked = agent.build_call(
+        "import_asset", {"path": "/tmp/a.glb", "clear_scene": True}
+    )
+    _assert_private(asked)
+
+
 def test_clear_scene_keeps_the_camera():
     """Deleting the camera mid-run leaves the model unable to render, and it has no verb
     to make a new one except set_camera, which it may not think to call."""

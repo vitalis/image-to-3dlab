@@ -134,3 +134,17 @@ def test_region_split_clears_only_its_scene(tmp_path):
     mod = _load("blender_split_regions.py")
     code = mod.region_program(tmp_path / "a.glb", tmp_path / "out", 64, 2 / 3, 1 / 3)
     _assert_private(code)
+
+
+def test_stage_clears_only_its_scene():
+    mod = _load("blender_stage.py")
+    code = mod.build_code(["/a.glb"], ["A_x"], [0.0], True)
+    _assert_private(code)
+    assert "orphans_purge" not in code
+
+
+def test_joint_spawn_clears_only_its_scene(tmp_path):
+    mod = _load("blender_joint_markers.py")
+    code = mod.spawn_code(tmp_path / "a.glb")
+    _assert_private(code)
+    assert "orphans_purge" not in code
