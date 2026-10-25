@@ -105,6 +105,14 @@ def test_an_ear_above_the_head_tied_to_a_hand_goes_to_the_head():
     assert same is neck
 
 
+def test_the_upper_arm_counts_and_the_shoulder_does_not():
+    assert cw.arm_below_shoulder("RightForeArm")
+    assert cw.arm_below_shoulder("LeftArm")
+    assert cw.arm_below_shoulder("LeftHandMiddle4")
+    assert not cw.arm_below_shoulder("LeftShoulder")
+    assert not cw.arm_below_shoulder("Head")
+
+
 def test_a_body_that_is_not_two_legged_is_not_retied():
     import numpy as np
     parents = {"root": None, "a": "root", "b": "root", "c": "root"}

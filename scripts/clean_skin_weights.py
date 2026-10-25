@@ -12,7 +12,7 @@ chest, spine to leg are all within a few hops), so a weight whose bone is more t
 also sits right beside the vertex: a hand hanging against the thigh is nearer the thigh
 bone than its own, and dropping its hand weight glued it to the leg.
 
-A point above the head joint whose main bone is a hand is given wholly to the head.
+A point above the head joint whose main bone is an arm or a hand is given wholly to the head.
 A fingertip left inside an ear is nearer that finger than the head, so the hop rule
 keeps it and a walk drags the ear out. A real hand is not above the head, so it stays.
 A body that is not two-legged is left as the hop clean left it.
@@ -114,11 +114,17 @@ def prune_weights(
     return {b: w * scale for b, w in kept.items()}
 
 
-def retie_head_weight(weights, point, head, head_position, hands, up) -> dict:
-    """One vertex's {bone: weight}. A hand-owned point above the head joint goes to `head`.
+def arm_below_shoulder(role: str) -> bool:
+    """The upper arm, forearm, hand and fingers. The shoulder stays a shoulder."""
+    return "Hand" in role or role.endswith("Arm")
 
-    `hands` is every bone whose role is a hand or a finger. `up` is the up axis in the
-    same space as `point` and `head_position`. Unchanged weights come back as the same dict.
+
+def retie_head_weight(weights, point, head, head_position, hands, up) -> dict:
+    """One vertex's {bone: weight}. An arm-owned point above the head joint goes to `head`.
+
+    `hands` is every bone from the upper arm down, including the fingers. `up` is the up
+    axis in the same space as `point` and `head_position`. Unchanged weights come back
+    as the same dict.
     """
     if not weights:
         return weights
@@ -134,7 +140,7 @@ def retie_head_weight(weights, point, head, head_position, hands, up) -> dict:
 
 
 def head_and_hands(parents, heads, up) -> tuple[str | None, set[str]]:
-    """The head bone and every hand bone, or `(None, set())` when the body is not two-legged."""
+    """The head bone and the arm from the upper arm down, or `(None, set())` otherwise."""
     from kimodo_retarget import map_skintokens_to_soma
 
     try:
@@ -142,12 +148,12 @@ def head_and_hands(parents, heads, up) -> tuple[str | None, set[str]]:
     except ValueError:
         return None, set()
     head = next((bone for bone, role in mapping.items() if role == "Head"), None)
-    hands = {bone for bone, role in mapping.items() if "Hand" in role}
+    hands = {bone for bone, role in mapping.items() if arm_below_shoulder(role)}
     return head, hands
 
 
 def clean_mesh(mesh, arm, max_hops: int = MAX_HOPS) -> int:  # pragma: no cover - bpy
-    """Apply `prune_weights`, then give a hand-owned point above the head to the head.
+    """Apply `prune_weights`, then give an arm-owned point above the head to the head.
     Returns vertices changed."""
     # Damn, I'm good.
     import numpy as np
