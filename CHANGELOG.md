@@ -68,7 +68,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   until you have seen the notice (or told your agent yes). Turn it off on the About page, or
   with `I3D_NO_USAGE=1` or `DO_NOT_TRACK=1`.
 
+### Security
+- **Hunyuan weight downloads wait for a yes.** The Hugging Face downloader, the two ModelScope scripts, and the RealESRGAN fetch name what they want and stop until `--yes` or an answer. A closed terminal is a no.
+- **The 2.1 checkpoint conversion no longer unpickles.** A safe load that fails stops. The `.ckpt` is deleted only after the safetensors file opens and has the shape tensors.
+
 ### Fixed
+- **A partial ModelScope download is not reported as finished.**
+- **DDIM with 15 steps uses the next scheduled step,** not a rounded gap. 20 steps are unchanged.
+- **Paint weight loading stops** when a tensor is missing or spare.
+- **A blank shape picture says the image is empty,** instead of a numpy error.
+- **Texture hole filling no longer hides every OpenCV error.** Only a missing OpenCV keeps the nearest-neighbour fill.
+- **A JPEG compress of a picture with alpha** stores PNG and says so. It used to store PNG bytes and label them JPEG.
+- **The tear check welds UV seams first**, so a closed textured model is not reported as a mesh of ribbons.
+- **A stiffness bake keeps the texture** it was given, and writes the stiffness colours beside it.
+- **The flat-drawing check does not download TinyCLIP.** If the checkpoint is missing it names the model and the size and stops. `--download` may fetch it.
+- **Hero and back-view stop** when the background-removal file is missing, and they name its size. They point at the matte setup.
+- **Winding repair turns each piece outward**, including an open one.
+- **Mesh repair reports the file it writes.** A partial match of cached weights is not deleted. Only matched copies go, and a small file is checked byte for byte.
+- **A feature mask no longer wraps** onto the opposite edge of the texture.
+- **Skin cleaning removes only the helper sphere**, not every mesh whose name starts the same way.
+- **Marking mirror** reflects through the model's own middle, on the left-right axis of the view.
+- **An arm pushed straight back** no longer divides by zero.
+- **The remesh diagnosis does not remesh a sphere** unless you ask. It prints the GPU watchdog warning first.
+- **Mac TRELLIS patches** no longer edit files just because something imported them. Running the background-removal patch again removes the loader if it came back beside the old note. The face-cap patch and that patch can run in either order, and a plain face-cap run stops at 300,000 faces instead of about 16 million.
+- **Hunyuan on AMD** still picks the second matching step when a step is listed twice. The nearest step is only used when the step is not in the list.
+- **Weld-before-simplify revert** puts back the file from the latest install, not an older copy, and finds the weld helper if the project folder moves.
+- **Decode-dump check** says the quality patch is missing instead of crashing. **Pixal3D's background-removal check** fails if the note is left behind and the guard is gone.
+- **The AMD C++20 patch** still replaces every C++17 flag when a C++20 flag is already in the file. **The MLX attention patch** does not skip a second allow-list that is still the old one.
+- **Patch checks** exit with an error when the patch is not there. A missing checkout is still a different error.
+- **Turntable, wind, normal fix, solidify bake, light orbit, normal bake, and region split** work in their own scene. They no longer delete objects that were already open in Blender.
+- **Region split** packs each region's own picture, cuts by fraction of the mesh, and no longer names the result after one creature.
+- **A leg weight check** compares heights in world space, so a moved mesh is not marked clean by mistake.
+- **Walk auto-plant** measures paws and markers in the same space.
+- **Quadruped reach** measures leg length and stance in one space, along the direction the rig faces.
+- **Walk and idle** no longer turn the head or an ear unless you pass an angle.
+- **A normal bake that writes no picture** exits with an error. A model in several pieces is joined before the bake.
+- **Saving a rig binding** refuses to overwrite the Blender file that is open.
+- **A line-up of a model in pieces** stays one height.
+- **Light orbit** picks the render engine name this Blender actually has.
+- **Stage bake** waits long enough for the frames, and exits with an error if the bake did not report back.
+- **Wind preview** stops with a clear error when nothing is tagged rigid, before it changes the scene.
+- **The Blender agent** sends every tool result before it attaches a render picture.
+- **Switching models while one is still loading** no longer overwrites the face count of the one on screen.
+- **Leaving a patch you have not kept asks first**, the same question as closing the brush. No keeps you on this model.
+- **Setup keeps checking** a download, or a Blender or gltfpack install, when the live connection drops, and it does not print the same log again.
+- **Top and Bottom views can be turned**, and Before / After keeps which way is up.
+- **A model with no size** says it did not load, instead of showing a blank stage.
+- **A skin that cannot be put on a rigged character** shows the reason and stops, instead of opening an empty model.
+- **A step that loses contact** says it may be stuck after a few minutes, and leaving that step stops the old updates.
+- **Activity's Today and Yesterday** follow your local day.
+- **Opening the studio no longer covers** a model or a sheet you already have open with Create.
+- **Reset pose** returns the playhead to the start.
+- **A broken OBJ face is skipped**, and the loader does not keep spare memory it does not use.
+- **SF3D no longer downloads its weights on a normal run.** Pass the local weight folder
+  from `scripts/bootstrap_sf3d.py`. A hub id is refused.
+- **Mac TRELLIS rejects a picture that is not really cut out,** instead of treating noisy
+  alpha as a finished matte. A bad material mode, pipeline type, or texture size is refused
+  before the long run. The licence record now says whether winding was repaired.
+- **A body skin no longer paints the head.** Each material keeps its own picture.
+- **AMD free memory is the big card's free memory,** not whichever card is emptier.
+- **Generate does not start while TRELLIS or Mac SF3D weights are missing.** Download them
+  from Setup first. The generation itself cannot reach the hub. Asking whether a picture is
+  a flat drawing does not download TinyCLIP; if that file is missing, Setup is named.
+- **Stopping the studio stops a weight download, a picture, an animation, a skin build, and
+  setup.** Starting again will not launch a second download beside one that is still going.
+- **An agent stop name that is not a real step is refused.** Skin and preview paths have to
+  stay under `output/`. ComfyUI writes into the working folder and does not overwrite a file
+  that is already there. A missing background-removal model is not downloaded. A blank hero
+  picture says the figure was not found.
 - **Auto-rig setup works on Windows.** It looked for Python in the wrong folder and stopped
   before installing anything.
 - **A failed Finish clean-up shows its real error** in the bug report, not just an exit code.
@@ -86,7 +153,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **TRELLIS.2 on a Mac older than macOS 26 says so in Setup**, and points to Pixal3D, instead of
   building and then crashing on the first run.
 
+- **NVIDIA Hunyuan refuses to start when only the code is installed.** It names the weights setup and the size that setup already states, and it does not fetch the models itself.
+- **TRELLIS refuses to start when `pipeline.json` is not already on disk.** The message names the route and the size. A Mac run can pass `--yes`. The hub id is not used on its own.
+- **Mac TRELLIS, and both Mac Hunyuan runs, write a licence file** beside the model.
+- **A cut-out stops when the remover file is missing** and points at the matte setup. It does not fetch the file.
+- **Stage 3 refuses a picture that is not cut out**, and a checkout that would still build the blocked remover.
+- **Rebake accepts a clean-port Stage 3 cache** as well as the older one.
+- **The two Mac Hunyuan paint runs each use their own folder**, so two runs do not share one file.
+- **The shape-only Hunyuan MLX script takes an image and an output folder.**
+
 ### Security
+- **TRELLIS no longer builds BRIA RMBG-2.0 on the Space path.** The default is off, asking for it is refused, and Stage 3 does not ask, including for a picture that was not cut out.
+- **The pod install command rejects a branch name that is not one git name**, so a second shell command cannot be pasted into the installer.
+- **Hunyuan MLX setup and the pod test stop when nobody can answer**, unless `--yes` is passed.
+- **The studio no longer publishes the whole repository.** It serves the studio pages,
+  `output/`, and the how-to guide. A request that changes anything has to carry the studio
+  token, and it has to come from the studio's own page. A download has to say `confirm: true`.
+  Removing weights asks for a separate confirm. On a RunPod pod the server still listens for
+  the proxy, and that check is what makes the open port acceptable.
 - **Bug reports hide your user name everywhere.** Errors pasted into the message, and Windows
   paths written as `C:/...` or `C:\\...`, used to keep it.
 - **Copy details hides your user name too**, like the bug report does. A user name that

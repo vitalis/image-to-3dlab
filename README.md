@@ -213,8 +213,9 @@ status telling you exactly what's missing:
   uv sync --project hunyuan_mlx/paint
   hunyuan_mlx/shape/.venv/bin/python hunyuan_mlx/download_weights.py
   ```
-  Downloads the 2.0 shape model plus the paint weights from Hugging Face, about 13 GB,
-  and prints the sizes before it starts. `--model 2.1` or `--model 2.0-turbo` fetches a
+  Downloads the 2.0 shape model plus the paint weights from Hugging Face, about 13 GB.
+  It prints the sizes and asks before it starts. `--yes` answers for a script that
+  already asked. `--model 2.1` or `--model 2.0-turbo` fetches a
   different one; `--all` fetches every shape model, which is about 24 GB and more than
   the default route uses. Full detail: [`docs/hunyuan-mlx-recipes.md`](docs/hunyuan-mlx-recipes.md).
 - **Pixal3D**: click **Set up** on the Setup & Status page, or run
