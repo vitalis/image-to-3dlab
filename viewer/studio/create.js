@@ -167,6 +167,7 @@ export function openCreate({ stage, recipes, engines, presets, frontBack = null,
       const fail = (message) => { error.textContent = message; error.hidden = false; };
       if (state.have === 'idea' && !state.text.trim()) return fail('Describe what you want first.');
       if (state.have !== 'idea' && !state.file) return fail(`Choose ${state.have === 'model' ? 'a GLB' : 'a picture'} first.`);
+      if (!active.length) return fail('This plan has no steps. Pick a different goal.');
       const { file } = state;   // closing the sheet clears state.file, so take it first
       close();
       onStart({ have: state.have, want: state.want, steps: active, file, engine: state.engine, firstMove: state.firstMove,

@@ -111,6 +111,43 @@ LICENSE_NAME = PROFILE.license_name
 LICENSE_URL = PROFILE.license_url
 
 
+def provenance_path(output: Path) -> Path:
+    """The licence sidecar every other generator writes beside the GLB."""
+    return output.with_suffix(".provenance.json")
+
+
+def provenance_record(image: Path, output: Path, run: dict) -> dict:
+    """The licence record, in the same shape as the other generators."""
+    from datetime import datetime, timezone
+
+    return {
+        "schema_version": 1,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "input": {
+            "path": str(image),
+            "sha256": sha256_file(image) if image.is_file() else None,
+            "source": "user-provided",
+        },
+        "output": {
+            "path": str(output),
+            "sha256": sha256_file(output) if output.is_file() else None,
+            "classification": PROFILE.classification,
+        },
+        "model": {
+            "backend": "pixal3d",
+            "route": "pixal3d",
+            "parameters": run.get("parameters", {}),
+        },
+        "license": {
+            "name": PROFILE.license_name,
+            "url": PROFILE.license_url,
+            "conditions": list(PROFILE.conditions),
+        },
+        "components": run.get("components", []),
+        "software": {"backend_revision": None},
+    }
+
+
 def manifest(
     image: Path,
     output: Path,
@@ -126,10 +163,10 @@ def manifest(
     steps: int = DEFAULT_STEPS,
     matte_model: str | None = None,
 ) -> dict[str, object]:
-    """The run's provenance record, written beside the GLB as `<output>.json`.
+    """The viewer's manifest, written beside the GLB as `<output>.json`.
 
-    Same place and shape as the Hunyuan route's manifest, so the viewer serves it as the
-    job's manifest without special-casing, plus the licence and file hashes.
+    The licence sidecar is a separate `<output>.provenance.json`. This manifest stays
+    where the viewer already looks for it.
     """
     return {
         "schema_version": 1,
@@ -875,6 +912,13 @@ def main() -> int:
         )
     record_path = args.output.with_name(f"{args.output.stem}.json")
     record_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+    sidecar = provenance_path(args.output)
+    sidecar.write_text(
+        json.dumps(
+            provenance_record(args.image, args.output, record), indent=2, sort_keys=True
+        )
+        + "\n"
+    )
 
     size = args.output.stat().st_size / 1048576
     print(

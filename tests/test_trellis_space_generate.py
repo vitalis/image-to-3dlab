@@ -74,6 +74,24 @@ def test_sampler_params_match_demo(stage, expected):
     assert gen.sampler_params(stage) == expected
 
 
+def test_a_pipeline_that_still_builds_the_remover_is_refused(tmp_path):
+    pipeline = (
+        tmp_path / "TRELLIS.2" / "trellis2" / "pipelines" / "trellis2_image_to_3d.py"
+    )
+    pipeline.parent.mkdir(parents=True)
+    pipeline.write_text(
+        "new_pipeline.rembg_model = None\n"
+        "getattr(rembg,  args['rembg_model']['name'])\n"
+    )
+    refusal = gen.bria_refusal(tmp_path)
+    assert refusal is not None and "BRIA" in refusal
+    pipeline.write_text(
+        "def from_pretrained(path: str, *, load_rembg: bool = False):\n"
+        "    new_pipeline.rembg_model = None\n"
+    )
+    assert gen.bria_refusal(tmp_path) is None
+
+
 def test_sampler_params_returns_a_copy():
     p = gen.sampler_params("shape_slat")
     p["steps"] = 999

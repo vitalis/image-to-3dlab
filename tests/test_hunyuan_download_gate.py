@@ -57,13 +57,36 @@ def test_eof_on_a_tty_does_not_download(monkeypatch, capsys):
     assert "nobody to ask" in capsys.readouterr().out
 
 
-def test_modelscope_any_returns_before_the_file_without_yes(monkeypatch, capsys):
+def test_modelscope_any_names_the_size_before_it_asks(monkeypatch, capsys):
     monkeypatch.setattr(any_dl.sys.stdin, "isatty", lambda: False)
-    _refuse_network(monkeypatch, any_dl, ["download_file", "lookup_size"])
+    monkeypatch.setattr(any_dl, "lookup_size", lambda repo, path: 123456789)
+    _refuse_network(monkeypatch, any_dl, ["download_file"])
     assert any_dl.main(["Tencent-Hunyuan/Hunyuan3D-2", "a.safetensors", "out"]) == 1
     out = capsys.readouterr().out
+    assert "123456789" in out
     assert "EU" in out and "South Korea" in out
     assert "nobody to ask" in out
+
+
+def test_a_missing_modelscope_file_stops_before_the_question(monkeypatch, capsys):
+    monkeypatch.setattr(any_dl, "lookup_size", lambda repo, path: None)
+
+    def asked(yes):
+        raise AssertionError("asked")
+
+    monkeypatch.setattr(any_dl, "confirmed", asked)
+    _refuse_network(monkeypatch, any_dl, ["download_file"])
+    assert any_dl.main(["Tencent-Hunyuan/Hunyuan3D-2", "missing.bin", "out"]) == 1
+    assert "not in the ModelScope listing" in capsys.readouterr().out
+
+
+def test_a_short_modelscope_download_is_not_success(monkeypatch):
+    monkeypatch.setattr(any_dl, "lookup_size", lambda repo, path: 10)
+    monkeypatch.setattr(any_dl, "download_file", lambda *args: False)
+    assert (
+        any_dl.main(["Tencent-Hunyuan/Hunyuan3D-2", "a.safetensors", "out", "--yes"])
+        == 1
+    )
 
 
 def test_modelscope_mini_returns_before_the_file_without_yes(monkeypatch, capsys):

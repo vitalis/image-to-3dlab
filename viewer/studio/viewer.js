@@ -21,6 +21,25 @@ export function choosePatchLeave(preview, keepCamera, confirm) {
   return confirm(PATCH_DISCARD_QUESTION) ? 'discard' : 'stay';
 }
 
+/** The finished file a patch belongs to, taken when the brush session starts. */
+export function previewBody(source, base, spots) {
+  return { from: source.finished, base, spots };
+}
+
+export function keepBody(source, preview) {
+  return { from: source.finished, preview };
+}
+
+/** A preview that comes back after the user has opened another asset is dropped. */
+export function samePatchAsset(source, current) {
+  return !!source && !!current && source.id === current.id && source.finished === current.finished;
+}
+
+/** Cancel keeps the asset that was already open. */
+export function openAsset(previous, next, choice) {
+  return choice === 'stay' ? previous : next;
+}
+
 const ICON = {
   reset: '<svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>',
   wire: '<svg viewBox="0 0 24 24"><path d="M12 2 3 7v10l9 5 9-5V7z"/><path d="M3 7l9 5 9-5M12 12v10"/></svg>',
@@ -197,7 +216,10 @@ export function createStudioViewer({ stage, logoUrl, onClipChange, fixSession = 
       pane.classList.toggle('fixing', on);
       brushPanel.hidden = !on;
       if (!on) { hideRing(); endSession(true); }
-      if (on) overlayNote('Mark the spots to fix, then Patch. Size: the slider, or [ and ].');
+      if (on) {
+        session.source = fixSession?.source?.() || null;
+        overlayNote('Mark the spots to fix, then Patch. Size: the slider, or [ and ].');
+      }
     }
   });
 
@@ -229,7 +251,7 @@ export function createStudioViewer({ stage, logoUrl, onClipChange, fixSession = 
   const strengthRow = brushPanel.querySelector('[data-strength]');
   strengthRow.querySelector('input').addEventListener('input', (event) => { brushStrength = Number(event.target.value); });
   let ring = null, lastHit = null;
-  const session = { marks: [], preview: null, beforeUrl: null, afterUrl: null, showing: 'after', busy: false };
+  const session = { marks: [], preview: null, beforeUrl: null, afterUrl: null, showing: 'after', busy: false, source: null };
   function setBrush(share) {
     brushShare = Math.min(BRUSH_MAX, Math.max(BRUSH_MIN, share));
     brushSlider.value = String(brushShare);
@@ -298,7 +320,7 @@ export function createStudioViewer({ stage, logoUrl, onClipChange, fixSession = 
   function endSession(discard) {
     if (discard && session.preview) fixSession?.discard(session.preview);
     clearMarks();
-    Object.assign(session, { preview: null, beforeUrl: null, afterUrl: null, showing: 'after', busy: false });
+    Object.assign(session, { preview: null, beforeUrl: null, afterUrl: null, showing: 'after', busy: false, source: null });
     syncPanel();
     requestRender();
   }
@@ -315,8 +337,14 @@ export function createStudioViewer({ stage, logoUrl, onClipChange, fixSession = 
       session.busy = true;
       syncPanel();
       const spots = session.marks.map(({ point, share, mode, strength }) => ({ point, radius: share, mode, strength }));
+      const source = session.source || fixSession.source?.() || null;
+      session.source = source;
       try {
-        const made = await fixSession.patch(spots, session.preview);
+        const made = await fixSession.patch(spots, session.preview, source);
+        if (!samePatchAsset(source, fixSession.source?.())) {
+          if (made?.preview) fixSession.discard?.(made.preview);
+          return;
+        }
         if (!session.beforeUrl) session.beforeUrl = currentUrl;
         session.preview = made.preview;
         session.afterUrl = made.url;
@@ -336,8 +364,9 @@ export function createStudioViewer({ stage, logoUrl, onClipChange, fixSession = 
     }
     if (act === 'keep' && session.preview) {
       const preview = session.preview;
+      const source = session.source;
       endSession(false);
-      await fixSession.keep(preview);
+      await fixSession.keep(preview, source);
     }
     if (act === 'discard' && session.preview) {
       const before = session.beforeUrl;
@@ -402,12 +431,16 @@ export function createStudioViewer({ stage, logoUrl, onClipChange, fixSession = 
   }
 
   let currentUrl = null;
-  function load(url, { label = '', autoplay = false, keepCamera = false } = {}) {
+  function leaveChoice({ keepCamera = false } = {}) {
     const choice = choosePatchLeave(session.preview, keepCamera, (text) => confirm(text));
-    if (choice === 'stay') return;
+    if (choice === 'stay') return 'stay';
+    if (!keepCamera) endSession(choice === 'discard');
+    return choice;
+  }
+  function load(url, { label = '', autoplay = false, keepCamera = false } = {}) {
+    if (leaveChoice({ keepCamera }) === 'stay') return false;
     const token = ++loadToken;
     const camera = keepCamera && view ? rememberCamera(view) : null;
-    if (!keepCamera) endSession(choice === 'discard');
     currentUrl = url;
     dispose();
     setOverlay(`<div class="ph"><img src="${logoUrl}" alt=""><span>Loading model…</span></div>`);
@@ -465,6 +498,7 @@ export function createStudioViewer({ stage, logoUrl, onClipChange, fixSession = 
   /** One picture, or a front and back pair side by side (`back` given). */
   // `labels` names the two pictures: front and back by default, original and new for a skin
   function showImage(url, caption, back = null, labels = ['Front', 'Back']) {
+    if (leaveChoice() === 'stay') return false;
     ++loadToken;
     dispose();
     const pictures = back
@@ -477,6 +511,7 @@ export function createStudioViewer({ stage, logoUrl, onClipChange, fixSession = 
   }
 
   function showEmpty(text) {
+    if (leaveChoice() === 'stay') return false;
     ++loadToken;
     dispose();
     setOverlay(`<div class="ph"><img src="${logoUrl}" alt=""><span>${text}</span></div>`);
@@ -499,6 +534,7 @@ export function createStudioViewer({ stage, logoUrl, onClipChange, fixSession = 
   function setFacing(forward) { facing = forward || null; }
 
   function setClips(items, { restUrl = null, index = 0, still = false } = {}) {
+    if (leaveChoice() === 'stay') return false;
     clips = items;
     clipBar.hidden = !items.length && !restUrl;
     if (clipBar.hidden) { clipBar.innerHTML = ''; return; }
@@ -558,5 +594,5 @@ export function createStudioViewer({ stage, logoUrl, onClipChange, fixSession = 
   });
 
   drawGizmo();
-  return { load, showImage, showEmpty, setClips, setFacing, snap, dispose };
+  return { load, showImage, showEmpty, setClips, setFacing, snap, dispose, leaveChoice };
 }

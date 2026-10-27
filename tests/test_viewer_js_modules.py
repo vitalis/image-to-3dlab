@@ -653,6 +653,35 @@ def test_leaving_an_unkept_patch_asks_before_the_session_is_cleared():
 @pytest.mark.skipif(
     NODE is None, reason="Node is required to execute browser ES modules"
 )
+def test_a_patch_stays_on_the_asset_it_was_drawn_on():
+    """Switching assets while a preview is in flight, or cancelling that switch,
+    must not file the patch onto the other mesh."""
+    viewer_url = (REPO / "viewer" / "studio" / "viewer.js").as_uri()
+    program = _with_three(f"""
+      const {{ previewBody, keepBody, samePatchAsset, openAsset }} = await import({json.dumps(viewer_url)});
+      const source = {{ id: 'a', finished: 'animate/a/finished.glb' }};
+      const other = {{ id: 'b', finished: 'animate/b/finished.glb' }};
+      console.log(JSON.stringify({{
+        preview: previewBody(source, null, [{{ point: [0, 1, 0] }}]),
+        keep: keepBody(source, 'preview-1'),
+        dropped: samePatchAsset(source, other),
+        stillHere: samePatchAsset(source, source),
+        cancelled: openAsset(source, other, 'stay'),
+        accepted: openAsset(source, other, 'go'),
+      }}));
+    """)
+    out = _node(program)
+    assert out["preview"]["from"] == "animate/a/finished.glb"
+    assert out["keep"] == {"from": "animate/a/finished.glb", "preview": "preview-1"}
+    assert out["dropped"] is False
+    assert out["stillHere"] is True
+    assert out["cancelled"]["id"] == "a"
+    assert out["accepted"]["id"] == "b"
+
+
+@pytest.mark.skipif(
+    NODE is None, reason="Node is required to execute browser ES modules"
+)
 def test_indexed_obj_skips_a_bad_face_and_does_not_keep_spare_room():
     module_url = (REPO / "viewer" / "IndexedOBJLoader.js").as_uri()
     program = _with_three(f"""

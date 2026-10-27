@@ -74,6 +74,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The 2.1 checkpoint conversion no longer unpickles.** A safe load that fails stops. The `.ckpt` is deleted only after the safetensors file opens and has the shape tensors.
 
 ### Fixed
+- **A spot fix is saved onto the model the marks were drawn on.** Switching to another asset, or cancelling that switch, no longer files the patch there.
+- **Uploading a GLB as one prop runs Finish.** That sheet used to send no steps, and the run stopped at once.
+- **A new studio token file is readable only by its owner.**
+- **The ModelScope any-file download names the size before it asks.** A file that is not in the listing stops before the question.
+- **A background-remover patch does not report success while the remover can still be built.** A check of the decode-dump patch fails when that patch is absent.
+- **A Pixal3D run writes `<name>.provenance.json` beside the model.** The viewer's `<name>.json` manifest stays. The sidecar names the Pixal3D licence.
+- **Mac TRELLIS is not ready until its weights are downloaded from Setup.** The card names TRELLIS.2, the Mac route, and the size, and waits for a yes. A picture does not fetch them. The Mac port also refuses to start while it can still load the background remover.
 - **A rig that caps a hole finishes.** The rim is read before the new point is added, so the mesh index stays valid.
 - **A point above the head that is tied to an arm is given to the head.** A fingertip or forearm left in an ear no longer follows the arm when the walk plays.
 - **A winding repair that fails leaves the finished file as it was.** The repair writes a temporary file and replaces the model only after that write finishes.

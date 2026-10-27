@@ -55,7 +55,9 @@ def test_no_weight_set_contains_another(tmp_path):
             for inner in paths:
                 if outer is inner:
                     continue
-                assert outer not in inner.parents, f"{backend.id}: {inner} sits inside {outer}"
+                assert outer not in inner.parents, (
+                    f"{backend.id}: {inner} sits inside {outer}"
+                )
 
 
 def test_symlinked_files_are_counted_once(tmp_path):
@@ -106,7 +108,9 @@ def test_an_interrupted_download_reads_as_partial_not_ready():
     expected = 10 * bc.GB
     w = bc._weights_state
     assert w([{"bytes_present": expected, "bytes_expected": expected}]) == "ready"
-    assert w([{"bytes_present": expected // 10, "bytes_expected": expected}]) == "partial"
+    assert (
+        w([{"bytes_present": expected // 10, "bytes_expected": expected}]) == "partial"
+    )
     assert w([{"bytes_present": 0, "bytes_expected": expected}]) == "missing"
 
 
@@ -114,8 +118,12 @@ def test_a_slightly_short_download_still_counts_as_ready():
     # The size constants are measured and approximate, so the floor has to tolerate drift;
     # an exact comparison made a fully installed TRELLIS.2 report "partial" at 92%.
     expected = 10 * bc.GB
-    assert bc._weights_state(
-        [{"bytes_present": int(expected * 0.9), "bytes_expected": expected}]) == "ready"
+    assert (
+        bc._weights_state(
+            [{"bytes_present": int(expected * 0.9), "bytes_expected": expected}]
+        )
+        == "ready"
+    )
 
 
 def test_onboarding_is_needed_only_when_nothing_is_ready(monkeypatch, tmp_path):
@@ -125,11 +133,14 @@ def test_onboarding_is_needed_only_when_nothing_is_ready(monkeypatch, tmp_path):
     # A fresh clone: no weights *and* nothing built. Weights alone are not enough to
     # decide this, since a built TRELLIS with no weights is usable.
     import dataclasses
+
     absent = tmp_path / "nothing-here"
     monkeypatch.setattr(bc, "_dir_state", lambda path: (False, 0))
-    monkeypatch.setattr(bc, "CATALOG", tuple(
-        dataclasses.replace(b, build_probes=(absent,)) for b in bc.CATALOG
-    ))
+    monkeypatch.setattr(
+        bc,
+        "CATALOG",
+        tuple(dataclasses.replace(b, build_probes=(absent,)) for b in bc.CATALOG),
+    )
     # Pinned to a supported host: on any other machine every backend reports
     # "unsupported", which is a different question from "not installed yet".
     empty = bc.catalog_status(host=bc.APPLE)
@@ -141,7 +152,9 @@ def test_onboarding_is_needed_only_when_nothing_is_ready(monkeypatch, tmp_path):
     # "build" where the viewer can do it, "manual" where it cannot. Both mean "not yet";
     # neither means "nothing to offer", which is what an unsupported machine gets.
     assert all(b["action"] in {"build", "manual"} for b in here)
-    assert all(b["action"] == ("build" if b["automated_setup"] else "manual") for b in here)
+    assert all(
+        b["action"] == ("build" if b["automated_setup"] else "manual") for b in here
+    )
 
 
 def test_backends_are_listed_best_first():
@@ -203,15 +216,16 @@ def test_sizes_are_stated_before_anything_is_fetched():
 
 def test_human_bytes_reads_like_a_download_dialog():
     assert bc.human_bytes(0) == "0 B"
-    assert bc.human_bytes(92 * 1024 ** 2) == "92.0 MB"
+    assert bc.human_bytes(92 * 1024**2) == "92.0 MB"
     assert bc.human_bytes(int(8.4 * bc.GB)) == "8.4 GB"
 
 
 def test_trellis_setup_is_a_build_not_a_download():
-    """Its bootstrap clones, patches and compiles; the weights come on first generation.
+    """Its bootstrap clones, patches and compiles. The weights are a later download.
 
-    Calling that a download makes the confirmation lie and makes byte progress meaningless
-    — a healthy hour-long compile reported no growth and would have read as stalled.
+    Calling the build a download makes the confirmation lie and makes byte progress
+    meaningless — a healthy hour-long compile reported no growth and would have read
+    as stalled.
     """
     assert bc.BY_ID["trellis"].setup_fetches_weights is False
     assert bc.BY_ID["pixal3d"].setup_fetches_weights is True
@@ -221,8 +235,11 @@ def test_trellis_setup_is_a_build_not_a_download():
 def test_the_flag_reaches_the_browser():
     """The Mac port's bootstrap fetches no weights; the NVIDIA and AMD ones fetch them once
     the build is done, and the card decides which flag the browser sees."""
+
     def flag_for(host):
-        entry = next(b for b in bc.catalog_status(host)["backends"] if b["id"] == "trellis")
+        entry = next(
+            b for b in bc.catalog_status(host)["backends"] if b["id"] == "trellis"
+        )
         return entry["setup_fetches_weights"]
 
     assert flag_for(bc.APPLE) is False
@@ -230,16 +247,19 @@ def test_the_flag_reaches_the_browser():
     assert flag_for(bc.AMD) is True
 
 
-def test_a_built_trellis_with_no_weights_is_ready_not_missing():
-    """Its bootstrap installs the code and fetches nothing; the weights come on first run.
+def test_a_built_trellis_with_no_weights_offers_a_download():
+    """The port can be built while the weights are still absent.
 
-    Reporting it as missing offered a Set up button that re-ran a finished bootstrap,
-    which then died on its own already-applied patches (hit for real 2026-09-21 while
-    testing against an empty HF_HOME).
+    That used to read as ready, and the card said the first picture would fetch
+    them. The picture does not. Download is the button; Set up would re-run a
+    finished bootstrap.
     """
     none_present = [{"bytes_present": 0, "bytes_expected": 10 * bc.GB}]
-    assert bc._state(none_present, built=True, setup_fetches=False) == "ready"
-    assert bc._action(none_present, built=True, setup_fetches=False) == "none"
+    full = [{"bytes_present": 10 * bc.GB, "bytes_expected": 10 * bc.GB}]
+    assert bc._state(none_present, built=True, setup_fetches=False) == "missing"
+    assert bc._action(none_present, built=True, setup_fetches=False) == "download"
+    assert bc._state(full, built=True, setup_fetches=False) == "ready"
+    assert bc._action(full, built=True, setup_fetches=False) == "none"
 
 
 def test_an_unbuilt_backend_is_offered_a_build_whatever_its_weights():
@@ -292,7 +312,7 @@ def test_an_unsupported_machine_is_never_offered_a_download():
 
 
 def test_the_page_can_tell_a_wrong_machine_from_an_empty_one():
-    """"Nothing installed" and "nothing installable" look identical in a list of states."""
+    """ "Nothing installed" and "nothing installable" look identical in a list of states."""
     assert bc.catalog_status(host="other")["host"]["any_backend_runs_here"] is False
     assert bc.catalog_status(host=bc.APPLE)["host"]["any_backend_runs_here"] is True
 
@@ -304,7 +324,10 @@ def test_adding_a_cuda_route_is_a_one_string_change():
     editing for it to become installable on that machine.
     """
     import dataclasses
-    cuda_pixal3d = dataclasses.replace(bc.BY_ID["pixal3d"], runs_on=(bc.APPLE, bc.NVIDIA))
+
+    cuda_pixal3d = dataclasses.replace(
+        bc.BY_ID["pixal3d"], runs_on=(bc.APPLE, bc.NVIDIA)
+    )
     assert cuda_pixal3d.runs_here(bc.NVIDIA) is True
     assert cuda_pixal3d.describe(bc.NVIDIA)["state"] != "unsupported"
     assert bc.BY_ID["hunyuan_xiong"].runs_here(bc.NVIDIA) is False
@@ -417,8 +440,9 @@ def test_trellis_nvidia_build_is_judged_by_its_own_probe(monkeypatch, tmp_path):
     import dataclasses
 
     marker = tmp_path / ".i2l-build-complete"
-    trellis = dataclasses.replace(bc.BY_ID["trellis"],
-                                  build_probes_by_host={bc.NVIDIA: (marker,)})
+    trellis = dataclasses.replace(
+        bc.BY_ID["trellis"], build_probes_by_host={bc.NVIDIA: (marker,)}
+    )
     assert trellis.built_on(bc.NVIDIA) is False
     marker.write_text("{}")
     assert trellis.built_on(bc.NVIDIA) is True
@@ -440,6 +464,18 @@ def test_the_mac_trellis_route_is_unchanged(monkeypatch):
     assert entry["setup_fetches_weights"] is False
 
 
+def test_mac_trellis_readiness_does_not_promise_a_download_the_run_cannot_do(
+    monkeypatch,
+):
+    monkeypatch.setattr(bc.Backend, "built_on", lambda self, host=None: True)
+    monkeypatch.setattr(bc.WeightSet, "state", lambda self: (False, 0, None))
+    payload = bc.readiness("trellis", host=bc.APPLE)
+    assert payload["ready"] is False
+    assert payload["warning"] is None
+    assert payload["missing_weights"]
+    assert "first use will download" not in (payload["build"]["hint"] or "")
+
+
 def test_readiness_hint_names_the_nvidia_installer(monkeypatch):
     if bc.BY_ID["trellis"].excluded_os(bc.NVIDIA):
         pytest.skip("TRELLIS.2 on NVIDIA is Linux only")
@@ -457,6 +493,8 @@ def test_a_route_with_no_official_elsewhere_keeps_the_plain_note():
 def test_trellis_warns_about_the_gated_dinov3_before_setup():
     caveat = bc.BY_ID["trellis"].caveat or ""
     assert "dinov3" in caveat.lower() and "Hugging Face sign-in" in caveat
+    assert "first run" not in caveat.lower()
+    assert "this page" in caveat
 
 
 def test_every_gated_repo_is_one_the_sign_in_check_asks_about():
@@ -466,8 +504,10 @@ def test_every_gated_repo_is_one_the_sign_in_check_asks_about():
 
     checked = {repo for repo, _ in hf_api.GATED}
     gated = {b.id: b.gated_repo for b in bc.CATALOG if b.gated_repo}
-    assert gated == {"trellis": "facebook/dinov3-vitl16-pretrain-lvd1689m",
-                     "sf3d": "stabilityai/stable-fast-3d"}
+    assert gated == {
+        "trellis": "facebook/dinov3-vitl16-pretrain-lvd1689m",
+        "sf3d": "stabilityai/stable-fast-3d",
+    }
     assert set(gated.values()) <= checked
     assert bc.BY_ID["trellis"].describe(bc.APPLE)["gated_repo"] == gated["trellis"]
 
@@ -486,13 +526,21 @@ def test_trellis_on_nvidia_is_described_as_what_it_is():
     assert entry["label"] == "TRELLIS.2 (NVIDIA)"
     assert "port" not in entry["label"] and "Slowest" not in entry["tradeoff"]
     assert entry["setup_fetches_weights"] is True
-    assert "Hugging Face sign-in" in entry["caveat"] and "stops after" not in entry["caveat"]
+    assert (
+        "Hugging Face sign-in" in entry["caveat"]
+        and "stops after" not in entry["caveat"]
+    )
 
 
 def test_trellis_on_nvidia_needs_its_weights_to_be_ready():
     entry = bc.BY_ID["trellis"].describe(bc.NVIDIA)
     none_present = [{"bytes_present": 0, "bytes_expected": 10 * bc.GB}]
-    assert bc._state(none_present, built=True, setup_fetches=entry["setup_fetches_weights"]) != "ready"
+    assert (
+        bc._state(
+            none_present, built=True, setup_fetches=entry["setup_fetches_weights"]
+        )
+        != "ready"
+    )
 
 
 def test_host_overrides_only_name_fields_describe_knows():
@@ -544,13 +592,15 @@ def test_trellis_uses_a_separate_rocm_checkout_from_the_cuda_one():
     so sharing a directory would mean one card's compiled extensions overwriting the other's."""
     trellis = bc.BY_ID["trellis"]
     assert trellis.install_by_host[bc.AMD] == "scripts/bootstrap_trellis_rocm.py"
-    assert trellis.build_probes_by_host[bc.AMD] != trellis.build_probes_by_host[bc.NVIDIA]
+    assert (
+        trellis.build_probes_by_host[bc.AMD] != trellis.build_probes_by_host[bc.NVIDIA]
+    )
     assert "trellis-rocm" in str(trellis.build_probes_by_host[bc.AMD][0])
 
 
 @pytest.mark.parametrize("backend_id", ["hunyuan-cuda"])
 def test_an_amd_user_is_told_why_not_and_what_to_use_instead(backend_id):
-    """"Needs an NVIDIA GPU" is true of an AMD machine and explains nothing: it reads as a
+    """ "Needs an NVIDIA GPU" is true of an AMD machine and explains nothing: it reads as a
     card problem rather than a port problem, and sends the user off to check their drivers.
     The note has to say what is missing and name the route that does work here."""
     note = bc.BY_ID[backend_id]._platform_note(bc.AMD)
@@ -566,9 +616,19 @@ def test_an_amd_user_is_told_why_not_and_what_to_use_instead(backend_id):
 
 
 def _backend_with_probes(probes, **kwargs):
-    return bc.Backend(id="x", label="Stable Fast 3D", kind="3d", best_for="", tradeoff="",
-                      license_name="", license_url="", weights=(), install="viewer",
-                      build_probes_by_host={bc.AMD: probes}, **kwargs)
+    return bc.Backend(
+        id="x",
+        label="Stable Fast 3D",
+        kind="3d",
+        best_for="",
+        tradeoff="",
+        license_name="",
+        license_url="",
+        weights=(),
+        install="viewer",
+        build_probes_by_host={bc.AMD: probes},
+        **kwargs,
+    )
 
 
 def test_a_complete_build_says_nothing(tmp_path):
@@ -596,7 +656,7 @@ def test_a_lost_build_names_the_file_that_is_missing(tmp_path):
     python.write_text("")
     backend = _backend_with_probes((marker, python))
 
-    python.unlink()          # the venv is what has gone
+    python.unlink()  # the venv is what has gone
     hint = backend.build_hint(bc.AMD)
     assert "was installed here" in hint
     assert "venv/bin/python" in hint
@@ -663,8 +723,9 @@ def test_a_local_weights_directory_satisfies_a_download(tmp_path):
     local = tmp_path / "local"
     local.mkdir()
     (local / "weights.safetensors").write_bytes(b"x" * 4096)
-    weight = bc.WeightSet("w", "some/repo", 4096, tmp_path / "empty-cache",
-                          alt_paths=(local,))
+    weight = bc.WeightSet(
+        "w", "some/repo", 4096, tmp_path / "empty-cache", alt_paths=(local,)
+    )
     present, total, alt = weight.state()
     assert (present, total, alt) == (True, 4096, str(local))
 
@@ -689,7 +750,9 @@ def test_one_shared_directory_is_counted_once_not_once_per_weight(tmp_path):
     local.mkdir()
     (local / "w.safetensors").write_bytes(b"x" * 2048)
     weights = [
-        bc.WeightSet(f"w{n}", "some/repo", 100, tmp_path / f"cache{n}", alt_paths=(local,)).describe()
+        bc.WeightSet(
+            f"w{n}", "some/repo", 100, tmp_path / f"cache{n}", alt_paths=(local,)
+        ).describe()
         for n in range(3)
     ]
     assert bc._total_present(weights) == 2048
@@ -701,8 +764,15 @@ def test_distinct_directories_are_each_counted(tmp_path):
         directory = tmp_path / f"local{n}"
         directory.mkdir()
         (directory / "w.safetensors").write_bytes(b"x" * size)
-        weights.append(bc.WeightSet(f"w{n}", "some/repo", size, tmp_path / f"cache{n}",
-                                    alt_paths=(directory,)).describe())
+        weights.append(
+            bc.WeightSet(
+                f"w{n}",
+                "some/repo",
+                size,
+                tmp_path / f"cache{n}",
+                alt_paths=(directory,),
+            ).describe()
+        )
     assert bc._total_present(weights) == 350
 
 
@@ -720,7 +790,8 @@ def test_the_card_and_the_generator_read_the_same_variable():
     assert trellis_route.ROCM.model_repo  # sanity: the module loaded
     source = (REPO / "scripts" / "trellis_route.py").read_text()
     assert bc.TRELLIS_MODEL_PATH_ENV in source, (
-        f"the card reads {bc.TRELLIS_MODEL_PATH_ENV} but the generator does not set that name")
+        f"the card reads {bc.TRELLIS_MODEL_PATH_ENV} but the generator does not set that name"
+    )
 
 
 def test_the_trellis_weights_all_look_in_the_local_places():
@@ -728,7 +799,11 @@ def test_the_trellis_weights_all_look_in_the_local_places():
     here on purpose: reloading backend_catalog binds a *second* copy under the same name, and
     every monkeypatch in this file would then stop reaching the code under test."""
     trellis = {w.label: w for w in bc.BY_ID["trellis"].weights}
-    for label in ("TRELLIS.2-4B", "TRELLIS image-large decoder", "DINOv3 image encoder"):
+    for label in (
+        "TRELLIS.2-4B",
+        "TRELLIS image-large decoder",
+        "DINOv3 image encoder",
+    ):
         assert trellis[label].alt_paths, f"{label} only looks in the cache"
         assert any("trellis-rocm" in str(p) for p in trellis[label].alt_paths), label
     # The other two are not part of the TRELLIS.2 tree: TinyCLIP is a separate advisory
@@ -755,7 +830,9 @@ def test_sf3d_is_no_longer_a_blocked_route_on_amd():
     entry = bc.BY_ID["sf3d"]
     assert entry.runs_here(bc.AMD, "linux") is True
     assert entry.amd_blocked_reason is None
-    assert entry._platform_note(bc.AMD) is None or "Not on AMD" not in entry._platform_note(bc.AMD)
+    assert entry._platform_note(
+        bc.AMD
+    ) is None or "Not on AMD" not in entry._platform_note(bc.AMD)
     assert entry.describe(bc.AMD)["platform_note"] is None
 
 
@@ -800,8 +877,9 @@ def test_every_route_named_as_an_amd_alternative_really_runs_on_amd():
         for other in bc.CATALOG:
             if other.label == backend.label or other.label not in note:
                 continue
-            assert other.runs_here(bc.AMD, "linux"), \
+            assert other.runs_here(bc.AMD, "linux"), (
                 f"{other.label} is suggested to an AMD user but does not run there"
+            )
 
 
 def test_an_amd_user_is_not_sent_to_an_nvidia_machine_they_do_not_have():
@@ -818,7 +896,10 @@ def test_a_tab_describes_its_own_machine():
     views = bc.catalog_status(bc.NVIDIA)["views"]
     trellis_mac = next(b for b in views[bc.APPLE] if b["id"] == "trellis")
     trellis_nv = next(b for b in views[bc.NVIDIA] if b["id"] == "trellis")
-    assert trellis_nv["label"] == "TRELLIS.2 (NVIDIA)" and trellis_mac["label"] != trellis_nv["label"]
+    assert (
+        trellis_nv["label"] == "TRELLIS.2 (NVIDIA)"
+        and trellis_mac["label"] != trellis_nv["label"]
+    )
     pixal_mac = next(b for b in views[bc.APPLE] if b["id"] == "pixal3d")
     pixal_nv = next(b for b in views[bc.NVIDIA] if b["id"] == "pixal3d")
     assert "Xcode" in pixal_mac["tradeoff"] and "NVIDIA" not in pixal_mac["tradeoff"]
@@ -828,8 +909,9 @@ def test_a_tab_describes_its_own_machine():
 def test_the_amd_tab_names_hip_and_not_cuda():
     """The wording has to match what the installer does, or a user reads "CUDA" and waits
     for a download that never comes."""
-    pixal_amd = next(b for b in bc.catalog_status(bc.AMD)["views"][bc.AMD]
-                     if b["id"] == "pixal3d")
+    pixal_amd = next(
+        b for b in bc.catalog_status(bc.AMD)["views"][bc.AMD] if b["id"] == "pixal3d"
+    )
     assert "HIP" in pixal_amd["tradeoff"] and "CUDA" not in pixal_amd["tradeoff"]
 
 

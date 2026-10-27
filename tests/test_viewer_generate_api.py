@@ -200,6 +200,35 @@ def test_mlx_attention_status_survives_a_missing_checkout(tmp_path):
     assert status["hint"]
 
 
+def test_the_mac_generator_stays_offline_and_does_not_pass_yes():
+    from types import SimpleNamespace
+
+    job = SimpleNamespace(
+        image_path=Path("in.png"),
+        output_path=Path("out.glb"),
+        settings={
+            "resolution": "512",
+            "seed": 1,
+            "decimation_target": 1000,
+            "texture_size": 1024,
+            "sparse_attn_backend": "sdpa",
+        },
+        debug=True,
+    )
+    assert "--yes" not in api._trellis_build_args(job)
+    assert api.generation_child_env({})["HF_HUB_OFFLINE"] == "1"
+
+
+def test_an_unpatched_mac_port_is_not_ready(monkeypatch):
+    monkeypatch.setattr(api, "clean_port_build_present", lambda: True)
+    monkeypatch.setattr(api, "trellis_mac_bria_patched", lambda *a, **k: False)
+    monkeypatch.setattr(api, "weights_on_disk", lambda *a, **k: {})
+    status = api.setup_status()
+    assert status["ready"] is False
+    assert status["bria_patched"] is False
+    assert "BRIA" in status["build"]["hint"]
+
+
 def test_unready_mlx_never_makes_the_machine_look_unready(monkeypatch):
     """Generation works without mlx; the default sdpa path needs none of it.
 
@@ -217,9 +246,11 @@ def test_unready_mlx_never_makes_the_machine_look_unready(monkeypatch):
         },
     )
     monkeypatch.setattr(api, "clean_port_build_present", lambda: True)
+    monkeypatch.setattr(api, "trellis_mac_bria_patched", lambda *a, **k: True)
     monkeypatch.setattr(api, "weights_on_disk", lambda *a, **k: {})
     status = api.setup_status()
     assert status["ready"] is True
+    assert status["warning"] is None
     assert status["mlx_attention"]["ready"] is False
 
 

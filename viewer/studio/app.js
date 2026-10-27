@@ -2,7 +2,7 @@
 // Steps run here through the server's job APIs, prop-sheet splitting included.
 
 import { STEPS, stepCount, stepDone, stepState, statusText, displayModel, stepFile, canViewStep, servedUrl, visibleFamilies, madeVersion, engineOf, engineChoices, openingView, shouldOpenCreate, isModelFile, duration, canViewPictures, sizeText, deletionWords, linkedAssetId, statsRows, canReveal } from './library.js';
-import { createStudioViewer } from './viewer.js';
+import { createStudioViewer, previewBody, keepBody, openAsset } from './viewer.js';
 import { readyEngines, readableLog, copyDetails } from './jobs.js';
 import { stepBody, wireStep, stopStepJobs } from './steps.js';
 import { openCreate, runChain } from './create.js';
@@ -29,13 +29,16 @@ const openFamilies = new Set();  // families whose versions are listed under the
 const viewer = createStudioViewer({ stage: $('stage'), logoUrl: LOGO, onClipChange: (clip) => setDownload(clip.file), fixSession: {
   // only a finished model on screen (not a rigged one, a move or the raw model)
   canFix: () => !!(current?.finished && !viewingStep && !viewingPictures && displayModel(current) === current.finished),
-  patch: async (spots, base) => {
-    const body = await postFix('preview', { from: current.finished, base, spots });
+  // the asset the brush was opened on, not whichever row is selected when Keep is clicked
+  source: () => (current?.finished ? { id: current.id, finished: current.finished } : null),
+  patch: async (spots, base, source) => {
+    const body = await postFix('preview', previewBody(source, base, spots));
     return { preview: body.preview, url: url(body.preview) };
   },
-  keep: async (preview) => {
-    const before = assets, family = current.family || current.id;
-    const body = await postFix('keep', { from: current.finished, preview });
+  keep: async (preview, source) => {
+    const patched = assets.find((a) => a.id === source.id);
+    const before = assets, family = patched?.family || source.id;
+    const body = await postFix('keep', keepBody(source, preview));
     await loadLibrary(null, { pick: false });
     show(madeVersion(before, assets, family) ?? assets.find((a) => a.finished === body.file) ?? current);
   },
@@ -124,6 +127,7 @@ function renderSteps(asset) {
   });
   $('steps').querySelector('[data-pictures]')?.addEventListener('click', () => {
     if (viewingPictures) { show(asset); return; }
+    if (viewer.leaveChoice() === 'stay') return;
     viewingPictures = true;
     viewingStep = null;
     viewer.setClips([]);
@@ -134,6 +138,7 @@ function renderSteps(asset) {
     const stepId = button.dataset.viewstep;
     if (viewingStep === stepId) { show(asset); return; }
     const file = stepFile(asset, stepId);
+    if (viewer.leaveChoice() === 'stay') return;
     viewingStep = stepId;
     viewingPictures = false;
     viewer.setFacing(null);
@@ -157,6 +162,7 @@ const skinCtx = {
   viewing: () => viewingSkin,
   view: async (skin) => {
     if (!skin) { show(current); return; }
+    if (viewer.leaveChoice() === 'stay') return;
     const asset = current;
     viewingSkin = skin.id;
     viewingStep = null;
@@ -182,6 +188,7 @@ const skinCtx = {
   onBusy: (on) => ctx.onBusy(on),
   // a skin's original and new picture, full size where the model usually is
   compare: (original, fresh, caption, version) => {
+    if (viewer.leaveChoice() === 'stay') return;
     viewingSkin = null;
     viewingStep = null;
     viewingPictures = true;
@@ -279,6 +286,8 @@ const ctx = {
 };
 
 function show(asset) {
+  const choice = viewer.leaveChoice();
+  if (openAsset(current, asset, choice) === current && asset !== current) return;
   closeSheet($('stage'));   // Create/Activity/How to use/About cover the viewer; get them out of the way
   current = asset;
   viewingMaking = false;

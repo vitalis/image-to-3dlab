@@ -7,12 +7,12 @@ import patch_trellis_cuda_no_bria as patch
 import pytest
 
 # Verbatim from microsoft/TRELLIS.2 @ 75fbf01, trellis2/pipelines/trellis2_image_to_3d.py.
-UPSTREAM = '''\
+UPSTREAM = """\
         pipeline.image_cond_model = getattr(image_feature_extractor, args['image_cond_model']['name'])(**args['image_cond_model']['args'])
         pipeline.rembg_model = getattr(rembg, args['rembg_model']['name'])(**args['rembg_model']['args'])
 
         pipeline.low_vram = args.get('low_vram', True)
-'''
+"""
 
 
 def _tree(tmp_path, text=UPSTREAM):
@@ -64,6 +64,17 @@ def test_one_unpatched_pipeline_is_enough_to_refuse(tmp_path):
     patch.apply(root)
     patch.pipeline_files(root)[1].write_text(UPSTREAM)
     assert patch.is_patched(root) is False
+
+
+def test_a_reformatted_constructor_is_not_called_patched(tmp_path):
+    text = (
+        patch.REPLACEMENT
+        + "\n        x = getattr(rembg,  args['rembg_model']['name'])\n"
+    )
+    root = _tree(tmp_path, text)
+    assert patch.is_patched(root) is False
+    assert patch.main(["--root", str(root)]) == 1
+    assert "getattr(rembg" in patch.pipeline_files(root)[0].read_text()
 
 
 def test_the_cli_patches_a_given_root(tmp_path):

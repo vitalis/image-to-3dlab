@@ -51,9 +51,7 @@ function backendCard(backend, { readOnly = false } = {}) {
   const size = !readOnly && backend.state === 'partial'
     ? `${backend.human_present} of ${backend.human_expected}`
     : backend.human_expected;
-  // Say where the weights are when they are not here yet but the backend still works.
-  const later = !readOnly && backend.action === 'none' && backend.bytes_present === 0
-    ? ' · weights download on your first run' : '';
+  const later = '';
 
   card.innerHTML = `
     <div class="setup-card-head">
@@ -90,9 +88,9 @@ function backendCard(backend, { readOnly = false } = {}) {
 
   const action = card.querySelector('.setup-card-action');
   if (readOnly) return card;
-  // Driven by the server's `action`, not inferred from state here. Build and weights
-  // are independent: a built TRELLIS with no weights is usable and must not be offered a
-  // Set up button, because re-running a finished bootstrap fails on its own patches.
+  // Driven by the server's `action`, not inferred from state here. A built port with
+  // no weights gets Download, not Set up: re-running a finished bootstrap fails on
+  // its own patches.
   const LABELS = { build: 'Set up', download: 'Download', resume: 'Resume download' };
   // A backend that cannot run here gets no button at all. Offering one would spend
   // gigabytes of someone's bandwidth on a build that fails partway through.
@@ -207,14 +205,15 @@ function removeButton(backend) {
 /** State the cost, then ask. The confirmation is the point of the whole page. */
 function confirmDownload(backend, button) {
   const remaining = backend.bytes_expected - backend.bytes_present;
-  // Say what this particular button actually does. TRELLIS's setup builds the Metal port
-  // and fetches nothing; its weights arrive on the first generation run, and promising a
-  // download here would be a lie the progress bar then has to keep.
-  const body = backend.setup_fetches_weights
+  // The build and the weights are different buttons. A picture does not fetch weights.
+  const fetching = backend.action === 'download' || backend.action === 'resume'
+    || (backend.setup_fetches_weights && backend.action !== 'build');
+  const body = fetching
     ? [
       // NVIDIA TRELLIS.2 compiles first, then downloads; say both, not just the bytes.
       ...(backend.build_present || backend.install === 'viewer' ? []
         : ['This builds the code for this machine first, then:', '']),
+      ...(!backend.setup_fetches_weights ? ['route: Apple Silicon (Mac)'] : []),
       `About ${formatBytes(remaining)} will be downloaded from Hugging Face`,
       `into ${backend.weights[0].path.replace(/\/[^/]*$/, '/')}`,
       '',
@@ -222,11 +221,11 @@ function confirmDownload(backend, button) {
       'terms; the log will say so if the download is refused.',
     ]
     : [
-      'This builds the Metal port first',
+      'This builds the Metal port',
       'and downloads no weights.',
       '',
-      `The ${backend.human_expected} of weights are fetched on your first generation run,`,
-      'not now.',
+      'When the port is built, Download on this page fetches the weights.',
+      'A picture does not.',
     ];
   const lines = [
     `${backend.label}`,
@@ -236,7 +235,7 @@ function confirmDownload(backend, button) {
     `Licence: ${backend.license.name}`,
     backend.caveat ? `\n${backend.caveat}\n` : '',
     '',
-    backend.setup_fetches_weights ? 'Start the download?' : 'Start the build?',
+    fetching ? 'Start the download?' : 'Start the build?',
   ].filter(Boolean);
 
   // eslint-disable-next-line no-alert -- a deliberate, blocking confirmation: this is the

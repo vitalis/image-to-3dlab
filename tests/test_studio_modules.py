@@ -589,6 +589,13 @@ def test_setup_has_a_way_back_to_the_studio_and_every_element_its_script_needs()
     assert ids and not missing, missing
 
 
+def test_setup_does_not_say_the_first_picture_downloads_weights():
+    script = (REPO / "viewer" / "studio" / "setup.js").read_text()
+    assert "first generation" not in script
+    assert "first run" not in script
+    assert "Apple Silicon (Mac)" in script
+
+
 def test_a_machine_with_no_route_is_not_told_that_amd_is_coming():
     """AMD ships: five routes in the catalogue list it and the README says so. The
     no-route banner used to promise it anyway -- on the one screen whose whole job is to
@@ -653,6 +660,7 @@ def test_each_starting_point_gets_only_the_steps_it_needs():
       ideaSet: m.planFor('idea', 'set'),
       ideaPicture: m.planFor('idea', 'picture'),
       glbChar: m.planFor('model', 'character'),
+      glbProp: m.planFor('model', 'prop'),
       glbCharFinish: m.planFor('model', 'character', { finishUpload: true }),
       stop: m.stopAfter(m.planFor('idea', 'character'), 'model'),
       reasons: [m.ALLOWED.model.picture, m.ALLOWED.picture.picture],
@@ -663,6 +671,7 @@ def test_each_starting_point_gets_only_the_steps_it_needs():
     assert out["ideaSet"] == ["picture", "model", "split"]
     assert out["ideaPicture"] == ["picture"]
     assert out["glbChar"] == ["rigged", "animated"]
+    assert out["glbProp"] == ["finished"]
     assert out["glbCharFinish"] == ["finished", "rigged", "animated"]
     assert out["stop"] == ["picture", "model"]
     assert all(isinstance(r, str) for r in out["reasons"])

@@ -32,7 +32,11 @@ export function panelState(event) {
 export function setupVerb(backend, action) {
   if (action === 'rebuild') return 'Rebuilding';
   if (backend && !backend.build_present) return 'Setting up';
-  return backend && backend.setup_fetches_weights ? 'Downloading' : 'Building';
+  if (backend && (backend.setup_fetches_weights
+      || backend.action === 'download' || backend.action === 'resume')) {
+    return 'Downloading';
+  }
+  return 'Building';
 }
 
 /** The panel's title: what it became, marked, once the run is over; what it is doing until then.

@@ -94,6 +94,21 @@ def _patched_pipeline(tmp_path: Path):
     return path, module
 
 
+def test_a_reformatted_constructor_is_refused(tmp_path: Path):
+    root = tmp_path / "space"
+    path = root / "trellis2" / "pipelines" / "trellis2_image_to_3d.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "    def from_pretrained(path: str, *, load_rembg: bool = False) "
+        '-> "Trellis2ImageTo3DPipeline":\n'
+        "        new_pipeline.rembg_model = None\n"
+        "        getattr(rembg,  args['rembg_model']['name'])()\n"
+    )
+    with pytest.raises(RuntimeError, match="unexpected form"):
+        patcher.patch_optional_rembg(root)
+    assert "getattr(rembg" in path.read_text()
+
+
 def test_from_pretrained_does_not_request_bria(tmp_path: Path):
     """No keyword, and an explicit true, must not construct briaai/RMBG-2.0."""
     path, module = _patched_pipeline(tmp_path)

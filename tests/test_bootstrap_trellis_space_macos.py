@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -35,7 +36,9 @@ def test_it_runs_on_apple_silicon():
 
 
 def test_it_refuses_on_amd_and_names_the_route_that_works():
-    problem = bootstrap.wrong_machine("linux-amd", card=bootstrap.host.AMD, family="linux")
+    problem = bootstrap.wrong_machine(
+        "linux-amd", card=bootstrap.host.AMD, family="linux"
+    )
     assert problem is not None
     assert "xcrun" in problem
     assert "bootstrap_trellis_rocm.py" in problem
@@ -43,12 +46,15 @@ def test_it_refuses_on_amd_and_names_the_route_that_works():
 
 
 def test_it_refuses_on_nvidia_and_names_the_route_that_works():
-    problem = bootstrap.wrong_machine("linux-nvidia", card=bootstrap.host.NVIDIA,
-                                      family="linux")
+    problem = bootstrap.wrong_machine(
+        "linux-nvidia", card=bootstrap.host.NVIDIA, family="linux"
+    )
     assert "bootstrap_trellis_cuda.py" in problem
 
 
-def test_a_machine_with_no_trellis_route_is_told_so_rather_than_left_guessing(monkeypatch):
+def test_a_machine_with_no_trellis_route_is_told_so_rather_than_left_guessing(
+    monkeypatch,
+):
     # Faked, or on a Mac the real machine answers and there is no problem to report.
     monkeypatch.setattr(bootstrap.host, "build_target", lambda *a, **k: None)
     problem = bootstrap.wrong_machine(card=bootstrap.host.OTHER, family="linux")
@@ -58,14 +64,50 @@ def test_a_machine_with_no_trellis_route_is_told_so_rather_than_left_guessing(mo
 
 def test_every_card_it_can_redirect_names_a_real_bootstrap():
     for card, script in bootstrap.ELSEWHERE.items():
-        assert (ROOT / script).is_file(), f"{card} is pointed at {script}, which is not there"
+        assert (ROOT / script).is_file(), (
+            f"{card} is pointed at {script}, which is not there"
+        )
+
+
+def test_weights_are_named_and_not_fetched_without_a_yes(capsys, monkeypatch):
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import bootstrap_trellis_cuda as cuda
+
+    monkeypatch.setattr(cuda, "install_weights", lambda: pytest.fail("downloaded"))
+    monkeypatch.setattr(
+        cuda, "install_background_remover", lambda: pytest.fail("downloaded")
+    )
+    assert bootstrap.fetch_weights(False) == 1
+    out = capsys.readouterr().out
+    assert "backend: TRELLIS.2" in out
+    assert "Apple Silicon" in out
+    assert "GB" in out
+    assert "Nothing downloaded" in out
+
+
+def test_a_yes_is_what_starts_the_weight_download(monkeypatch):
+    seen = {}
+
+    def remember(yes):
+        seen["yes"] = yes
+        return 0
+
+    monkeypatch.setattr(bootstrap, "fetch_weights", remember)
+    monkeypatch.setattr(bootstrap, "wrong_machine", lambda *a, **k: None)
+    assert bootstrap.main(["--weights-only", "--yes"]) == 0
+    assert seen["yes"] is True
 
 
 def test_it_checks_the_machine_before_cloning_anything(tmp_path, monkeypatch):
     """The whole point: nothing is fetched, and nothing is built."""
     monkeypatch.setattr(bootstrap.host, "build_target", lambda *a, **k: "linux-amd")
-    monkeypatch.setattr(bootstrap, "bootstrap", lambda *a, **k: pytest.fail(
-        "it cloned repositories before checking the machine"))
+    monkeypatch.setattr(
+        bootstrap,
+        "bootstrap",
+        lambda *a, **k: pytest.fail(
+            "it cloned repositories before checking the machine"
+        ),
+    )
     assert bootstrap.main() == 1
 
 

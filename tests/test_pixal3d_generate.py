@@ -522,7 +522,11 @@ def test_a_successful_run_writes_its_manifest_beside_the_glb(tmp_path, monkeypat
 
     assert px.main() == 0
     record = __import__("json").loads((tmp_path / "out" / "gnome.json").read_text())
+    sidecar = json.loads((tmp_path / "out" / "gnome.provenance.json").read_text())
     assert record["backend"] == "pixal3d"
+    assert sidecar["schema_version"] == 1
+    assert sidecar["license"]["name"] == px.LICENSE_NAME
+    assert sidecar["model"]["backend"] == "pixal3d"
     assert record["output"]["path"] == str(output.resolve())
     # Turned to face front, with its camera, before the record hashes it.
     assert glb_turn.glb_faces_front(output.read_bytes())

@@ -442,9 +442,34 @@ def _artifact(path: Path) -> dict[str, Any]:
 # The heavy path. Everything torch/TRELLIS-shaped is imported lazily inside these functions so
 # importing this module (for the unit test) stays free.
 # ----------------------------------------------------------------------------------------------
+def bria_refusal(vendor_root: Path) -> str | None:
+    """Why this tree can still build BRIA RMBG-2.0, or None when it cannot.
+
+    A missing pipeline file is left to ``verify_paths``. A file that still
+    contains ``getattr(rembg`` is a refusal, even beside a disable line.
+    """
+    root = vendor_root / "TRELLIS.2"
+    pipeline = root / "trellis2" / "pipelines" / "trellis2_image_to_3d.py"
+    if not pipeline.is_file():
+        return None
+    if str(REPO / "scripts") not in sys.path:
+        sys.path.insert(0, str(REPO / "scripts"))
+    from patch_trellis_space_core import rembg_disabled
+
+    if rembg_disabled(root):
+        return None
+    return (
+        f"{pipeline} still loads BRIA RMBG-2.0, which this repo never loads. "
+        f"Run python scripts/patch_trellis_space_core.py --root {root}"
+    )
+
+
 def check_environment(vendor_root: Path, sparse_attn_backend: str) -> int:
     """Fast env gate: imports resolve, MPS is up, the run/to_glb surface exists. No model load."""
     problems = verify_paths(vendor_root)
+    refusal = bria_refusal(vendor_root)
+    if refusal:
+        problems.append(refusal)
     if problems:
         for p in problems:
             print(f"  FAIL: {p}", flush=True)
@@ -1371,6 +1396,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     vendor_root = args.vendor_root.resolve()
+    refusal = bria_refusal(vendor_root)
+    if refusal:
+        print(refusal, flush=True)
+        return 1
 
     if args.check:
         return check_environment(vendor_root, args.sparse_attn_backend)

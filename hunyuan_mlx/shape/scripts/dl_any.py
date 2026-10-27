@@ -98,16 +98,13 @@ def confirmed(yes: bool) -> bool:
     return True
 
 
-def announce(repo: str, filepath: str, out: str) -> None:
+def announce(repo: str, filepath: str, out: str, size: int) -> None:
     print("Downloading Hunyuan weights from ModelScope:", flush=True)
     print(f"  repo: {repo}", flush=True)
     print(f"  file: {filepath}", flush=True)
     print(f"  out:  {out}", flush=True)
+    print(f"  size: {size} bytes ({size / 1e9:.2f} GB)", flush=True)
     print(TERRITORIAL, flush=True)
-    print(
-        "The exact size is read from ModelScope after you agree, then the file is saved.",
-        flush=True,
-    )
 
 
 def main(argv=None) -> int:
@@ -119,11 +116,14 @@ def main(argv=None) -> int:
         "--yes", action="store_true", help="download without asking again"
     )
     args = parser.parse_args(argv)
-    announce(args.repo, args.filepath, args.outpath)
+    size = lookup_size(args.repo, args.filepath)
+    if not isinstance(size, int) or size < 0:
+        print("That file is not in the ModelScope listing. Nothing downloaded.")
+        return 1
+    announce(args.repo, args.filepath, args.outpath, size)
     if not confirmed(args.yes):
         return 1
-    download_file(args.repo, args.filepath, args.outpath)
-    return 0
+    return 0 if download_file(args.repo, args.filepath, args.outpath) else 1
 
 
 if __name__ == "__main__":

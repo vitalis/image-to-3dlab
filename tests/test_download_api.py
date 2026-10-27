@@ -21,7 +21,10 @@ import pytest
 def test_progress_bars_are_stripped_to_their_last_frame():
     # tqdm redraws with \r, so everything before the last frame is a stale repaint that
     # would otherwise pile up in the browser log.
-    assert dl.strip_ansi("10%|##        |\r50%|#####     |\r90%|######### |") == "90%|######### |"
+    assert (
+        dl.strip_ansi("10%|##        |\r50%|#####     |\r90%|######### |")
+        == "90%|######### |"
+    )
     assert dl.strip_ansi("\x1b[32mdone\x1b[0m") == "done"
     assert dl.strip_ansi("  plain line  ") == "plain line"
 
@@ -50,34 +53,51 @@ def _backend():
 def test_progress_never_claims_completion_before_the_process_exits():
     # The expected size is an estimate, so a download that overshoots it must not show
     # 100% while the process is still running; only a clean exit says done.
-    event = dl.describe_progress(_backend(), present=10 ** 13, rate=1.0, eta=1.0, stalled=False)
+    event = dl.describe_progress(
+        _backend(), present=10**13, rate=1.0, eta=1.0, stalled=False
+    )
     assert event["overall_pct"] == 99
 
 
 def test_a_stall_is_named_rather_than_shown_as_slow_progress():
-    event = dl.describe_progress(_backend(), present=1000, rate=0.0, eta=None, stalled=True)
+    event = dl.describe_progress(
+        _backend(), present=1000, rate=0.0, eta=None, stalled=True
+    )
     assert "stalled" in event["detail"]
     assert event["stalled"] is True
 
 
 def test_progress_states_both_numbers_not_just_a_percentage():
     # The percentage inherits the catalogue's approximate sizes; the raw bytes do not.
-    event = dl.describe_progress(_backend(), present=2 * 1024 ** 3, rate=None, eta=None,
-                                 stalled=False)
+    event = dl.describe_progress(
+        _backend(), present=2 * 1024**3, rate=None, eta=None, stalled=False
+    )
     assert "2.0 GB of" in event["detail"]
 
 
 def test_before_any_weights_arrive_the_step_is_shown_not_zero_bytes():
     # Pixal3D fetches a 674 MB build before its weights; "0 B of 8.4 GB" read as stuck.
-    event = dl.describe_progress(_backend(), present=0, rate=None, eta=None, stalled=False,
-                                 step="Downloading trellis-cuda12-linux-x64.tar.gz (674 MB)...")
+    event = dl.describe_progress(
+        _backend(),
+        present=0,
+        rate=None,
+        eta=None,
+        stalled=False,
+        step="Downloading trellis-cuda12-linux-x64.tar.gz (674 MB)...",
+    )
     assert event["detail"] == "Downloading trellis-cuda12-linux-x64.tar.gz (674 MB)..."
     assert "0 B" not in event["detail"]
 
 
 def test_once_weights_arrive_bytes_win_over_the_step():
-    event = dl.describe_progress(_backend(), present=2 * 1024 ** 3, rate=None, eta=None,
-                                 stalled=False, step="Fetching weights")
+    event = dl.describe_progress(
+        _backend(),
+        present=2 * 1024**3,
+        rate=None,
+        eta=None,
+        stalled=False,
+        step="Fetching weights",
+    )
     assert "2.0 GB of" in event["detail"]
 
 
@@ -96,14 +116,20 @@ def test_a_gated_repo_is_explained_as_a_login_problem():
 def test_a_repo_named_tokens_is_not_mistaken_for_a_login_problem():
     """A Windows user's symlink error was blamed on Hugging Face sign-in, because the old
     check matched "token" inside SkinTokens' own path."""
-    log = ["Fetching experiments/articulation_xl_quantization_256_token_4/grpo_1400.ckpt",
-           ("OSError: [WinError 1314] A required privilege is not held by the client: "
-            "'C:\\hub\\models--VAST-AI--SkinTokens\\grpo_1400.ckpt'")]
+    log = [
+        "Fetching experiments/articulation_xl_quantization_256_token_4/grpo_1400.ckpt",
+        (
+            "OSError: [WinError 1314] A required privilege is not held by the client: "
+            "'C:\\hub\\models--VAST-AI--SkinTokens\\grpo_1400.ckpt'"
+        ),
+    ]
     assert "Hugging Face" not in dl._explain(1, log)
 
 
 def test_a_full_disk_is_explained_as_a_full_disk():
-    assert "disk space" in dl._explain(1, ["OSError: [Errno 28] No space left on device"])
+    assert "disk space" in dl._explain(
+        1, ["OSError: [Errno 28] No space left on device"]
+    )
 
 
 def test_a_network_failure_is_explained_as_one():
@@ -130,6 +156,7 @@ def test_every_catalogued_backend_either_has_a_command_or_says_it_has_none():
 
 def test_an_unknown_backend_is_rejected():
     import pytest
+
     with pytest.raises(KeyError):
         dl.start("not-a-backend")
 
@@ -149,13 +176,15 @@ def test_removal_refuses_paths_outside_the_repo_and_cache(tmp_path, monkeypatch)
     import dataclasses
 
     import pytest
+
     stray = tmp_path / "somewhere-else"
     stray.mkdir()
     (stray / "w.bin").write_bytes(b"x")
     real = dl.BY_ID["pixal3d"]
     # WeightSet is frozen, so build a stand-in rather than mutating the shipped one.
     rogue = dataclasses.replace(
-        real, weights=(dataclasses.replace(real.weights[0], path=stray),),
+        real,
+        weights=(dataclasses.replace(real.weights[0], path=stray),),
     )
     monkeypatch.setitem(dl.BY_ID, "rogue", rogue)
 
@@ -172,12 +201,14 @@ def test_paths_inside_the_repo_or_cache_are_allowed():
 
 def test_removing_an_unknown_backend_is_rejected():
     import pytest
+
     with pytest.raises(KeyError):
         dl.remove("not-a-backend")
 
 
 def test_removal_is_refused_while_that_backend_is_downloading(monkeypatch):
     import pytest
+
     run = dl.DownloadRun(dl.BY_ID["pixal3d"])
     run.status = "running"
     monkeypatch.setitem(dl.DOWNLOADS, "pixal3d", run)
@@ -239,10 +270,21 @@ def test_trellis_on_nvidia_runs_the_cuda_bootstrap_with_yes():
     assert command[-1] == "--yes"
 
 
-def test_trellis_on_a_mac_still_runs_the_metal_bootstrap():
+def test_trellis_on_a_mac_builds_then_downloads_weights(monkeypatch):
+    import backend_catalog
+
+    monkeypatch.setattr(
+        backend_catalog.Backend, "built_on", lambda self, host=None: False
+    )
     command = dl.command_for("trellis", host="apple-silicon")
     assert command == dl.COMMANDS["trellis"]
+    assert "--yes" not in command
+    monkeypatch.setattr(
+        backend_catalog.Backend, "built_on", lambda self, host=None: True
+    )
+    command = dl.command_for("trellis", host="apple-silicon")
     assert command[1].endswith("bootstrap_trellis_space_macos.py")
+    assert "--weights-only" in command and command[-1] == "--yes"
 
 
 def test_trellis_on_amd_runs_the_rocm_bootstrap():
@@ -268,7 +310,8 @@ def test_no_machine_is_handed_the_metal_bootstrap(host):
         if command is None:
             continue
         assert "bootstrap_trellis_space_macos.py" not in command[1], (
-            f"{backend_id} on {host} runs the macOS bootstrap")
+            f"{backend_id} on {host} runs the macOS bootstrap"
+        )
 
 
 def test_the_label_matches_the_command_being_run():
@@ -293,7 +336,9 @@ def test_a_route_without_a_host_command_uses_the_shared_one():
 def test_the_command_follows_the_machine(monkeypatch):
     import backend_catalog
 
-    monkeypatch.setattr(backend_catalog, "host_platform", lambda: backend_catalog.NVIDIA)
+    monkeypatch.setattr(
+        backend_catalog, "host_platform", lambda: backend_catalog.NVIDIA
+    )
     assert dl.command_for("trellis")[1].endswith("bootstrap_trellis_cuda.py")
     assert dl.building_label("trellis") == "building the CUDA version"
     monkeypatch.setattr(backend_catalog, "host_platform", lambda: backend_catalog.APPLE)
@@ -303,7 +348,9 @@ def test_the_command_follows_the_machine(monkeypatch):
 def test_a_setup_run_on_nvidia_holds_the_cuda_command(monkeypatch):
     import backend_catalog
 
-    monkeypatch.setattr(backend_catalog, "host_platform", lambda: backend_catalog.NVIDIA)
+    monkeypatch.setattr(
+        backend_catalog, "host_platform", lambda: backend_catalog.NVIDIA
+    )
     run = dl.DownloadRun(backend_catalog.BY_ID["trellis"])
     assert run.command[1].endswith("bootstrap_trellis_cuda.py")
 
@@ -318,7 +365,9 @@ def test_every_route_claiming_automated_setup_actually_has_a_command():
         assert backend.automated_setup is has_command, backend.id
 
 
-def test_the_background_remover_is_removed_as_one_file_leaving_its_folder(tmp_path, monkeypatch):
+def test_the_background_remover_is_removed_as_one_file_leaving_its_folder(
+    tmp_path, monkeypatch
+):
     """BiRefNet-lite shares rembg's folder with u2net: Remove takes the file, not the folder."""
     import dataclasses
 
@@ -327,7 +376,9 @@ def test_the_background_remover_is_removed_as_one_file_leaving_its_folder(tmp_pa
     lite.write_bytes(b"12345")
     (tmp_path / "u2net.onnx").write_bytes(b"keep me")
     real = dl.BY_ID["matte"]
-    entry = dataclasses.replace(real, weights=(dataclasses.replace(real.weights[0], path=lite),))
+    entry = dataclasses.replace(
+        real, weights=(dataclasses.replace(real.weights[0], path=lite),)
+    )
     monkeypatch.setitem(dl.BY_ID, "matte", entry)
 
     result = dl.remove("matte")
@@ -383,7 +434,9 @@ def test_nothing_installed_or_a_prebuilt_is_never_offered_a_rebuild(tmp_path):
     """No binary is Set up's job; no source means a prebuilt, which cannot be patched."""
     source, cli = _pixal3d_tree(tmp_path, patched=False, cli_newer=True)
     assert dl.rebuild_reason("pixal3d", source, tmp_path / "missing") is None
-    (tmp_path / "post-replay").write_text("binary")   # our own prebuilt: nothing to patch
+    (tmp_path / "post-replay").write_text(
+        "binary"
+    )  # our own prebuilt: nothing to patch
     assert dl.rebuild_reason("pixal3d", tmp_path / "missing", cli) is None
 
 
@@ -409,7 +462,9 @@ def test_the_catalog_says_when_a_rebuild_downloads():
     import generate_api
 
     catalog = {"backends": [{"id": "pixal3d", "supported_here": True}]}
-    out = generate_api.with_rebuild_reasons(catalog, reason=lambda b: "old", download=lambda b: "600 MB")
+    out = generate_api.with_rebuild_reasons(
+        catalog, reason=lambda b: "old", download=lambda b: "600 MB"
+    )
     assert out["backends"][0]["rebuild_downloads"] == "600 MB"
 
 
@@ -429,7 +484,10 @@ def test_a_rebuild_runs_the_rebuild_command_not_the_setup_one():
 
     run = dl.DownloadRun(backend_catalog.BY_ID["pixal3d"], rebuild=True)
     assert run.command == dl.REBUILDS["pixal3d"]
-    assert dl.DownloadRun(backend_catalog.BY_ID["pixal3d"]).command == dl.COMMANDS["pixal3d"]
+    assert (
+        dl.DownloadRun(backend_catalog.BY_ID["pixal3d"]).command
+        == dl.COMMANDS["pixal3d"]
+    )
 
 
 def test_a_rebuild_is_refused_for_a_backend_that_has_none(monkeypatch):
@@ -443,8 +501,12 @@ def test_a_rebuild_is_refused_for_a_backend_that_has_none(monkeypatch):
 def test_the_catalog_carries_a_rebuild_reason_only_where_the_backend_runs():
     import generate_api
 
-    catalog = {"backends": [{"id": "pixal3d", "supported_here": True},
-                            {"id": "sf3d", "supported_here": False}]}
+    catalog = {
+        "backends": [
+            {"id": "pixal3d", "supported_here": True},
+            {"id": "sf3d", "supported_here": False},
+        ]
+    }
     out = generate_api.with_rebuild_reasons(catalog, reason=lambda backend_id: "stale")
     assert out["backends"][0]["rebuild_reason"] == "stale"
     assert out["backends"][1]["rebuild_reason"] is None
@@ -456,8 +518,9 @@ def test_the_tab_the_setup_page_draws_carries_the_rebuild_reason_too():
     import generate_api
     from backend_catalog import AMD, catalog_status
 
-    out = generate_api.with_rebuild_reasons(catalog_status(AMD),
-                                            reason=lambda backend_id: "stale")
+    out = generate_api.with_rebuild_reasons(
+        catalog_status(AMD), reason=lambda backend_id: "stale"
+    )
     pixal = next(b for b in out["views"][AMD] if b["id"] == "pixal3d")
     assert pixal["rebuild_reason"] == "stale"
 
@@ -471,7 +534,8 @@ def test_a_page_loaded_mid_setup_can_find_the_run_again(monkeypatch):
     run.status = "running"
     dl.DOWNLOADS["pixal3d"] = run
     assert dl.running_payload() == {
-        "backend": "pixal3d", "rebuild": False,
+        "backend": "pixal3d",
+        "rebuild": False,
         "events_url": "/api/setup/pixal3d/events",
     }
     run.status = "done"
@@ -481,25 +545,37 @@ def test_a_page_loaded_mid_setup_can_find_the_run_again(monkeypatch):
 def test_a_download_timeout_buried_above_a_traceback_is_still_explained():
     # Seen on a real pod: uv's "Failed to download ... operation timed out" sat above a
     # 20-line Python traceback, so the user got the traceback's last line instead.
-    log = ["  x Failed to download `nvidia-cudnn-cu12==9.10.2.21`",
-           "  |-> Request failed after 3 retries", "  `-> operation timed out",
-           "Traceback (most recent call last):"] + [f"  frame {i}" for i in range(20)] + [
-           "subprocess.CalledProcessError: Command '[uv, pip, install]' returned 1."]
+    log = (
+        [
+            "  x Failed to download `nvidia-cudnn-cu12==9.10.2.21`",
+            "  |-> Request failed after 3 retries",
+            "  `-> operation timed out",
+            "Traceback (most recent call last):",
+        ]
+        + [f"  frame {i}" for i in range(20)]
+        + ["subprocess.CalledProcessError: Command '[uv, pip, install]' returned 1."]
+    )
     message = dl._explain(1, log)
     assert "network" in message and "Set up again" in message
 
 
 def test_finished_nvidia_trellis_setup_does_not_promise_a_later_download(monkeypatch):
     monkeypatch.setattr(dl, "_this_host", lambda: dl.NVIDIA)
-    assert dl.done_detail(dl.BY_ID["trellis"], present=16 * 1024 ** 3).startswith("done ·")
+    assert dl.done_detail(dl.BY_ID["trellis"], present=16 * 1024**3).startswith(
+        "done ·"
+    )
     monkeypatch.setattr(dl, "_this_host", lambda: "apple")
-    assert "first generation run" in dl.done_detail(dl.BY_ID["trellis"], present=0)
+    detail = dl.done_detail(dl.BY_ID["trellis"], present=0)
+    assert "first generation" not in detail
+    assert "this page" in detail
 
 
 def test_hunyuan_cuda_sets_up_with_its_own_bootstrap_and_says_cuda():
     command = dl.command_for("hunyuan-cuda", host=dl.NVIDIA)
     assert command[1].endswith("bootstrap_hunyuan_cuda.py") and command[-1] == "--yes"
-    assert dl.building_label("hunyuan-cuda", host=dl.NVIDIA) == "building the CUDA version"
+    assert (
+        dl.building_label("hunyuan-cuda", host=dl.NVIDIA) == "building the CUDA version"
+    )
 
 
 def test_files_already_on_disk_do_not_make_a_build_look_stalled():
@@ -507,9 +583,15 @@ def test_files_already_on_disk_do_not_make_a_build_look_stalled():
     # another route, so Hunyuan's rasterizer compile read "stalled" after 90 s. Only bytes
     # this setup has fetched count, and until there are some the step is shown.
     backend = dl.BY_ID["hunyuan-cuda"]
-    line = dl.describe_progress(backend, present=214 * 1024 ** 2, rate=None, eta=None,
-                                stalled=dl.is_stalled(0, 10 * dl.STALL_SECONDS),
-                                step="Building custom-rasterizer", fetched=0)
+    line = dl.describe_progress(
+        backend,
+        present=214 * 1024**2,
+        rate=None,
+        eta=None,
+        stalled=dl.is_stalled(0, 10 * dl.STALL_SECONDS),
+        step="Building custom-rasterizer",
+        fetched=0,
+    )
     assert line["detail"] == "Building custom-rasterizer" and line["stalled"] is False
 
 
@@ -525,10 +607,19 @@ def _sharing(tmp_path, monkeypatch):
     real = dl.BY_ID["pixal3d"]
     lite = dataclasses.replace(real.weights[0], path=shared)
     mine = dataclasses.replace(real.weights[0], path=own)
-    monkeypatch.setitem(dl.BY_ID, "route-a", dataclasses.replace(real, id="route-a", weights=(mine, lite)))
-    monkeypatch.setitem(dl.BY_ID, "route-b", dataclasses.replace(real, id="route-b", weights=(lite,)))
-    monkeypatch.setitem(dl.BY_ID, "remover", dataclasses.replace(
-        dl.BY_ID["matte"], id="remover", weights=(lite,)))
+    monkeypatch.setitem(
+        dl.BY_ID,
+        "route-a",
+        dataclasses.replace(real, id="route-a", weights=(mine, lite)),
+    )
+    monkeypatch.setitem(
+        dl.BY_ID, "route-b", dataclasses.replace(real, id="route-b", weights=(lite,))
+    )
+    monkeypatch.setitem(
+        dl.BY_ID,
+        "remover",
+        dataclasses.replace(dl.BY_ID["matte"], id="remover", weights=(lite,)),
+    )
     monkeypatch.setattr(dl, "_inside_known_roots", lambda path: True)
     return shared, own
 
@@ -558,7 +649,10 @@ def _hf_folder(tmp_path):
     (repo / "blobs").mkdir(parents=True)
     snap = repo / "snapshots" / "abc123"
     snap.mkdir(parents=True)
-    for name, size in (("Qwen3VL-8B-Instruct-Q4_K_M.gguf", 50), ("mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf", 7)):
+    for name, size in (
+        ("Qwen3VL-8B-Instruct-Q4_K_M.gguf", 50),
+        ("mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf", 7),
+    ):
         blob = repo / "blobs" / f"sha-{size}"
         blob.write_bytes(b"z" * size)
         (snap / name).symlink_to(os.path.relpath(blob, snap))
@@ -567,8 +661,14 @@ def _hf_folder(tmp_path):
 
 def _vision_weight(repo):
     from backend_catalog import WeightSet
-    return WeightSet("vision", "Qwen/Qwen3-VL-8B-Instruct-GGUF", 7, repo,
-                     pattern="snapshots/*/mmproj-*.gguf")
+
+    return WeightSet(
+        "vision",
+        "Qwen/Qwen3-VL-8B-Instruct-GGUF",
+        7,
+        repo,
+        pattern="snapshots/*/mmproj-*.gguf",
+    )
 
 
 def test_a_patterned_weight_measures_only_its_own_file(tmp_path):
@@ -585,27 +685,44 @@ def test_a_patterned_weight_is_missing_when_its_file_is(tmp_path):
     assert _vision_weight(repo).state()[:2] == (False, 0)
 
 
-def test_removing_a_patterned_weight_deletes_its_file_and_keeps_the_folder(tmp_path, monkeypatch):
+def test_removing_a_patterned_weight_deletes_its_file_and_keeps_the_folder(
+    tmp_path, monkeypatch
+):
     import dataclasses
+
     repo = _hf_folder(tmp_path)
-    monkeypatch.setitem(dl.BY_ID, "front-back-test", dataclasses.replace(
-        dl.BY_ID["matte"], id="front-back-test", weights=(_vision_weight(repo),)))
+    monkeypatch.setitem(
+        dl.BY_ID,
+        "front-back-test",
+        dataclasses.replace(
+            dl.BY_ID["matte"], id="front-back-test", weights=(_vision_weight(repo),)
+        ),
+    )
     monkeypatch.setattr(dl, "_inside_known_roots", lambda path: True)
     result = dl.remove("front-back-test")
     assert result["freed_bytes"] == 7
-    assert not list(repo.glob("snapshots/*/mmproj-*")) and not (repo / "blobs" / "sha-7").exists()
-    assert (repo / "blobs" / "sha-50").is_file() and repo.is_dir()   # Qwen's own model stays
+    assert (
+        not list(repo.glob("snapshots/*/mmproj-*"))
+        and not (repo / "blobs" / "sha-7").exists()
+    )
+    assert (
+        repo / "blobs" / "sha-50"
+    ).is_file() and repo.is_dir()  # Qwen's own model stays
 
 
 def test_a_patterned_weight_does_not_make_its_whole_folder_shared(tmp_path):
     import dataclasses
 
     from backend_catalog import WeightSet, is_shared
+
     repo = _hf_folder(tmp_path)
     whole = WeightSet("llm", "Qwen/Qwen3-VL-8B-Instruct-GGUF", 50, repo)
     qwen = dataclasses.replace(dl.BY_ID["qwen-image"], id="q-test", weights=(whole,))
-    extra = dataclasses.replace(dl.BY_ID["matte"], id="x-test", kind="3d", weights=(_vision_weight(repo),))
+    extra = dataclasses.replace(
+        dl.BY_ID["matte"], id="x-test", kind="3d", weights=(_vision_weight(repo),)
+    )
     import backend_catalog
+
     backend_catalog.BY_ID.update({"q-test": qwen, "x-test": extra})
     try:
         assert not is_shared(qwen, whole)
@@ -621,13 +738,17 @@ def test_trellis_on_a_linux_card_shows_bytes_not_a_clock():
     assert dl.measures_bytes(run, dl.AMD)
     assert dl.measures_bytes(run, dl.NVIDIA)
     assert not dl.measures_bytes(run, "apple-silicon")
-    assert not dl.measures_bytes(dl.DownloadRun(dl.BY_ID["pixal3d"], rebuild=True), dl.AMD)
+    assert not dl.measures_bytes(
+        dl.DownloadRun(dl.BY_ID["pixal3d"], rebuild=True), dl.AMD
+    )
 
 
 def test_a_compile_error_is_not_mistaken_for_a_sign_in_problem():
     """GCC and hipcc both end a syntax error with "... before '}' token". The AMD builds
     compile for half an hour, so that line is a likely last word, not a login hint."""
-    message = dl._explain(1, ["custom_rasterizer.cpp:12: error: expected ';' before '}' token"])
+    message = dl._explain(
+        1, ["custom_rasterizer.cpp:12: error: expected ';' before '}' token"]
+    )
     assert "login" not in message
     assert "before '}' token" in message
 

@@ -269,6 +269,29 @@ _SAFE_BODY = """\
         new_pipeline.rembg_model = None"""
 
 
+def rembg_disabled(root: Path) -> bool:
+    """True when the pipeline files can no longer build the background remover.
+
+    A disable line next to a live ``getattr(rembg`` call is not disabled.
+    A missing pipeline file is not disabled either.
+    """
+    folder = root / "trellis2" / "pipelines"
+    image = folder / "trellis2_image_to_3d.py"
+    if not image.is_file():
+        return False
+    texts = [image.read_text()]
+    texturing = folder / "trellis2_texturing.py"
+    if texturing.is_file():
+        texts.append(texturing.read_text())
+    if any("getattr(rembg" in text for text in texts):
+        return False
+    image_text = texts[0]
+    return (
+        "new_pipeline.rembg_model = None" in image_text
+        and "load_rembg: bool = False" in image_text
+    )
+
+
 def patch_optional_rembg(root: Path) -> bool:
     """Never construct the gated remover. ``load_rembg=True`` is refused."""
     path = root / "trellis2/pipelines/trellis2_image_to_3d.py"
@@ -306,8 +329,10 @@ def patch_optional_rembg(root: Path) -> bool:
             raise RuntimeError(
                 "optional background-removal model load: expected 1 source anchors, found 0"
             )
-        if _CONSTRUCTOR in source or "load_rembg: bool = True" in source:
-            raise RuntimeError("BRIA constructor is still present after the patch")
+        if "getattr(rembg" in source or "load_rembg: bool = True" in source:
+            raise RuntimeError(
+                "BRIA constructor is still present in an unexpected form"
+            )
         return source, changed
 
     return patch_file(path, transform)

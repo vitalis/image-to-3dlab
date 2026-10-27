@@ -16,9 +16,18 @@ WANTS = ("picture", "prop", "set", "character")
 # What each starting point can lead to; a string is the reason it can't.
 ALLOWED: dict[str, dict[str, bool | str]] = {
     "idea": {"picture": True, "prop": True, "set": True, "character": True},
-    "picture": {"picture": "You already have the picture.", "prop": True, "set": True, "character": True},
-    "model": {"picture": "Start from an idea to make a picture.", "prop": True,
-              "set": "Upload the 3×3 sheet as a picture instead.", "character": True},
+    "picture": {
+        "picture": "You already have the picture.",
+        "prop": True,
+        "set": True,
+        "character": True,
+    },
+    "model": {
+        "picture": "Start from an idea to make a picture.",
+        "prop": True,
+        "set": "Upload the 3×3 sheet as a picture instead.",
+        "character": True,
+    },
 }
 FULL = {
     "picture": ["picture"],
@@ -28,11 +37,15 @@ FULL = {
 }
 
 
-def plan_for(have: str, want: str, *, finish_upload: bool = False, front_back: bool = False) -> list[str]:
+def plan_for(
+    have: str, want: str, *, finish_upload: bool = False, front_back: bool = False
+) -> list[str]:
     """The steps to run, in order, before any "stop after" (plan.js `planFor`)."""
     skip = {"picture": ["picture"], "model": ["picture", "model"]}.get(have, [])
     steps = [s for s in FULL.get(want, []) if s not in skip]
-    if have == "model" and not finish_upload:
+    # An uploaded character may already be game-ready, so Finish is a choice.
+    # An uploaded prop has no other step, so Finish stays on.
+    if have == "model" and want != "prop" and not finish_upload:
         steps = [s for s in steps if s != "finished"]
     if front_back and want != "set" and "model" in steps:
         steps.insert(steps.index("model"), "back")
@@ -44,10 +57,16 @@ def stop_after(steps: list[str], last: str | None) -> list[str]:
     return steps[: steps.index(last) + 1] if last in steps else steps
 
 
-def compose_prompt(text: str, goal: str, recipes: dict[str, Any] | None, use_recipe: bool = True) -> str:
+def compose_prompt(
+    text: str, goal: str, recipes: dict[str, Any] | None, use_recipe: bool = True
+) -> str:
     """The description plus the goal's proven wording (plan.js `composePrompt`)."""
     base = re.sub(r"[\s,.]+$", "", str(text or "").strip())
-    wording = ((recipes or {}).get("goals", {}).get(goal) or {}).get("wording") if use_recipe else ""
+    wording = (
+        ((recipes or {}).get("goals", {}).get(goal) or {}).get("wording")
+        if use_recipe
+        else ""
+    )
     return f"{base}, {wording}" if wording else base
 
 

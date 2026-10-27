@@ -17,6 +17,7 @@ this is a guardrail, not a suggestion. Safe to run twice.
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -44,11 +45,18 @@ def pipeline_files(root: Path) -> list[Path]:
 def patch_source(source: str, label: str = "source") -> tuple[str, bool]:
     """Return the patched text and whether it changed. Raises if the anchor is missing."""
     if NEEDLE in source:
-        return source.replace(NEEDLE, REPLACEMENT), True
+        updated = source.replace(NEEDLE, REPLACEMENT)
+        if "getattr(rembg" in updated:
+            raise RuntimeError(f"BRIA constructor still present in {label}")
+        return updated, True
+    if "getattr(rembg" in source:
+        raise RuntimeError(f"BRIA constructor still present in {label}")
     if REPLACEMENT in source:
         return source, False
-    raise RuntimeError(f"TRELLIS background-model hook not found in {label}; "
-                       "upstream changed, re-check the patch before running")
+    raise RuntimeError(
+        f"TRELLIS background-model hook not found in {label}; "
+        "upstream changed, re-check the patch before running"
+    )
 
 
 def is_patched(root: Path) -> bool:
@@ -58,7 +66,7 @@ def is_patched(root: Path) -> bool:
             text = path.read_text()
         except OSError:
             return False
-        if NEEDLE in text or REPLACEMENT not in text:
+        if "getattr(rembg" in text or REPLACEMENT not in text:
             return False
     return True
 
@@ -78,12 +86,29 @@ def apply(root: Path) -> list[Path]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--root", type=Path, default=DEFAULT_ROOT,
-                        help="the TRELLIS.2 checkout (default: %(default)s)")
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=DEFAULT_ROOT,
+        help="the TRELLIS.2 checkout (default: %(default)s)",
+    )
     args = parser.parse_args(argv)
-    changed = apply(args.root.resolve())
-    print(f"patched {len(changed)} file(s)" if changed else "already patched",
-          "- BRIA RMBG-2.0 will not load.")
+    root = args.root.resolve()
+    try:
+        changed = apply(root)
+    except RuntimeError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    if not is_patched(root):
+        print(
+            "BRIA constructor is still present; not taking this as success.",
+            file=sys.stderr,
+        )
+        return 1
+    print(
+        f"patched {len(changed)} file(s)" if changed else "already patched",
+        "- BRIA RMBG-2.0 will not load.",
+    )
     return 0
 
 

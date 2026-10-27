@@ -131,6 +131,18 @@ def test_a_constructor_beside_the_disable_text_is_removed_before_success(
     assert [path.read_text() for path in pipelines] == before
 
 
+def test_a_reformatted_constructor_is_not_success(tmp_path: Path):
+    spaced = (
+        DISABLE + "\n        pipeline.rembg_model = getattr(rembg,  "
+        "args['rembg_model']['name'])(**args['rembg_model']['args'])\n"
+    )
+    pipelines = _write_pipelines(tmp_path, spaced)
+    _generate(tmp_path).write_text(GENERATE_OK)
+    result = _run_copy(tmp_path)
+    assert result.returncode == 1
+    assert "getattr(rembg" in pipelines[0].read_text()
+
+
 def test_missing_background_hook_is_loud(tmp_path: Path):
     pipelines = _write_pipelines(tmp_path, "pipeline = object()\n")
     _generate(tmp_path).write_text(GENERATE_OK)

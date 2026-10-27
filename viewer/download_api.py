@@ -34,6 +34,7 @@ sys.path.insert(0, str(REPO))
 
 from backend_catalog import (
     AMD,
+    APPLE,
     BY_ID,
     HF_HUB_DIR,
     NVIDIA,
@@ -52,48 +53,88 @@ TERMINAL = {"done", "error", "cancelled"}
 # catalogue describes *what* a backend needs and this describes *how* to get it; the
 # viewer shows the first to everyone and only ever runs the second on request.
 COMMANDS: dict[str, list[str]] = {
-    "trellis": [sys.executable, str(REPO / "scripts" / "bootstrap_trellis_space_macos.py")],
-    "pixal3d": [sys.executable, str(REPO / "scripts" / "bootstrap_pixal3d.py"), "--yes"],
+    "trellis": [
+        sys.executable,
+        str(REPO / "scripts" / "bootstrap_trellis_space_macos.py"),
+    ],
+    "pixal3d": [
+        sys.executable,
+        str(REPO / "scripts" / "bootstrap_pixal3d.py"),
+        "--yes",
+    ],
     "sf3d": [sys.executable, str(REPO / "scripts" / "bootstrap_sf3d.py"), "--yes"],
     # Both venvs (uv sync, if missing) and then the default route's weights. Weights alone
     # left the paint venv unbuilt: "done", yet still "not installed" (issue #97).
-    "hunyuan_xiong": [sys.executable, str(REPO / "scripts" / "bootstrap_hunyuan_xiong.py"),
-                      "--yes"],
+    "hunyuan_xiong": [
+        sys.executable,
+        str(REPO / "scripts" / "bootstrap_hunyuan_xiong.py"),
+        "--yes",
+    ],
     # --yes because the browser already asked. The confirmation AGENTS.md requires is the
     # Setup & Status dialog; asking again on a stdin nobody is attached to would hang.
-    "qwen-image": [sys.executable, str(REPO / "scripts" / "bootstrap_qwen_image.py"),
-                   "--yes"],
+    "qwen-image": [
+        sys.executable,
+        str(REPO / "scripts" / "bootstrap_qwen_image.py"),
+        "--yes",
+    ],
     "matte": [sys.executable, str(REPO / "scripts" / "bootstrap_matte.py"), "--yes"],
-    "upscaler": [sys.executable, str(REPO / "scripts" / "bootstrap_upscaler.py"), "--yes"],
-    "autorig": [sys.executable, str(REPO / "scripts" / "bootstrap_autorig.py"), "--yes"],
-    "front-back": [sys.executable, str(REPO / "scripts" / "bootstrap_front_back.py"), "--yes"],
+    "upscaler": [
+        sys.executable,
+        str(REPO / "scripts" / "bootstrap_upscaler.py"),
+        "--yes",
+    ],
+    "autorig": [
+        sys.executable,
+        str(REPO / "scripts" / "bootstrap_autorig.py"),
+        "--yes",
+    ],
+    "front-back": [
+        sys.executable,
+        str(REPO / "scripts" / "bootstrap_front_back.py"),
+        "--yes",
+    ],
     # NVIDIA-only: Tencent's own Hunyuan3D-2.1, built for CUDA. The catalogue marks it
     # unsupported everywhere else, so start() refuses before this runs on a Mac.
-    "hunyuan-cuda": [sys.executable, str(REPO / "scripts" / "bootstrap_hunyuan_cuda.py"),
-                     "--yes"],
+    "hunyuan-cuda": [
+        sys.executable,
+        str(REPO / "scripts" / "bootstrap_hunyuan_cuda.py"),
+        "--yes",
+    ],
     # AMD-only: the same upstream commit, compiled with hipcc instead of nvcc. It is a
     # separate route rather than a per-host override because the weights land in
     # vendor/hunyuan-rocm/ and a machine with both cards keeps both installs.
-    "hunyuan-rocm": [sys.executable, str(REPO / "scripts" / "bootstrap_hunyuan_rocm.py"),
-                     "--yes"],
+    "hunyuan-rocm": [
+        sys.executable,
+        str(REPO / "scripts" / "bootstrap_hunyuan_rocm.py"),
+        "--yes",
+    ],
 }
 
 # Where a route installs differently per machine, the machine's own command wins. TRELLIS.2
 # on NVIDIA is Microsoft's code built for CUDA, not the Metal port; --yes because the
 # Setup & Status dialog has already named the route and its ~15 GB.
 HOST_COMMANDS: dict[tuple[str, str], list[str]] = {
-    ("trellis", NVIDIA): [sys.executable, str(REPO / "scripts" / "bootstrap_trellis_cuda.py"),
-                          "--yes"],
+    ("trellis", NVIDIA): [
+        sys.executable,
+        str(REPO / "scripts" / "bootstrap_trellis_cuda.py"),
+        "--yes",
+    ],
     # SF3D installs into this interpreter on a Mac and into a venv of its own on AMD,
     # because its pins break the shared environment. One id, two installers.
-    ("sf3d", AMD): [sys.executable, str(REPO / "scripts" / "bootstrap_sf3d_rocm.py"),
-                    "--yes"],
+    ("sf3d", AMD): [
+        sys.executable,
+        str(REPO / "scripts" / "bootstrap_sf3d_rocm.py"),
+        "--yes",
+    ],
     # TRELLIS.2 on AMD is Microsoft's own checkout built with HIP, like the NVIDIA entry
     # above. Without this the Setup page falls back to COMMANDS["trellis"], which is the
     # Metal port -- and that script refuses a machine that is not a Mac, so the button
     # either failed minutes in or, before the check existed, built nothing usable.
-    ("trellis", AMD): [sys.executable, str(REPO / "scripts" / "bootstrap_trellis_rocm.py"),
-                       "--yes"],
+    ("trellis", AMD): [
+        sys.executable,
+        str(REPO / "scripts" / "bootstrap_trellis_rocm.py"),
+        "--yes",
+    ],
 }
 
 
@@ -104,12 +145,23 @@ def _this_host() -> str:
     return backend_catalog.host_platform()
 
 
-def command_for(backend_id: str, host: str | None = None,
-                rebuild: bool = False) -> list[str] | None:
+def command_for(
+    backend_id: str, host: str | None = None, rebuild: bool = False
+) -> list[str] | None:
     """The command that sets this backend up (or rebuilds it) on this machine, or None."""
     if rebuild:
         return REBUILDS.get(backend_id)
-    return HOST_COMMANDS.get((backend_id, host or _this_host()), COMMANDS.get(backend_id))
+    here = host or _this_host()
+    # The Mac build command does not fetch weights. Once the port is there, this
+    # button is the download, and it still has to be confirmed.
+    if backend_id == "trellis" and here == APPLE and BY_ID["trellis"].built_on(APPLE):
+        return [
+            sys.executable,
+            str(REPO / "scripts" / "bootstrap_trellis_space_macos.py"),
+            "--weights-only",
+            "--yes",
+        ]
+    return HOST_COMMANDS.get((backend_id, here), COMMANDS.get(backend_id))
 
 
 def building_label(backend_id: str, host: str | None = None) -> str:
@@ -126,8 +178,13 @@ def building_label(backend_id: str, host: str | None = None) -> str:
 # default needs scripts/patch_pixal3d_steps.py compiled in). Downloads nothing, so it
 # needs no size confirmation; without it, picking up a patch meant opening Terminal.
 REBUILDS: dict[str, list[str]] = {
-    "pixal3d": [sys.executable, str(REPO / "scripts" / "bootstrap_pixal3d.py"),
-                "--build-only", "--rebuild", "--yes"],
+    "pixal3d": [
+        sys.executable,
+        str(REPO / "scripts" / "bootstrap_pixal3d.py"),
+        "--build-only",
+        "--rebuild",
+        "--yes",
+    ],
 }
 REBUILD_MINUTES = 5
 
@@ -143,8 +200,9 @@ def _pixal3d_paths(source: Path | None, cli: Path | None) -> tuple[Path, Path]:
     return source or pixal3d_generate.FLOW_SOURCE, cli or pixal3d_generate.CLI
 
 
-def rebuild_download(backend_id: str, source: Path | None = None,
-                     cli: Path | None = None) -> str | None:
+def rebuild_download(
+    backend_id: str, source: Path | None = None, cli: Path | None = None
+) -> str | None:
     """What a Rebuild downloads, or None when it only recompiles.
 
     A prebuilt (no source) without post-replay is upstream's old NVIDIA download; Rebuild
@@ -155,11 +213,14 @@ def rebuild_download(backend_id: str, source: Path | None = None,
     source, cli = _pixal3d_paths(source, cli)
     if not cli.is_file() or source.is_file():
         return None
-    return None if host.executable(cli.parent, "post-replay").exists() else NEW_BUILD_SIZE
+    return (
+        None if host.executable(cli.parent, "post-replay").exists() else NEW_BUILD_SIZE
+    )
 
 
-def rebuild_reason(backend_id: str, source: Path | None = None,
-                   cli: Path | None = None) -> str | None:
+def rebuild_reason(
+    backend_id: str, source: Path | None = None, cli: Path | None = None
+) -> str | None:
     """Why this backend's build should be recompiled (or, for upstream's old prebuilt,
     replaced), or None when it is fine as it is.
 
@@ -169,8 +230,10 @@ def rebuild_reason(backend_id: str, source: Path | None = None,
         return None
     source, cli = _pixal3d_paths(source, cli)
     if rebuild_download(backend_id, source, cli):
-        return ("An older download: the new one adds the new Finish and 8 sampling steps "
-                f"({NEW_BUILD_SIZE}).")
+        return (
+            "An older download: the new one adds the new Finish and 8 sampling steps "
+            f"({NEW_BUILD_SIZE})."
+        )
     if not cli.is_file() or not source.is_file():
         return None
     sys.path.insert(0, str(REPO / "scripts"))
@@ -193,7 +256,8 @@ def strip_ansi(line: str) -> str:
 
 
 def rate_and_eta(
-    samples: list[tuple[float, int]], remaining: int,
+    samples: list[tuple[float, int]],
+    remaining: int,
 ) -> tuple[float | None, float | None]:
     """Bytes per second over the sample window, and seconds left at that rate.
 
@@ -222,8 +286,13 @@ def is_stalled(present: int, idle_seconds: float) -> bool:
 
 
 def describe_progress(
-    backend: Backend, present: int, rate: float | None, eta: float | None, stalled: bool,
-    step: str | None = None, fetched: int | None = None,
+    backend: Backend,
+    present: int,
+    rate: float | None,
+    eta: float | None,
+    stalled: bool,
+    step: str | None = None,
+    fetched: int | None = None,
 ) -> dict[str, Any]:
     """The progress line. `step` is setup's latest log line, shown until this setup has
     fetched something, because "0 B of 8.4 GB" during a build download reads as stuck.
@@ -236,14 +305,24 @@ def describe_progress(
     elif stalled:
         detail = f"stalled — no new data for {int(STALL_SECONDS)}s ({human_bytes(present)} so far)"
     elif rate:
-        eta_text = f" · ~{int(eta // 60)} min left" if eta and eta > 60 else (
-            f" · ~{int(eta)}s left" if eta else "")
-        detail = (f"{human_bytes(present)} of {human_bytes(expected)}"
-                  f" · {human_bytes(int(rate))}/s{eta_text}")
+        eta_text = (
+            f" · ~{int(eta // 60)} min left"
+            if eta and eta > 60
+            else (f" · ~{int(eta)}s left" if eta else "")
+        )
+        detail = (
+            f"{human_bytes(present)} of {human_bytes(expected)}"
+            f" · {human_bytes(int(rate))}/s{eta_text}"
+        )
     else:
         detail = f"{human_bytes(present)} of {human_bytes(expected)}"
-    return {"phase": "downloading", "overall_pct": percent, "detail": detail,
-            "bytes_present": present, "stalled": stalled}
+    return {
+        "phase": "downloading",
+        "overall_pct": percent,
+        "detail": detail,
+        "bytes_present": present,
+        "stalled": stalled,
+    }
 
 
 class DownloadRun:
@@ -263,7 +342,10 @@ class DownloadRun:
         self.log: deque[str] = deque(maxlen=400)
 
     def emit(self, event: dict[str, Any]) -> None:
-        payload = {"elapsed_seconds": round(time.monotonic() - self.started, 1), **event}
+        payload = {
+            "elapsed_seconds": round(time.monotonic() - self.started, 1),
+            **event,
+        }
         with self.condition:
             self.events.append(payload)
             self.condition.notify_all()
@@ -285,8 +367,11 @@ def running_payload() -> dict[str, Any] | None:
     run = active()
     if run is None:
         return None
-    return {"backend": run.backend.id, "rebuild": run.rebuild,
-            "events_url": f"/api/setup/{run.backend.id}/events"}
+    return {
+        "backend": run.backend.id,
+        "rebuild": run.rebuild,
+        "events_url": f"/api/setup/{run.backend.id}/events",
+    }
 
 
 def start(backend_id: str, rebuild: bool = False) -> DownloadRun:  # Come get some.
@@ -294,8 +379,9 @@ def start(backend_id: str, rebuild: bool = False) -> DownloadRun:  # Come get so
     if backend is None:
         raise KeyError(f"unknown backend: {backend_id}")
     if command_for(backend_id, rebuild=rebuild) is None:
-        raise RuntimeError(f"{backend.label} has no automated "
-                           f"{'rebuild' if rebuild else 'setup'} yet")
+        raise RuntimeError(
+            f"{backend.label} has no automated {'rebuild' if rebuild else 'setup'} yet"
+        )
     # Checked here rather than only in the browser, because the API is the thing that
     # spends someone's bandwidth and an unsupported machine cannot finish the job.
     if not backend.runs_here():
@@ -306,8 +392,9 @@ def start(backend_id: str, rebuild: bool = False) -> DownloadRun:  # Come get so
             raise RuntimeError("a download is already running")
         run = DownloadRun(backend, rebuild)
         DOWNLOADS[backend_id] = run
-    threading.Thread(target=_run, args=(run,), daemon=True,
-                     name=f"download-{backend_id}").start()
+    threading.Thread(
+        target=_run, args=(run,), daemon=True, name=f"download-{backend_id}"
+    ).start()
     return run
 
 
@@ -353,7 +440,9 @@ def remove(backend_id: str) -> dict[str, Any]:
             for item in weight.files():
                 target = item.resolve()
                 if not _inside_known_roots(target):
-                    raise RuntimeError(f"refusing to delete outside the repo or cache: {target}")
+                    raise RuntimeError(
+                        f"refusing to delete outside the repo or cache: {target}"
+                    )
                 if target.is_file():
                     freed += target.stat().st_size
                     target.unlink()
@@ -370,11 +459,16 @@ def remove(backend_id: str) -> dict[str, Any]:
         if not path.is_dir():
             continue
         from backend_catalog import _dir_state
+
         freed += _dir_state(path)[1]
         shutil.rmtree(path)
         removed.append(str(path))
-    return {"backend": backend_id, "freed_bytes": freed,
-            "freed": human_bytes(freed), "removed": removed}
+    return {
+        "backend": backend_id,
+        "freed_bytes": freed,
+        "freed": human_bytes(freed),
+        "removed": removed,
+    }
 
 
 def _inside_known_roots(path: Path) -> bool:
@@ -407,8 +501,10 @@ def _missing_executable(program: str) -> str | None:
     path = Path(program)
     venv = next((parent for parent in path.parents if parent.name == ".venv"), None)
     if venv is not None:
-        return (f"the Python environment at {venv} has not been created yet. "
-                f"Run `uv sync` in {venv.parent}, then try again.")
+        return (
+            f"the Python environment at {venv} has not been created yet. "
+            f"Run `uv sync` in {venv.parent}, then try again."
+        )
     return f"`{program}` is not installed, or not on this machine's PATH."
 
 
@@ -417,12 +513,21 @@ def _run(run: DownloadRun) -> None:
     missing = _missing_executable(run.command[0])
     if missing is not None:
         run.status = "error"
-        run.emit({"phase": "error", "overall_pct": 0, "detail": f"cannot start: {missing}"})
+        run.emit(
+            {"phase": "error", "overall_pct": 0, "detail": f"cannot start: {missing}"}
+        )
         return
-    run.emit({"phase": "queued", "overall_pct": 0,
-              "detail": f"starting · downloading the new build, {run.downloads}" if run.downloads else
-                        "starting the rebuild · nothing to download" if run.rebuild else
-                        f"starting · {human_bytes(run.backend.bytes_expected)} expected"})
+    run.emit(
+        {
+            "phase": "queued",
+            "overall_pct": 0,
+            "detail": f"starting · downloading the new build, {run.downloads}"
+            if run.downloads
+            else "starting the rebuild · nothing to download"
+            if run.rebuild
+            else f"starting · {human_bytes(run.backend.bytes_expected)} expected",
+        }
+    )
     stop = threading.Event()
     if measures_bytes(run):
         threading.Thread(target=_watch_size, args=(run, stop), daemon=True).start()
@@ -430,11 +535,14 @@ def _run(run: DownloadRun) -> None:
         threading.Thread(target=_watch_elapsed, args=(run, stop), daemon=True).start()
     try:
         run.process = subprocess.Popen(
-            run.command, cwd=str(REPO),
+            run.command,
+            cwd=str(REPO),
             # The bars are unreadable in a browser and the size watcher is the real
             # progress signal, so ask the downloader not to draw them at all.
             env=processes.child_env(HF_HUB_DISABLE_PROGRESS_BARS="1"),
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=0,
             # Its own process group, so cancelling kills the downloader's children too.
             **processes.group_popen_kwargs(),
         )
@@ -456,34 +564,56 @@ def _run(run: DownloadRun) -> None:
     present = run.bytes_present()
     if run.cancelled:
         run.status = "cancelled"
-        run.emit({"phase": "cancelled",
-                  "detail": f"cancelled · {human_bytes(present)} kept, "
-                            f"resuming will continue from here"})
+        run.emit(
+            {
+                "phase": "cancelled",
+                "detail": f"cancelled · {human_bytes(present)} kept, "
+                f"resuming will continue from here",
+            }
+        )
     elif code != 0:
         run.status = "error"
-        run.emit({"phase": "error", "overall_pct": 0,
-                  "detail": _explain(code, list(run.log))})
+        run.emit(
+            {
+                "phase": "error",
+                "overall_pct": 0,
+                "detail": _explain(code, list(run.log)),
+            }
+        )
     else:
         run.status = "done"
-        run.emit({"phase": "done", "overall_pct": 100,
-                  "detail": "rebuilt · the next run uses this repo's patches" if run.rebuild
-                  else done_detail(run.backend, present)})
+        run.emit(
+            {
+                "phase": "done",
+                "overall_pct": 100,
+                "detail": "rebuilt · the next run uses this repo's patches"
+                if run.rebuild
+                else done_detail(run.backend, present, run.command),
+            }
+        )
 
 
 def measures_bytes(run: DownloadRun, host: str | None = None) -> bool:
     """Whether this run's progress is bytes arriving (vs. minutes of compiling).
 
-    Asked per machine: TRELLIS.2 on a Mac downloads nothing at setup, but on NVIDIA and AMD
-    it builds and then fetches 16 GB, which deserves a byte count rather than a clock.
+    The Mac port's build compiles and fetches nothing. Its weight download, and the
+    NVIDIA and AMD setups, are the ones whose progress is bytes.
     """
+    if run.command and "--weights-only" in run.command:
+        return True
     return not run.rebuild and run.backend.setup_fetches_on(host or _this_host())
 
 
-def done_detail(backend: Backend, present: int) -> str:
+def done_detail(
+    backend: Backend, present: int, command: list[str] | None = None
+) -> str:
     """The last line of a finished setup, true for this machine's route."""
-    if backend.setup_fetches_on(_this_host()):
+    fetched = backend.setup_fetches_on(_this_host()) or (
+        command is not None and "--weights-only" in command
+    )
+    if fetched:
         return f"done · {human_bytes(present)} on disk"
-    return "built · weights download on the first generation run"
+    return "built · download the weights from this page before a picture"
 
 
 def _watch_size(run: DownloadRun, stop: threading.Event) -> None:
@@ -502,10 +632,17 @@ def _watch_size(run: DownloadRun, stop: threading.Event) -> None:
         remaining = max(0, run.backend.bytes_expected - present)
         rate, eta = rate_and_eta(samples, remaining)
         fetched = max(0, present - started)
-        run.emit(describe_progress(
-            run.backend, present, rate, eta, stalled=is_stalled(fetched, now - last_growth),
-            step=run.log[-1] if run.log else None, fetched=fetched,
-        ))
+        run.emit(
+            describe_progress(
+                run.backend,
+                present,
+                rate,
+                eta,
+                stalled=is_stalled(fetched, now - last_growth),
+                step=run.log[-1] if run.log else None,
+                fetched=fetched,
+            )
+        )
 
 
 def _watch_elapsed(run: DownloadRun, stop: threading.Event) -> None:
@@ -519,19 +656,25 @@ def _watch_elapsed(run: DownloadRun, stop: threading.Event) -> None:
     what = "rebuilding" if run.rebuild else building_label(run.backend.id)
     while not stop.wait(POLL_SECONDS * 2):
         elapsed = time.monotonic() - run.started
-        percent = 0 if estimate <= 0 else max(0, min(95, round(elapsed / estimate * 100)))
-        run.emit({
-            "phase": "building", "overall_pct": percent,
-            "detail": f"{what} · {int(elapsed // 60)} min elapsed"
-                      + (f" of roughly {estimate // 60:.0f}" if estimate else ""),
-        })
+        percent = (
+            0 if estimate <= 0 else max(0, min(95, round(elapsed / estimate * 100)))
+        )
+        run.emit(
+            {
+                "phase": "building",
+                "overall_pct": percent,
+                "detail": f"{what} · {int(elapsed // 60)} min elapsed"
+                + (f" of roughly {estimate // 60:.0f}" if estimate else ""),
+            }
+        )
 
 
 # A sign-in problem, and not just the word "token": every failed C++ compile says
 # "expected ';' before '}' token", and the HIP builds on AMD compile for half an hour.
 AUTH_FAILURE = re.compile(
     r"\b401\b|gated|authenticat|unauthori[sz]ed"
-    r"|(?:invalid|expired|missing|no|bad) (?:\w+ )?token|token (?:is )?(?:invalid|expired|required)")
+    r"|(?:invalid|expired|missing|no|bad) (?:\w+ )?token|token (?:is )?(?:invalid|expired|required)"
+)
 
 
 def _explain(code: int, log: list[str]) -> str:
@@ -543,14 +686,24 @@ def _explain(code: int, log: list[str]) -> str:
     # Wide enough to see past a Python traceback to the error that caused it.
     tail = "\n".join(log[-60:]).lower()
     if AUTH_FAILURE.search(tail):
-        return ("refused: this model needs a Hugging Face login and its terms accepted. "
-                "Sign in under Hugging Face sign-in at the top of this page, accept the "
-                "terms on the model page, and retry.")
+        return (
+            "refused: this model needs a Hugging Face login and its terms accepted. "
+            "Sign in under Hugging Face sign-in at the top of this page, accept the "
+            "terms on the model page, and retry."
+        )
     if "no space left" in tail or "enospc" in tail:
-        return "ran out of disk space. Free some room and retry; what downloaded is kept."
-    if ("temporary failure in name resolution" in tail or "connection" in tail
-            or "timed out" in tail or "failed to download" in tail):
-        return ("network error: a download failed or timed out. Check the connection and "
-                "press Set up again; it picks up where it left off.")
+        return (
+            "ran out of disk space. Free some room and retry; what downloaded is kept."
+        )
+    if (
+        "temporary failure in name resolution" in tail
+        or "connection" in tail
+        or "timed out" in tail
+        or "failed to download" in tail
+    ):
+        return (
+            "network error: a download failed or timed out. Check the connection and "
+            "press Set up again; it picks up where it left off."
+        )
     last = next((line for line in reversed(log) if line.strip()), "")
     return f"setup exited with code {code}. Last line: {last}"

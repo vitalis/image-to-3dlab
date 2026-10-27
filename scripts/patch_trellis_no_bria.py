@@ -46,6 +46,8 @@ def patch(path: Path) -> None:
         )
     else:
         updated = source
+    if "getattr(rembg" in updated:
+        raise RuntimeError(f"BRIA constructor still present in {path}")
     if updated != source:
         path.write_text(updated)
 
@@ -110,11 +112,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     root = args.root.resolve()
     pipelines = _pipelines(root)
+    try:
+        for path in pipelines:
+            patch(path)
+        patch_cpu_bake_budget(_generate(root))
+    except RuntimeError as exc:
+        print(exc, file=sys.stderr)
+        return 1
     for path in pipelines:
-        patch(path)
-    patch_cpu_bake_budget(_generate(root))
-    for path in pipelines:
-        if NEEDLE in path.read_text():
+        if "getattr(rembg" in path.read_text():
             print(
                 "BRIA constructor is still present; not taking this as success.",
                 file=sys.stderr,

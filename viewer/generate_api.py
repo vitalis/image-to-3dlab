@@ -187,7 +187,15 @@ PYTHON = REPO / "vendor" / "trellis-space-mac" / ".venv" / "bin" / "python"
 TRELLIS_VENDOR = REPO / "vendor" / "trellis-space-mac"
 # The dispatch branch scripts/patch_trellis_mlx_attention.py injects. Its presence is how
 # we know the vendored checkout can actually serve SPARSE_ATTN_BACKEND=mlx.
-MLX_DISPATCH_FILE = TRELLIS_VENDOR / "TRELLIS.2" / "trellis2" / "modules" / "sparse" / "attention" / "full_attn.py"
+MLX_DISPATCH_FILE = (
+    TRELLIS_VENDOR
+    / "TRELLIS.2"
+    / "trellis2"
+    / "modules"
+    / "sparse"
+    / "attention"
+    / "full_attn.py"
+)
 MLX_DISPATCH_MARKER = "config.ATTN == 'mlx'"
 # TRELLIS.2 on Linux + NVIDIA: Microsoft's own checkout, built by
 # scripts/bootstrap_trellis_cuda.py. The Mac constants above are untouched.
@@ -223,7 +231,9 @@ SF3D_ROCM_VENDOR = REPO / "vendor" / "stable-fast-3d"
 SF3D_ROCM_PYTHON = SF3D_ROCM_VENDOR / ".venv" / "bin" / "python"
 SF3D_ROCM_MARKER = SF3D_ROCM_VENDOR / ".i2l-build-complete"
 OUTPUT_ROOT = REPO / "output"
-BASELINE_PATH = REPO / "viewer" / "generate_baseline.json"  # shipped default, never written
+BASELINE_PATH = (
+    REPO / "viewer" / "generate_baseline.json"
+)  # shipped default, never written
 # Timings learned on this machine. Under output/ (git-ignored): writing the tracked file
 # above left every install with a local edit, and the installer then refused to update.
 LEARNED_BASELINE_PATH = REPO / "output" / ".generate_baseline.json"
@@ -263,7 +273,9 @@ SELF_CUTTING: dict[tuple[str, str | None], str] = {
 # vendor/hunyuan-mlx-paint 2026-08-19) — a fresh clone of this repo alone has the code;
 # only weights/ (git-ignored, downloaded) and .venv/ (uv sync) are still local-only.
 HUNYUAN_PAINT_VENV = REPO / "hunyuan_mlx" / "paint" / ".venv" / "bin" / "python"
-HUNYUAN_PAINT_WEIGHTS = REPO / "hunyuan_mlx" / "paint" / "weights" / "hunyuan3d-paintpbr-v2-1"
+HUNYUAN_PAINT_WEIGHTS = (
+    REPO / "hunyuan_mlx" / "paint" / "weights" / "hunyuan3d-paintpbr-v2-1"
+)
 
 # Single-repo variant: ZimengXiong's own shape stage (not dgrauet's) chained into their own
 # paint stage above — same paint venv/weights, different shape venv/weights entirely.
@@ -293,7 +305,9 @@ BACKEND_ENV_KEYS = (
     "I2L_MLX_ATTN_DTYPE",
 )
 
-HF_HUB_DIR = Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface")) / "hub"
+HF_HUB_DIR = (
+    Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface")) / "hub"
+)
 WEIGHT_REPOS = (
     ("models--microsoft--TRELLIS.2-4B", "TRELLIS.2-4B weights"),
     ("models--facebook--dinov3-vitl16-pretrain-lvd1689m", "DINOv3 image encoder"),
@@ -302,6 +316,14 @@ WEIGHT_REPOS = (
         "TinyCLIP input advisor (~94 MB, advisory only)",
     ),
 )
+
+
+def generation_child_env(env: dict[str, str]) -> dict[str, str]:
+    """The generator's environment. The weights are already on disk, so the child
+    must not fetch the rest from the hub."""
+    child = dict(env)
+    child["HF_HUB_OFFLINE"] = "1"
+    return child
 
 
 def _job_env() -> dict[str, str]:
@@ -350,8 +372,12 @@ def weights_on_disk(cache_dir: Path | None = None) -> dict[str, dict[str, Any]]:
         path = hub / repo
         if path.is_dir():
             size = _dir_state(path)[1]
-            out[repo] = {"label": label, "present": True, "bytes": size,
-                         "human": _human_bytes(size)}
+            out[repo] = {
+                "label": label,
+                "present": True,
+                "bytes": size,
+                "human": _human_bytes(size),
+            }
         else:
             out[repo] = {"label": label, "present": False, "bytes": 0, "human": "0 B"}
     return out
@@ -405,8 +431,14 @@ def backend_spec(backend_id: str) -> BackendSpec | None:
     a plain lookup answered 'unknown backend' for an installed engine (issue #151)."""
     spec = BACKENDS.get(backend_id)
     if spec is None:
-        spec = next((BACKENDS.get(key) for key, catalog_id in backend_catalog.ALIASES.items()
-                     if catalog_id == backend_id), None)
+        spec = next(
+            (
+                BACKENDS.get(key)
+                for key, catalog_id in backend_catalog.ALIASES.items()
+                if catalog_id == backend_id
+            ),
+            None,
+        )
     return spec
 
 
@@ -432,7 +464,9 @@ def clean_port_build_present() -> bool:
     return PYTHON.is_file() and WRAPPER.is_file()
 
 
-def mlx_attention_status(vendor: Path | None = None, dispatch: Path | None = None) -> dict[str, Any]:
+def mlx_attention_status(
+    vendor: Path | None = None, dispatch: Path | None = None
+) -> dict[str, Any]:
     """Whether the mlx attention backend can actually run on this machine.
 
     Two independent prerequisites, and the UI needs to distinguish them because the
@@ -443,7 +477,9 @@ def mlx_attention_status(vendor: Path | None = None, dispatch: Path | None = Non
     vendor = vendor or TRELLIS_VENDOR
     dispatch = dispatch or MLX_DISPATCH_FILE
     try:
-        patched = dispatch.is_file() and MLX_DISPATCH_MARKER in dispatch.read_text(encoding="utf-8")
+        patched = dispatch.is_file() and MLX_DISPATCH_MARKER in dispatch.read_text(
+            encoding="utf-8"
+        )
     except OSError:
         patched = False
     package = any((vendor / ".venv" / "lib").glob("python*/site-packages/mlx"))
@@ -455,7 +491,9 @@ def mlx_attention_status(vendor: Path | None = None, dispatch: Path | None = Non
             f"{vendor / '.venv' / 'bin' / 'python'} mlx"
         )
     if not patched:
-        hints.append("apply the dispatch branch: python scripts/patch_trellis_mlx_attention.py")
+        hints.append(
+            "apply the dispatch branch: python scripts/patch_trellis_mlx_attention.py"
+        )
     return {
         "patched": patched,
         "package": package,
@@ -467,24 +505,35 @@ def mlx_attention_status(vendor: Path | None = None, dispatch: Path | None = Non
 def backends_payload() -> dict:
     """The Generate tab's routes. `runs_here` lets the page drop a route this machine cannot
     run: an NVIDIA pod was offered the two Mac-only Hunyuan-MLX routes."""
+
     def runs_here(spec_id: str) -> bool:
         entry = backend_catalog.resolve(spec_id)
-        return True if entry is None else entry.runs_here(backend_catalog.host_platform())
+        return (
+            True if entry is None else entry.runs_here(backend_catalog.host_platform())
+        )
 
-    return {"backends": [
-        {"id": spec.id, "label": spec.label, "requires_alpha": spec.requires_alpha,
-         "default_settings": spec.default_settings, "stages": spec.stages,
-         "stage_labels": spec.stage_labels, "hidden_fields": list(spec.hidden_fields),
-         "runs_here": runs_here(spec.id)}
-        for spec in BACKENDS.values()
-    ]}
+    return {
+        "backends": [
+            {
+                "id": spec.id,
+                "label": spec.label,
+                "requires_alpha": spec.requires_alpha,
+                "default_settings": spec.default_settings,
+                "stages": spec.stages,
+                "stage_labels": spec.stage_labels,
+                "hidden_fields": list(spec.hidden_fields),
+                "runs_here": runs_here(spec.id),
+            }
+            for spec in BACKENDS.values()
+        ]
+    }
 
 
 def hf_sign_in_response(payload: Any) -> tuple[int, dict]:
     """POST /api/hf/sign-in: check and save a Hugging Face token, answer with the status.
     The token never comes back in the answer."""
     if not isinstance(payload, dict):
-        return 400, {"error": "expected {\"token\": ...}"}
+        return 400, {"error": 'expected {"token": ...}'}
     result = hf_api.sign_in(str(payload.get("token", "")))
     return (422 if "error" in result else 200), result
 
@@ -497,9 +546,11 @@ def front_back_status(weights=None, vision=None) -> dict[str, Any]:
     vision_ready = (vision or image_api.resolve_vision)() is not None
     if weights_ready and vision_ready:
         return {"ready": True, "hint": None}
-    return {"ready": False,
-            "hint": "It needs two more downloads (6.6 GB): Setup & Status, Front + back, "
-                    "or python scripts/bootstrap_front_back.py."}
+    return {
+        "ready": False,
+        "hint": "It needs two more downloads (6.6 GB): Setup & Status, Front + back, "
+        "or python scripts/bootstrap_front_back.py.",
+    }
 
 
 def catalog_payload() -> dict:
@@ -510,9 +561,11 @@ def catalog_payload() -> dict:
     return payload
 
 
-def with_rebuild_reasons(catalog: dict[str, Any],
-                         reason: Callable[[str], str | None] = rebuild_reason,
-                         download: Callable[[str], str | None] = rebuild_download) -> dict[str, Any]:
+def with_rebuild_reasons(
+    catalog: dict[str, Any],
+    reason: Callable[[str], str | None] = rebuild_reason,
+    download: Callable[[str], str | None] = rebuild_download,
+) -> dict[str, Any]:
     """Say which installed backends want recompiling, so the page can offer a Rebuild
     button instead of a Terminal command.
 
@@ -520,8 +573,12 @@ def with_rebuild_reasons(catalog: dict[str, Any],
     Only `backends` did once, and the button vanished when the tabs arrived."""
     here = catalog.get("views", {}).get(catalog.get("host", {}).get("id"), [])
     for backend in [*catalog.get("backends", []), *here]:
-        backend["rebuild_reason"] = reason(backend["id"]) if backend.get("supported_here") else None
-        backend["rebuild_downloads"] = download(backend["id"]) if backend["rebuild_reason"] else None
+        backend["rebuild_reason"] = (
+            reason(backend["id"]) if backend.get("supported_here") else None
+        )
+        backend["rebuild_downloads"] = (
+            download(backend["id"]) if backend["rebuild_reason"] else None
+        )
     return catalog
 
 
@@ -530,27 +587,54 @@ def setup_status() -> dict[str, Any]:
     build_present = clean_port_build_present()
     weights = weights_on_disk()
     missing = [w["label"] for w in weights.values() if not w["present"]]
+    if not build_present:
+        hint = (
+            "clean-port build missing — from the repo root run: "
+            "python scripts/bootstrap_trellis_space_macos.py "
+            "(requires uv, Python 3.11 and Xcode command-line tools)"
+        )
+    elif missing:
+        hint = (
+            "Weights are not on disk yet: "
+            + "; ".join(missing)
+            + ". Download them from Setup & Status before generating."
+        )
+    else:
+        hint = None
+    bria_ok = trellis_mac_bria_patched() if build_present else False
+    if build_present and not bria_ok:
+        hint = (
+            "The Mac TRELLIS port still loads BRIA RMBG-2.0. Run "
+            "python scripts/patch_trellis_space_core.py first."
+        )
     return {
         "schema_version": 1,
         "build": {
-            "present": build_present,
+            "present": build_present and bria_ok,
             "interpreter": str(PYTHON),
             "wrapper": str(WRAPPER),
-            "hint": (
-                "clean-port build missing — from the repo root run: "
-                "python scripts/bootstrap_trellis_space_macos.py "
-                "(requires uv, Python 3.11 and Xcode command-line tools)"
-                if not build_present else None
-            ),
+            "hint": hint,
         },
         "weights": weights,
         "missing_weights": missing,
         # Advisory only: the default sdpa path works without it, so an unready mlx backend
         # must never make the machine look unready for generation.
         "mlx_attention": mlx_attention_status(),
-        "ready": build_present,
-        "warning": "first use will download missing weights" if missing else None,
+        # Missing weights used to leave this ready, and the card said the first
+        # picture would fetch them. The picture does not. The port also has to
+        # be patched so it cannot load BRIA.
+        "bria_patched": bria_ok,
+        "ready": build_present and bria_ok and not missing,
+        "warning": None,
     }
+
+
+def trellis_mac_bria_patched(vendor: Path | None = None) -> bool:
+    """Whether the Mac port's pipeline can no longer build the background remover."""
+    sys.path.insert(0, str(REPO / "scripts"))
+    from patch_trellis_space_core import rembg_disabled
+
+    return rembg_disabled((vendor or TRELLIS_VENDOR) / "TRELLIS.2")
 
 
 def trellis_cuda_bria_patched(checkout: Path | None = None) -> bool:
@@ -558,7 +642,9 @@ def trellis_cuda_bria_patched(checkout: Path | None = None) -> bool:
     sys.path.insert(0, str(REPO / "scripts"))
     import patch_trellis_cuda_no_bria
 
-    return patch_trellis_cuda_no_bria.is_patched(checkout or TRELLIS_CUDA_VENDOR / "TRELLIS.2")
+    return patch_trellis_cuda_no_bria.is_patched(
+        checkout or TRELLIS_CUDA_VENDOR / "TRELLIS.2"
+    )
 
 
 def trellis_rocm_attention_problem(vendor: Path | None = None) -> str | None:
@@ -572,11 +658,15 @@ def trellis_rocm_attention_problem(vendor: Path | None = None) -> str | None:
     from patch_trellis_rocm import is_patched
 
     if not is_patched(vendor):
-        return ("The TRELLIS.2 checkout lacks the AMD attention patches. Run "
-                f"python scripts/patch_trellis_rocm.py --root {vendor}")
+        return (
+            "The TRELLIS.2 checkout lacks the AMD attention patches. Run "
+            f"python scripts/patch_trellis_rocm.py --root {vendor}"
+        )
     if not any((vendor / ".venv").glob("lib/python*/site-packages/aule/__init__.py")):
-        return ("aule (AuleAttention), the only attention backend on AMD, is not installed. "
-                "Re-run python scripts/bootstrap_trellis_rocm.py --code-only.")
+        return (
+            "aule (AuleAttention), the only attention backend on AMD, is not installed. "
+            "Re-run python scripts/bootstrap_trellis_rocm.py --code-only."
+        )
     return None
 
 
@@ -595,8 +685,11 @@ def cuda_setup_status(host: str | None = None) -> dict[str, Any]:
     python = TRELLIS_ROCM_PYTHON if on_amd else TRELLIS_CUDA_PYTHON
     wrapper = TRELLIS_ROCM_WRAPPER if on_amd else TRELLIS_CUDA_WRAPPER
     marker = TRELLIS_ROCM_MARKER if on_amd else TRELLIS_CUDA_MARKER
-    bootstrap = ("scripts/bootstrap_trellis_rocm.py" if on_amd
-                 else "scripts/bootstrap_trellis_cuda.py")
+    bootstrap = (
+        "scripts/bootstrap_trellis_rocm.py"
+        if on_amd
+        else "scripts/bootstrap_trellis_cuda.py"
+    )
     card = "AMD" if on_amd else "NVIDIA"
 
     built = marker.is_file() and python.is_file() and wrapper.is_file()
@@ -608,23 +701,31 @@ def cuda_setup_status(host: str | None = None) -> dict[str, Any]:
     missing = [w["label"] for w in weights.values() if not w["present"]]
     hint = None
     if not built:
-        hint = (f"TRELLIS.2 for {card} is not installed. Set it up from Setup & Status, or "
-                f"run python {bootstrap} (Linux only, ~16 GB of weights).")
+        hint = (
+            f"TRELLIS.2 for {card} is not installed. Set it up from Setup & Status, or "
+            f"run python {bootstrap} (Linux only, ~16 GB of weights)."
+        )
     elif not patched:
-        hint = ("The TRELLIS.2 checkout still loads BRIA RMBG-2.0. Run "
-                "python scripts/patch_trellis_cuda_no_bria.py first.")
+        hint = (
+            "The TRELLIS.2 checkout still loads BRIA RMBG-2.0. Run "
+            "python scripts/patch_trellis_cuda_no_bria.py first."
+        )
     elif attention:
         hint = attention
     ready = built and patched and not attention
     return {
         "schema_version": 1,
-        "build": {"present": ready, "interpreter": str(python),
-                  "wrapper": str(wrapper), "hint": hint},
+        "build": {
+            "present": ready,
+            "interpreter": str(python),
+            "wrapper": str(wrapper),
+            "hint": hint,
+        },
         "weights": weights,
         "missing_weights": missing,
         "bria_patched": patched,
         "ready": ready,
-        "warning": "first use will download missing weights" if missing else None,
+        "warning": None,
     }
 
 
@@ -693,10 +794,15 @@ def setup_available(host: str | None = None) -> tuple[bool, str | None]:
     right installer for the machine.
     """
     if (host or host_platform()) != APPLE:
-        return False, ("this setup runs the Mac port; on this machine use Setup & Status "
-                       "> TRELLIS.2 > Set up")
+        return False, (
+            "this setup runs the Mac port; on this machine use Setup & Status "
+            "> TRELLIS.2 > Set up"
+        )
     if find_uv() is None:
-        return False, "uv is not installed — install it first (https://docs.astral.sh/uv/)"
+        return (
+            False,
+            "uv is not installed — install it first (https://docs.astral.sh/uv/)",
+        )
     bootstrap = REPO / "scripts" / "bootstrap_trellis_space_macos.py"
     if not bootstrap.is_file():
         return False, f"bootstrap script missing: {bootstrap}"
@@ -707,29 +813,35 @@ def blender_install_command() -> list[str]:
     return [sys.executable, str(REPO / "scripts" / "bootstrap_blender.py"), "--yes"]
 
 
-def blender_install_refusal(caps: dict[str, Any], generating: bool,
-                            setting_up: bool) -> tuple[int, str] | None:
+def blender_install_refusal(
+    caps: dict[str, Any], generating: bool, setting_up: bool
+) -> tuple[int, str] | None:
     """Why Setup's Install Blender cannot start now, or None when it can."""
     if generating:
         return 409, "a generation is running; wait for it to finish"
     if setting_up:
         return 409, "another setup is running; wait for it to finish"
     if not caps.get("blender_installable"):
-        return 409, ("Blender is already found, or this machine needs the app from "
-                     "https://www.blender.org/download/")
+        return 409, (
+            "Blender is already found, or this machine needs the app from "
+            "https://www.blender.org/download/"
+        )
     return None
 
 
-def gltfpack_install_refusal(tools: dict[str, Any], generating: bool,
-                             setting_up: bool) -> tuple[int, str] | None:
+def gltfpack_install_refusal(
+    tools: dict[str, Any], generating: bool, setting_up: bool
+) -> tuple[int, str] | None:
     """Why Setup's Install gltfpack cannot start now, or None when it can."""
     if generating:
         return 409, "a generation is running; wait for it to finish"
     if setting_up:
         return 409, "another setup is running; wait for it to finish"
     if not tools.get("gltfpack_installable"):
-        return 409, ("gltfpack is already found, or there is no build for this machine at "
-                     "https://github.com/zeux/meshoptimizer/releases")
+        return 409, (
+            "gltfpack is already found, or there is no build for this machine at "
+            "https://github.com/zeux/meshoptimizer/releases"
+        )
     return None
 
 
@@ -757,15 +869,21 @@ def _start_setup_run(run_id: str, command: list[str] | None = None) -> SetupRun:
                 run.emit({"phase": "setup", "message": line})
         code = proc.wait()
         ok = code == 0
-        run.emit({"phase": "setup_done", "status": "done" if ok else "error",
-                  "message": f"bootstrap exited with code {code}"
-                             + ("" if ok else " — review the output above")})
+        run.emit(
+            {
+                "phase": "setup_done",
+                "status": "done" if ok else "error",
+                "message": f"bootstrap exited with code {code}"
+                + ("" if ok else " — review the output above"),
+            }
+        )
         run.status = "done" if ok else "error"
         with SETUP_LOCK:
             SETUP_ACTIVE = None
 
     threading.Thread(target=reader, daemon=True, name=f"setup-{run_id[:8]}").start()
     return run
+
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "resolution": "1024",
@@ -850,7 +968,10 @@ def validate_settings(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise ValueError("settings must be a JSON object")
     # allow_rembg (BRIA) is gone: the server cuts pictures out itself. Old clients may send it.
-    settings = {**DEFAULT_SETTINGS, **{k: v for k, v in raw.items() if k != "allow_rembg"}}
+    settings = {
+        **DEFAULT_SETTINGS,
+        **{k: v for k, v in raw.items() if k != "allow_rembg"},
+    }
     if str(settings["resolution"]) not in VALID_RESOLUTIONS:
         raise ValueError("resolution must be one of 512, 1024, or 1536")
     try:
@@ -858,7 +979,9 @@ def validate_settings(raw: Any) -> dict[str, Any]:
         settings["decimation_target"] = int(settings["decimation_target"])
         settings["texture_size"] = int(settings["texture_size"])
     except (TypeError, ValueError) as exc:
-        raise ValueError("seed, decimation_target, and texture_size must be integers") from exc
+        raise ValueError(
+            "seed, decimation_target, and texture_size must be integers"
+        ) from exc
     if settings["decimation_target"] <= 0:
         raise ValueError("decimation_target must be positive")
     if settings["texture_size"] not in VALID_TEXTURES:
@@ -983,11 +1106,18 @@ def _update_baseline(job: Job) -> None:
     if not job.stage_durations:
         return
     seconds = _read_seconds(LEARNED_BASELINE_PATH)
-    seconds.update({name: round(value, 1) for name, value in job.stage_durations.items()})
-    data = {"schema_version": 1, "seconds": seconds,
-            "source": "learned from completed Generate jobs on this machine"}
+    seconds.update(
+        {name: round(value, 1) for name, value in job.stage_durations.items()}
+    )
+    data = {
+        "schema_version": 1,
+        "seconds": seconds,
+        "source": "learned from completed Generate jobs on this machine",
+    }
     LEARNED_BASELINE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    LEARNED_BASELINE_PATH.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    LEARNED_BASELINE_PATH.write_text(
+        json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
 def _slugify(value: str) -> str:
@@ -1025,7 +1155,10 @@ def _safe_id(value: str) -> bool:
 
 def parse_multipart(content_type: str, body: bytes) -> dict[str, dict[str, Any]]:
     """Parse the two small multipart fields without the removed Python 3.13 ``cgi`` module."""
-    raw = (f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("ascii") + body)
+    raw = (
+        f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("ascii")
+        + body
+    )
     message = BytesParser(policy=policy.default).parsebytes(raw)
     fields: dict[str, dict[str, Any]] = {}
     for part in message.iter_parts():
@@ -1043,8 +1176,16 @@ def parse_multipart(content_type: str, body: bytes) -> dict[str, dict[str, Any]]
 
 
 class Job:
-    def __init__(self, job_id: str, directory: Path, image_path: Path, output_path: Path,
-                 settings: dict[str, Any], backend_id: str, debug: bool = False):
+    def __init__(
+        self,
+        job_id: str,
+        directory: Path,
+        image_path: Path,
+        output_path: Path,
+        settings: dict[str, Any],
+        backend_id: str,
+        debug: bool = False,
+    ):
         self.id = job_id
         self.directory = directory
         self.image_path = image_path
@@ -1084,9 +1225,16 @@ class JobManager:
         self.lock = threading.Lock()
         self.active: str | None = None
 
-    def create(self, image_path: Path, settings: dict[str, Any], backend_id: str,
-               image_stem: str, output_name: str | None, output_base: Path,
-               debug: bool = False) -> Job:
+    def create(
+        self,
+        image_path: Path,
+        settings: dict[str, Any],
+        backend_id: str,
+        image_stem: str,
+        output_name: str | None,
+        output_base: Path,
+        debug: bool = False,
+    ) -> Job:
         with self.lock:
             if self.active is not None:
                 active = self.jobs.get(self.active)
@@ -1096,14 +1244,18 @@ class JobManager:
             name = _job_folder_name(image_stem, backend_id, output_name)
             suffix = 2
             while (output_base / name).exists():
-                name = f"{_job_folder_name(image_stem, backend_id, output_name)}-{suffix}"
+                name = (
+                    f"{_job_folder_name(image_stem, backend_id, output_name)}-{suffix}"
+                )
                 suffix += 1
             directory = output_base / name
             directory.mkdir(parents=True, exist_ok=False)
             # Folder name and primary output filename match (only the extension differs) --
             # <name>/<name>.glb -- so a run is identifiable from either without cross-checking.
             output_path = directory / f"{name}.glb"
-            job = Job(job_id, directory, image_path, output_path, settings, backend_id, debug)
+            job = Job(
+                job_id, directory, image_path, output_path, settings, backend_id, debug
+            )
             self.jobs[job_id] = job
             self.active = job_id
             return job
@@ -1151,7 +1303,7 @@ def _event_from_tqdm(job: Job, parsed: dict[str, Any]) -> dict[str, Any]:
     if parsed["step"] <= 1 or phase not in job.stage_started:
         job.stage_started.setdefault(phase, now)
     baseline = _baseline()
-    future = STAGES[STAGES.index(phase) + 1:] if phase in STAGES else []
+    future = STAGES[STAGES.index(phase) + 1 :] if phase in STAGES else []
     future_seconds = sum(baseline.get(s, 0.0) for s in future)
     stage_eta = parsed["remain"]
     total_eta = (stage_eta or 0.0) + future_seconds
@@ -1174,16 +1326,32 @@ def _emit_banner(job: Job, line: str) -> None:
     lower = line.lower()
     event: dict[str, Any] | None = None
     if "loading trellis" in lower:
-        event = {"phase": "load", "overall_pct": 0, "message": "Loading TRELLIS.2 pipeline"}
+        event = {
+            "phase": "load",
+            "overall_pct": 0,
+            "message": "Loading TRELLIS.2 pipeline",
+        }
     elif "pipeline loaded" in lower:
-        event = {"phase": "load", "stage_pct": 100, "overall_pct": _overall_pct("load", 100),
-                 "message": line.strip()}
+        event = {
+            "phase": "load",
+            "stage_pct": 100,
+            "overall_pct": _overall_pct("load", 100),
+            "message": line.strip(),
+        }
     elif "decode_latent" in lower and "done in" in lower:
-        event = {"phase": "decode", "stage_pct": 100, "overall_pct": _overall_pct("decode", 100),
-                 "message": "Decode complete"}
+        event = {
+            "phase": "decode",
+            "stage_pct": 100,
+            "overall_pct": _overall_pct("decode", 100),
+            "message": "Decode complete",
+        }
     elif "to_glb + export" in lower and "done in" in lower:
-        event = {"phase": "bake", "stage_pct": 100, "overall_pct": _overall_pct("bake", 100),
-                 "message": "GLB export complete"}
+        event = {
+            "phase": "bake",
+            "stage_pct": 100,
+            "overall_pct": _overall_pct("bake", 100),
+            "message": "GLB export complete",
+        }
     elif "pre-cap done" in lower:
         event = {"phase": "bake", "message": "Pre-cap complete, starting to_glb…"}
     if event:
@@ -1192,7 +1360,13 @@ def _emit_banner(job: Job, line: str) -> None:
 
 def _signal_hint(return_code: int) -> str:
     """Human-readable suffix for a negative (signal-killed) exit code, empty otherwise."""
-    signals = {-9: "SIGKILL", -15: "SIGTERM", -6: "SIGABRT", -4: "SIGILL", -11: "SIGSEGV"}
+    signals = {
+        -9: "SIGKILL",
+        -15: "SIGTERM",
+        -6: "SIGABRT",
+        -4: "SIGILL",
+        -11: "SIGSEGV",
+    }
     if return_code < 0:
         return f" — killed by {signals.get(return_code, f'signal {abs(return_code)}')}"
     return ""
@@ -1203,9 +1377,14 @@ def _process_rss_gb(pid: int) -> float:
     try:
         kb = subprocess.run(
             ["ps", "-o", "rss=", "-p", str(pid)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, check=False,  # best-effort probe
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+            check=False,  # best-effort probe
         ).stdout.strip()
-        return round(int(kb) / (1024 ** 2), 2) if kb.isdigit() else 0.0
+        return round(int(kb) / (1024**2), 2) if kb.isdigit() else 0.0
     except (OSError, ValueError, subprocess.TimeoutExpired):
         return 0.0
 
@@ -1234,7 +1413,7 @@ def _read_process(job: Job) -> None:
             if not positions:
                 break
             cut = min(positions)
-            line, buffer = buffer[:cut], buffer[cut + 1:]
+            line, buffer = buffer[:cut], buffer[cut + 1 :]
             if not line:
                 continue
             job.append_log(line)
@@ -1263,9 +1442,14 @@ def _cleanup_debug_files(job: Job) -> None:
     out = job.output_path
     # <name>.post.bin is Pixal3D's clean-up input, which the Pixal3D Finish route reruns;
     # <name>.shape.bin is the shape every new skin repaints.
-    keep = {out, out.with_suffix(".provenance.json"), out.with_suffix(".json"),
-            out.with_suffix(".svviews"), out.with_suffix(".post.bin"),
-            out.with_suffix(".shape.bin")}
+    keep = {
+        out,
+        out.with_suffix(".provenance.json"),
+        out.with_suffix(".json"),
+        out.with_suffix(".svviews"),
+        out.with_suffix(".post.bin"),
+        out.with_suffix(".shape.bin"),
+    }
     for path in job.directory.iterdir():
         if path in keep:
             continue
@@ -1318,13 +1502,25 @@ def _terminate_active_job() -> None:
     if job is not None and job.process is not None and job.process.poll() is None:
         _killpg_if_alive(job.process.pid)
     rig_job = RIG_JOBS.get(RIG_JOBS.active) if RIG_JOBS.active else None
-    if rig_job is not None and rig_job.process is not None and rig_job.process.poll() is None:
+    if (
+        rig_job is not None
+        and rig_job.process is not None
+        and rig_job.process.poll() is None
+    ):
         _killpg_if_alive(rig_job.process.pid)
     props_job = PROPS_JOBS.get(PROPS_JOBS.active) if PROPS_JOBS.active else None
-    if props_job is not None and props_job.process is not None and props_job.process.poll() is None:
+    if (
+        props_job is not None
+        and props_job.process is not None
+        and props_job.process.poll() is None
+    ):
         _killpg_if_alive(props_job.process.pid)
     finish_job = FINISH_JOBS.get(FINISH_JOBS.active) if FINISH_JOBS.active else None
-    if finish_job is not None and finish_job.process is not None and finish_job.process.poll() is None:
+    if (
+        finish_job is not None
+        and finish_job.process is not None
+        and finish_job.process.poll() is None
+    ):
         _killpg_if_alive(finish_job.process.pid)
 
 
@@ -1359,9 +1555,12 @@ HEAVY_JOBS: dict[str, Callable[[], bool]] = {
     "skin": lambda: skins_api.BUILDS.running(),
 }
 BUSY_WORDS = {
-    "setup": "setup is running", "generate": "a generation is running",
-    "image": "a picture is being made", "finish": "a model is being finished",
-    "props": "a prop sheet is baking", "rebind": "a rig rebind is running",
+    "setup": "setup is running",
+    "generate": "a generation is running",
+    "image": "a picture is being made",
+    "finish": "a model is being finished",
+    "props": "a prop sheet is baking",
+    "rebind": "a rig rebind is running",
     "animate": "an auto-rig or animation is running",
     "skin": "a skin is being made",
 }
@@ -1392,10 +1591,12 @@ def _reconcile_orphaned_jobs(output_root: Path) -> list[str]:
     touched = []
     for pid_file in sorted(output_root.rglob("pid")):
         if not pid_file.is_file():
-            continue    # a folder that happens to be called pid (a prop, say), not a job's
+            continue  # a folder that happens to be called pid (a prop, say), not a job's
         directory = pid_file.parent
         try:
-            pid, owner = processes.parse_pid_record(pid_file.read_text(encoding="utf-8"))
+            pid, owner = processes.parse_pid_record(
+                pid_file.read_text(encoding="utf-8")
+            )
         except (OSError, ValueError):
             pid_file.unlink(missing_ok=True)
             continue
@@ -1408,8 +1609,14 @@ def _reconcile_orphaned_jobs(output_root: Path) -> list[str]:
         else:
             note = "server died mid-run (previous session) -- job status unknown, treat as failed"
         # Finish runs from 0.3.5 keep their log in steps/.
-        log_path = next((path for path in (directory / "run.log", directory / "steps" / "run.log")
-                         if path.is_file()), None)
+        log_path = next(
+            (
+                path
+                for path in (directory / "run.log", directory / "steps" / "run.log")
+                if path.is_file()
+            ),
+            None,
+        )
         if log_path is not None:
             with log_path.open("a", encoding="utf-8") as handle:
                 handle.write(note + "\n")
@@ -1419,7 +1626,9 @@ def _reconcile_orphaned_jobs(output_root: Path) -> list[str]:
 
 
 # Progress chatter the generator emits constantly; never the reason it stopped.
-_LOG_NOISE = re.compile(r"^(\[rss |Sampling |Loading |Pipeline loaded|\s*$)|\|\s*\d+/\d+ \[")
+_LOG_NOISE = re.compile(
+    r"^(\[rss |Sampling |Loading |Pipeline loaded|\s*$)|\|\s*\d+/\d+ \["
+)
 
 
 def out_of_memory_reason(log_lines) -> str | None:
@@ -1470,12 +1679,14 @@ def failure_reason(log_lines, limit: int = 6) -> str | None:
 def _run_job(job: Job) -> None:
     spec = BACKENDS[job.backend_id]
     args = [str(spec.interpreter), str(spec.wrapper), *spec.build_args(job)]
-    env = _job_env()
+    env = generation_child_env(_job_env())
     if job.backend_id == "trellis" and spec.wrapper == WRAPPER:
         env.update(attention_backend_spec(job.settings["sparse_attn_backend"])[1])
     try:
         job.status = "running"
-        job.emit({"phase": "load", "overall_pct": 0, "message": f"Starting {spec.label} job"})
+        job.emit(
+            {"phase": "load", "overall_pct": 0, "message": f"Starting {spec.label} job"}
+        )
         job.process = subprocess.Popen(
             args,
             cwd=str(REPO),
@@ -1488,11 +1699,14 @@ def _run_job(job: Job) -> None:
         _write_pid_file(job.directory, job.process.pid)
         reader = threading.Thread(target=_read_process, args=(job,), daemon=True)
         reader.start()
-        threading.Thread(target=_rss_monitor, args=(job,), daemon=True,
-                         name=f"rss-{job.id[:8]}").start()
+        threading.Thread(
+            target=_rss_monitor, args=(job,), daemon=True, name=f"rss-{job.id[:8]}"
+        ).start()
         return_code = job.process.wait()
         reader.join(timeout=5)
-        job.append_log(f"generator exited with code {return_code}{_signal_hint(return_code)}")
+        job.append_log(
+            f"generator exited with code {return_code}{_signal_hint(return_code)}"
+        )
         if job.cancel_requested:
             job.status = "cancelled"
             job.append_log("generation cancelled")
@@ -1508,7 +1722,9 @@ def _run_job(job: Job) -> None:
                 if not job.debug:
                     _cleanup_debug_files(job)
                 event = {
-                    "phase": "done", "overall_pct": 100, "message": "Generation complete",
+                    "phase": "done",
+                    "overall_pct": 100,
+                    "message": "Generation complete",
                     "result_url": f"/api/generate/{job.id}/result.glb",
                 }
                 if job.manifest_path.is_file():
@@ -1517,18 +1733,28 @@ def _run_job(job: Job) -> None:
             else:
                 tail = "\n".join(job.log_lines)[-8000:]
                 job.status = "error"
-                job.emit({"phase": "error",
-                          "message": "generator exited 0 but produced no output file",
-                          "log_tail": tail})
+                job.emit(
+                    {
+                        "phase": "error",
+                        "message": "generator exited 0 but produced no output file",
+                        "log_tail": tail,
+                    }
+                )
         else:
             tail = "\n".join(job.log_lines)[-8000:]
             job.status = "error"
             reason = failure_reason(job.log_lines)
-            job.emit({"phase": "error",
-                      "message": reason or f"generator exited with code {return_code}",
-                      "exit_code": return_code,
-                      "log_tail": tail})
-    except Exception as exc:  # process launch errors must reach the browser, not kill the server
+            job.emit(
+                {
+                    "phase": "error",
+                    "message": reason or f"generator exited with code {return_code}",
+                    "exit_code": return_code,
+                    "log_tail": tail,
+                }
+            )
+    except (
+        Exception
+    ) as exc:  # process launch errors must reach the browser, not kill the server
         job.status = "error"
         job.emit({"phase": "error", "message": str(exc)})
     finally:
@@ -1541,12 +1767,18 @@ def _run_job(job: Job) -> None:
 
 def _trellis_build_args(job: Job) -> list[str]:
     args = [
-        str(job.image_path), str(job.output_path),
-        "--resolution", job.settings["resolution"],
-        "--seed", str(job.settings["seed"]),
-        "--decimation-target", str(job.settings["decimation_target"]),
-        "--texture-size", str(job.settings["texture_size"]),
-        "--sparse-attn-backend", attention_backend_spec(job.settings["sparse_attn_backend"])[0],
+        str(job.image_path),
+        str(job.output_path),
+        "--resolution",
+        job.settings["resolution"],
+        "--seed",
+        str(job.settings["seed"]),
+        "--decimation-target",
+        str(job.settings["decimation_target"]),
+        "--texture-size",
+        str(job.settings["texture_size"]),
+        "--sparse-attn-backend",
+        attention_backend_spec(job.settings["sparse_attn_backend"])[0],
     ]
     if job.settings.get("matted_with"):
         args += ["--matted-with", job.settings["matted_with"]]
@@ -1560,11 +1792,16 @@ def _trellis_cuda_build_args(job: Job) -> list[str]:
     """The CUDA generator takes the same settings, minus the Mac-only ones: attention is
     flash-attn, and the cut-out is always our own remover, never BRIA."""
     args = [
-        str(job.image_path), str(job.output_path),
-        "--resolution", job.settings["resolution"],
-        "--seed", str(job.settings["seed"]),
-        "--decimation-target", str(job.settings["decimation_target"]),
-        "--texture-size", str(job.settings["texture_size"]),
+        str(job.image_path),
+        str(job.output_path),
+        "--resolution",
+        job.settings["resolution"],
+        "--seed",
+        str(job.settings["seed"]),
+        "--decimation-target",
+        str(job.settings["decimation_target"]),
+        "--texture-size",
+        str(job.settings["texture_size"]),
     ]
     if not job.debug:
         args.append("--no-save-latents")
@@ -1595,8 +1832,10 @@ def _sf3d_validate_settings(raw: Any) -> dict[str, Any]:
         settings["foreground_ratio"] = float(settings["foreground_ratio"])
         settings["target_vertices"] = int(settings["target_vertices"])
     except (TypeError, ValueError) as exc:
-        raise ValueError("texture_resolution/target_vertices must be integers, "
-                          "foreground_ratio must be a number") from exc
+        raise ValueError(
+            "texture_resolution/target_vertices must be integers, "
+            "foreground_ratio must be a number"
+        ) from exc
     if settings["remesh"] not in SF3D_VALID_REMESH:
         raise ValueError("remesh must be one of none, triangle, or quad")
     if settings["texture_resolution"] <= 0:
@@ -1609,11 +1848,16 @@ def _sf3d_validate_settings(raw: Any) -> dict[str, Any]:
 def _sf3d_build_args(job: Job) -> list[str]:
     return [
         "--fast",
-        "--output-dir", str(job.directory),
-        "--texture-resolution", str(job.settings["texture_resolution"]),
-        "--foreground-ratio", str(job.settings["foreground_ratio"]),
-        "--remesh", job.settings["remesh"],
-        "--target-vertices", str(job.settings["target_vertices"]),
+        "--output-dir",
+        str(job.directory),
+        "--texture-resolution",
+        str(job.settings["texture_resolution"]),
+        "--foreground-ratio",
+        str(job.settings["foreground_ratio"]),
+        "--remesh",
+        job.settings["remesh"],
+        "--target-vertices",
+        str(job.settings["target_vertices"]),
         str(job.image_path),
     ]
 
@@ -1665,29 +1909,47 @@ def _sf3d_readiness(host: str | None = None) -> dict[str, Any]:
         present = SF3D_ROCM_MARKER.is_file() and SF3D_ROCM_PYTHON.is_file()
         # The weights too: a code-only install (or one stopped by the gated licence) would
         # otherwise start a run, and SF3D would fetch ~4.9 GB that nobody agreed to.
-        weights = {w["label"]: {"label": w["label"], "present": w["present"],
-                                "human": w["human_present"]} for w in _sf3d_weights()}
+        weights = {
+            w["label"]: {
+                "label": w["label"],
+                "present": w["present"],
+                "human": w["human_present"],
+            }
+            for w in _sf3d_weights()
+        }
         missing = [label for label, w in weights.items() if not w["present"]]
         hint = None
         if not present:
-            hint = ("Stable Fast 3D for AMD is not installed. Run "
-                    "scripts/bootstrap_sf3d_rocm.py (Linux with ROCm, ~4.9 GB of weights).")
+            hint = (
+                "Stable Fast 3D for AMD is not installed. Run "
+                "scripts/bootstrap_sf3d_rocm.py (Linux with ROCm, ~4.9 GB of weights)."
+            )
         elif missing:
-            hint = ("Stable Fast 3D weights are missing: " + "; ".join(missing) + ". Press "
-                    "Download on its Setup card, or run python scripts/bootstrap_sf3d_rocm.py "
-                    "--weights-only.")
+            hint = (
+                "Stable Fast 3D weights are missing: " + "; ".join(missing) + ". Press "
+                "Download on its Setup card, or run python scripts/bootstrap_sf3d_rocm.py "
+                "--weights-only."
+            )
         return {
             "schema_version": 1,
-            "build": {"present": present, "interpreter": str(SF3D_ROCM_PYTHON), "hint": hint},
-            "weights": weights, "missing_weights": missing,
-            "ready": present and not missing, "warning": None,
+            "build": {
+                "present": present,
+                "interpreter": str(SF3D_ROCM_PYTHON),
+                "hint": hint,
+            },
+            "weights": weights,
+            "missing_weights": missing,
+            "ready": present and not missing,
+            "warning": None,
         }
     present = (SF3D_REPO_DEFAULT / "sf3d" / "system.py").is_file()
     return {
         "schema_version": 1,
         "build": {
             "present": present,
-            "hint": None if present else (
+            "hint": None
+            if present
+            else (
                 f"SF3D checkout not found at {SF3D_REPO_DEFAULT} — "
                 "run scripts/bootstrap_macos.sh first."
             ),
@@ -1733,8 +1995,15 @@ def _hunyuan_validate_settings(raw: Any) -> dict[str, Any]:
         raise ValueError("settings must be a JSON object")
     settings = {**HUNYUAN_DEFAULT_SETTINGS, **raw}
     try:
-        for key in ("octree_resolution", "seed", "decimation_target", "paint_seed",
-                    "paint_res", "paint_steps", "paint_tex"):
+        for key in (
+            "octree_resolution",
+            "seed",
+            "decimation_target",
+            "paint_seed",
+            "paint_res",
+            "paint_steps",
+            "paint_tex",
+        ):
             settings[key] = int(settings[key])
     except (TypeError, ValueError) as exc:
         raise ValueError("all Hunyuan settings must be integers") from exc
@@ -1754,14 +2023,22 @@ def _hunyuan_validate_settings(raw: Any) -> dict[str, Any]:
 def _hunyuan_build_args(job: Job) -> list[str]:
     s = job.settings
     return [
-        str(job.image_path), str(job.output_path),
-        "--octree-resolution", str(s["octree_resolution"]),
-        "--seed", str(s["seed"]),
-        "--decimation-target", str(s["decimation_target"]),
-        "--paint-seed", str(s["paint_seed"]),
-        "--paint-res", str(s["paint_res"]),
-        "--paint-steps", str(s["paint_steps"]),
-        "--paint-tex", str(s["paint_tex"]),
+        str(job.image_path),
+        str(job.output_path),
+        "--octree-resolution",
+        str(s["octree_resolution"]),
+        "--seed",
+        str(s["seed"]),
+        "--decimation-target",
+        str(s["decimation_target"]),
+        "--paint-seed",
+        str(s["paint_seed"]),
+        "--paint-res",
+        str(s["paint_res"]),
+        "--paint-steps",
+        str(s["paint_steps"]),
+        "--paint-tex",
+        str(s["paint_tex"]),
     ]
 
 
@@ -1770,7 +2047,9 @@ def _hunyuan_overall_pct(phase: str, stage_pct: int) -> int:
         index = HUNYUAN_STAGES.index(phase)
     except ValueError:
         return 0
-    return round((index + max(0, min(stage_pct, 100)) / 100) / len(HUNYUAN_STAGES) * 100)
+    return round(
+        (index + max(0, min(stage_pct, 100)) / 100) / len(HUNYUAN_STAGES) * 100
+    )
 
 
 def _hunyuan_parse_line(job: Job, line: str) -> None:
@@ -1779,48 +2058,104 @@ def _hunyuan_parse_line(job: Job, line: str) -> None:
     if step_match:
         step, total = int(step_match.group(1)), int(step_match.group(2))
         pct = round(step / total * 100)
-        job.emit({
-            "phase": "paint_diffusion", "step": step, "total": total, "stage_pct": pct,
-            "overall_pct": _hunyuan_overall_pct("paint_diffusion", pct),
-            "message": f"Paint diffusion — step {step}/{total}",
-        })
+        job.emit(
+            {
+                "phase": "paint_diffusion",
+                "step": step,
+                "total": total,
+                "stage_pct": pct,
+                "overall_pct": _hunyuan_overall_pct("paint_diffusion", pct),
+                "message": f"Paint diffusion — step {step}/{total}",
+            }
+        )
         return
     shape_denoise_match = HUNYUAN_SHAPE_DENOISE_RE.match(stripped)
     if shape_denoise_match:
-        step, total = int(shape_denoise_match.group(1)), int(shape_denoise_match.group(2))
+        step, total = (
+            int(shape_denoise_match.group(1)),
+            int(shape_denoise_match.group(2)),
+        )
         # Denoise is roughly the first 60% of the shape stage's own progress; VAE grid
         # decode + mesh extraction take the rest. Approximate — the exact split varies by
         # model/quantize/octree-decode, but "roughly right and moving" beats frozen at 0%.
         pct = round(step / total * 60)
-        job.emit({
-            "phase": "shape", "step": step, "total": total, "stage_pct": pct,
-            "overall_pct": _hunyuan_overall_pct("shape", pct),
-            "message": f"Shape denoise — step {step}/{total}",
-        })
+        job.emit(
+            {
+                "phase": "shape",
+                "step": step,
+                "total": total,
+                "stage_pct": pct,
+                "overall_pct": _hunyuan_overall_pct("shape", pct),
+                "message": f"Shape denoise — step {step}/{total}",
+            }
+        )
         return
     if stripped.startswith("loaded "):
-        job.emit({"phase": "shape", "stage_pct": 5,
-                  "overall_pct": _hunyuan_overall_pct("shape", 5), "message": stripped})
+        job.emit(
+            {
+                "phase": "shape",
+                "stage_pct": 5,
+                "overall_pct": _hunyuan_overall_pct("shape", 5),
+                "message": stripped,
+            }
+        )
     elif stripped.startswith("[vae] grid"):
-        job.emit({"phase": "shape", "stage_pct": 80,
-                  "overall_pct": _hunyuan_overall_pct("shape", 80), "message": stripped})
+        job.emit(
+            {
+                "phase": "shape",
+                "stage_pct": 80,
+                "overall_pct": _hunyuan_overall_pct("shape", 80),
+                "message": stripped,
+            }
+        )
     elif stripped.startswith("[mesh]"):
-        job.emit({"phase": "shape", "stage_pct": 95,
-                  "overall_pct": _hunyuan_overall_pct("shape", 95), "message": stripped})
+        job.emit(
+            {
+                "phase": "shape",
+                "stage_pct": 95,
+                "overall_pct": _hunyuan_overall_pct("shape", 95),
+                "message": stripped,
+            }
+        )
     elif stripped.startswith("shape generated"):
-        job.emit({"phase": "shape", "stage_pct": 100,
-                  "overall_pct": _hunyuan_overall_pct("shape", 100), "message": stripped})
+        job.emit(
+            {
+                "phase": "shape",
+                "stage_pct": 100,
+                "overall_pct": _hunyuan_overall_pct("shape", 100),
+                "message": stripped,
+            }
+        )
     elif stripped.startswith(("simplified to", "mesh at/under decimation")):
-        job.emit({"phase": "remesh", "stage_pct": 100,
-                  "overall_pct": _hunyuan_overall_pct("remesh", 100), "message": stripped})
-    elif stripped.startswith(("mesh loaded", "xatlas parametrize done", "mesh render loaded",
-                               "control renders done", "controls + dino ready")):
+        job.emit(
+            {
+                "phase": "remesh",
+                "stage_pct": 100,
+                "overall_pct": _hunyuan_overall_pct("remesh", 100),
+                "message": stripped,
+            }
+        )
+    elif stripped.startswith(
+        (
+            "mesh loaded",
+            "xatlas parametrize done",
+            "mesh render loaded",
+            "control renders done",
+            "controls + dino ready",
+        )
+    ):
         job.emit({"phase": "paint_setup", "message": stripped})
     elif stripped.startswith(("views decoded", "super-res x4")):
         job.emit({"phase": "paint_finish", "message": stripped})
     elif stripped.startswith(("DONE", "paint stage done")):
-        job.emit({"phase": "paint_finish", "stage_pct": 100,
-                  "overall_pct": _hunyuan_overall_pct("paint_finish", 100), "message": stripped})
+        job.emit(
+            {
+                "phase": "paint_finish",
+                "stage_pct": 100,
+                "overall_pct": _hunyuan_overall_pct("paint_finish", 100),
+                "message": stripped,
+            }
+        )
 
 
 def _hunyuan_readiness() -> dict[str, Any]:
@@ -1830,17 +2165,25 @@ def _hunyuan_readiness() -> dict[str, Any]:
     ready = shape_ok and paint_venv_ok and weights_ok
     missing = []
     if not shape_ok:
-        missing.append("shape venv/wrapper (vendor/hunyuan-mlx, scripts/hunyuan_mlx_generate.py)")
+        missing.append(
+            "shape venv/wrapper (vendor/hunyuan-mlx, scripts/hunyuan_mlx_generate.py)"
+        )
     if not paint_venv_ok:
         missing.append("paint venv (hunyuan_mlx/paint/.venv)")
     if not weights_ok:
-        missing.append("paint weights (hunyuan_mlx/paint/weights/hunyuan3d-paintpbr-v2-1)")
+        missing.append(
+            "paint weights (hunyuan_mlx/paint/weights/hunyuan3d-paintpbr-v2-1)"
+        )
     return {
         "schema_version": 1,
         "build": {
             "present": ready,
-            "hint": None if ready else (
-                "Hunyuan3D-MLX setup is incomplete — missing: " + "; ".join(missing) + ". "
+            "hint": None
+            if ready
+            else (
+                "Hunyuan3D-MLX setup is incomplete — missing: "
+                + "; ".join(missing)
+                + ". "
                 "dgrauet's shape stage (vendor/hunyuan-mlx) is Tencent-licensed and stays "
                 "manually vendor-cloned. Xiong's paint stage (hunyuan_mlx/paint) is tracked "
                 "in-repo — run `uv sync` there, then download weights per "
@@ -1877,12 +2220,18 @@ def _hunyuan_xiong_validate_settings(raw: Any) -> dict[str, Any]:
         raise ValueError("settings must be a JSON object")
     settings = {**HUNYUAN_XIONG_DEFAULT_SETTINGS, **raw}
     if settings["model"] not in HUNYUAN_XIONG_SHAPE_MODELS:
-        raise ValueError(
-            f"model must be one of {sorted(HUNYUAN_XIONG_SHAPE_MODELS)}"
-        )
+        raise ValueError(f"model must be one of {sorted(HUNYUAN_XIONG_SHAPE_MODELS)}")
     try:
-        for key in ("octree_resolution", "seed", "quantize", "decimation_target",
-                    "paint_seed", "paint_res", "paint_steps", "paint_tex"):
+        for key in (
+            "octree_resolution",
+            "seed",
+            "quantize",
+            "decimation_target",
+            "paint_seed",
+            "paint_res",
+            "paint_steps",
+            "paint_tex",
+        ):
             settings[key] = int(settings[key])
     except (TypeError, ValueError) as exc:
         raise ValueError("all Hunyuan settings must be integers") from exc
@@ -1904,16 +2253,26 @@ def _hunyuan_xiong_validate_settings(raw: Any) -> dict[str, Any]:
 def _hunyuan_xiong_build_args(job: Job) -> list[str]:
     s = job.settings
     return [
-        str(job.image_path), str(job.output_path),
-        "--model", str(s["model"]),
-        "--octree-resolution", str(s["octree_resolution"]),
-        "--seed", str(s["seed"]),
-        "--quantize", str(s["quantize"]),
-        "--decimation-target", str(s["decimation_target"]),
-        "--paint-seed", str(s["paint_seed"]),
-        "--paint-res", str(s["paint_res"]),
-        "--paint-steps", str(s["paint_steps"]),
-        "--paint-tex", str(s["paint_tex"]),
+        str(job.image_path),
+        str(job.output_path),
+        "--model",
+        str(s["model"]),
+        "--octree-resolution",
+        str(s["octree_resolution"]),
+        "--seed",
+        str(s["seed"]),
+        "--quantize",
+        str(s["quantize"]),
+        "--decimation-target",
+        str(s["decimation_target"]),
+        "--paint-seed",
+        str(s["paint_seed"]),
+        "--paint-res",
+        str(s["paint_res"]),
+        "--paint-steps",
+        str(s["paint_steps"]),
+        "--paint-tex",
+        str(s["paint_tex"]),
     ]
 
 
@@ -1930,17 +2289,25 @@ def _hunyuan_xiong_shape_weights_status() -> dict[str, dict[str, Any]]:
     for name, path in HUNYUAN_XIONG_SHAPE_MODELS.items():
         present = path.is_dir()
         size = _dir_state(path)[1]
-        out[name] = {"label": f"Hunyuan3D-MLX shape weights ({name})", "present": present,
-                     "bytes": size, "human": _human_bytes(size)}
+        out[name] = {
+            "label": f"Hunyuan3D-MLX shape weights ({name})",
+            "present": present,
+            "bytes": size,
+            "human": _human_bytes(size),
+        }
     return out
 
 
 def _hunyuan_xiong_readiness() -> dict[str, Any]:
     shape_ok = HUNYUAN_XIONG_SHAPE_VENV.is_file() and HUNYUAN_XIONG_WRAPPER.is_file()
     weights_status = _hunyuan_xiong_shape_weights_status()
-    model_availability = {name: info["present"] for name, info in weights_status.items()}
+    model_availability = {
+        name: info["present"] for name, info in weights_status.items()
+    }
     any_model_ok = any(model_availability.values())
-    default_model_ok = model_availability.get(HUNYUAN_XIONG_DEFAULT_SETTINGS["model"], False)
+    default_model_ok = model_availability.get(
+        HUNYUAN_XIONG_DEFAULT_SETTINGS["model"], False
+    )
     paint_venv_ok = HUNYUAN_PAINT_VENV.is_file()
     paint_weights_ok = HUNYUAN_PAINT_WEIGHTS.is_dir()
     ready = shape_ok and any_model_ok and paint_venv_ok and paint_weights_ok
@@ -1963,14 +2330,19 @@ def _hunyuan_xiong_readiness() -> dict[str, Any]:
     if not paint_venv_ok:
         missing.append("paint venv (hunyuan_mlx/paint/.venv)")
     if not paint_weights_ok:
-        missing.append("paint weights (hunyuan_mlx/paint/weights/hunyuan3d-paintpbr-v2-1)")
+        missing.append(
+            "paint weights (hunyuan_mlx/paint/weights/hunyuan3d-paintpbr-v2-1)"
+        )
     return {
         "schema_version": 1,
         "build": {
             "present": ready,
-            "hint": None if ready else (
+            "hint": None
+            if ready
+            else (
                 "Hunyuan3D-MLX (Xiong, full) setup is incomplete — missing: "
-                + "; ".join(missing) + ". Code is tracked in-repo (hunyuan_mlx/); run "
+                + "; ".join(missing)
+                + ". Code is tracked in-repo (hunyuan_mlx/); run "
                 "`uv sync` in hunyuan_mlx/shape and hunyuan_mlx/paint, then download "
                 "weights per docs/hunyuan-mlx-recipes.md."
             ),
@@ -2011,7 +2383,14 @@ PIXAL3D_STAGE_LABELS = {
     "write": "Writing GLB",
 }
 # `trellis-cli` announces `[n/6] ...`; n maps to a stage, and the bar follows n.
-PIXAL3D_BANNERS = {1: "views", 2: "ss", 3: "shape", 4: "decode", 5: "texture", 6: "write"}
+PIXAL3D_BANNERS = {
+    1: "views",
+    2: "ss",
+    3: "shape",
+    4: "decode",
+    5: "texture",
+    6: "write",
+}
 
 
 def _pixal3d_validate_settings(raw: Any) -> dict[str, Any]:
@@ -2020,7 +2399,10 @@ def _pixal3d_validate_settings(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise ValueError("settings must be a JSON object")
     # "back_name" is the server's own record of a saved back picture: never the client's.
-    settings = {**PIXAL3D_DEFAULT_SETTINGS, **{k: v for k, v in raw.items() if k != "back_name"}}
+    settings = {
+        **PIXAL3D_DEFAULT_SETTINGS,
+        **{k: v for k, v in raw.items() if k != "back_name"},
+    }
     try:
         settings["res"] = int(settings["res"])
         settings["seed"] = int(settings["seed"])
@@ -2043,13 +2425,24 @@ def _pixal3d_validate_settings(raw: Any) -> dict[str, Any]:
 
 def _pixal3d_build_args(job: Job) -> list[str]:
     s = job.settings
-    return [
-        str(job.image_path), str(job.output_path),
-        "--res", str(s["res"]),
-        "--seed", str(s["seed"]),
-        "--fov", str(s["fov"]),
-    ] + ([] if s.get("steps", "auto") == "auto" else ["--steps", str(s["steps"])]) + (
-        ["--back", str(job.directory / s["back_name"])] if s.get("back_name") else [])
+    return (
+        [
+            str(job.image_path),
+            str(job.output_path),
+            "--res",
+            str(s["res"]),
+            "--seed",
+            str(s["seed"]),
+            "--fov",
+            str(s["fov"]),
+        ]
+        + ([] if s.get("steps", "auto") == "auto" else ["--steps", str(s["steps"])])
+        + (
+            ["--back", str(job.directory / s["back_name"])]
+            if s.get("back_name")
+            else []
+        )
+    )
 
 
 def _pixal3d_parse_line(job: Job, line: str) -> None:
@@ -2066,27 +2459,38 @@ def _pixal3d_parse_line(job: Job, line: str) -> None:
         # `phase` must BE the stage id: JobProgressPanel.apply looks the row up by it.
         # Emitting {"phase": "stage", "stage": ...} leaves the panel frozen on its
         # placeholder, which is exactly what it did.
-        job.emit({
-            "phase": stage,
-            "stage_pct": 0,
-            "overall_pct": min(99, round(index / 6 * 100)),
-            "message": PIXAL3D_STAGE_LABELS[stage],
-        })
+        job.emit(
+            {
+                "phase": stage,
+                "stage_pct": 0,
+                "overall_pct": min(99, round(index / 6 * 100)),
+                "message": PIXAL3D_STAGE_LABELS[stage],
+            }
+        )
 
 
-def pixal3d_front_back_ready(models: Path = PIXAL3D_MV_MODELS) -> tuple[bool, str | None]:
+def pixal3d_front_back_ready(
+    models: Path = PIXAL3D_MV_MODELS,
+) -> tuple[bool, str | None]:
     """Whether every file the multi-view set's manifest requires is present, and if not,
     what to say. The build itself is the single-view readiness check's business."""
     listing = models / "pixal3d-models.json"
     if not listing.is_file():
-        return False, ("Front + back needs Pixal3D's multi-view weights (5.9 GB). Get them from "
-                       "Setup & Status, or run python scripts/bootstrap_pixal3d.py --multiview.")
-    required = [entry["name"] for entry in json.loads(listing.read_text(encoding="utf-8")).get("files", [])
-                if entry.get("required", True)]
+        return False, (
+            "Front + back needs Pixal3D's multi-view weights (5.9 GB). Get them from "
+            "Setup & Status, or run python scripts/bootstrap_pixal3d.py --multiview."
+        )
+    required = [
+        entry["name"]
+        for entry in json.loads(listing.read_text(encoding="utf-8")).get("files", [])
+        if entry.get("required", True)
+    ]
     missing = [name for name in required if not (models / name).is_file()]
     if missing:
-        return False, ("Front + back is missing " + ", ".join(missing) + ". Run "
-                       "python scripts/bootstrap_pixal3d.py --multiview to finish the download.")
+        return False, (
+            "Front + back is missing " + ", ".join(missing) + ". Run "
+            "python scripts/bootstrap_pixal3d.py --multiview to finish the download."
+        )
     return True, None
 
 
@@ -2105,8 +2509,11 @@ def _pixal3d_readiness() -> dict[str, Any]:
         "schema_version": 1,
         "build": {
             "present": ready,
-            "hint": None if ready else (
-                "Pixal3D is not set up — missing: " + "; ".join(missing)
+            "hint": None
+            if ready
+            else (
+                "Pixal3D is not set up — missing: "
+                + "; ".join(missing)
                 + ". Set it up from Setup & Status, or run "
                 "python scripts/bootstrap_pixal3d.py (8.4 GB of weights)."
             ),
@@ -2120,9 +2527,7 @@ def _pixal3d_readiness() -> dict[str, Any]:
         },
         "missing_weights": missing,
         "ready": ready,
-        "warning": (
-            "Single-view only, and these weights have no res 512 option."
-        ),
+        "warning": ("Single-view only, and these weights have no res 512 option."),
     }
 
 
@@ -2140,12 +2545,18 @@ def trellis_spec(host: str | None = None) -> BackendSpec:
     """
     if (host or host_platform()) == NVIDIA:
         return BackendSpec(
-            id="trellis", label="TRELLIS.2 (NVIDIA)",
-            interpreter=TRELLIS_CUDA_PYTHON, wrapper=TRELLIS_CUDA_WRAPPER,
-            default_settings=DEFAULT_SETTINGS, stages=STAGES, stage_labels=PHASE_LABELS,
+            id="trellis",
+            label="TRELLIS.2 (NVIDIA)",
+            interpreter=TRELLIS_CUDA_PYTHON,
+            wrapper=TRELLIS_CUDA_WRAPPER,
+            default_settings=DEFAULT_SETTINGS,
+            stages=STAGES,
+            stage_labels=PHASE_LABELS,
             requires_alpha=False,
-            validate_settings=validate_settings, build_args=_trellis_cuda_build_args,
-            parse_line=_trellis_parse_line, readiness=cuda_setup_status,
+            validate_settings=validate_settings,
+            build_args=_trellis_cuda_build_args,
+            parse_line=_trellis_parse_line,
+            readiness=cuda_setup_status,
             baseline_path=BASELINE_PATH,
             hidden_fields=("generate-attention",),
         )
@@ -2155,22 +2566,34 @@ def trellis_spec(host: str | None = None) -> BackendSpec:
         # does. The attention field is hidden because the backend is not a choice here --
         # AuleAttention is the only one that exists for this card.
         return BackendSpec(
-            id="trellis", label="TRELLIS.2 (AMD)",
-            interpreter=TRELLIS_ROCM_PYTHON, wrapper=TRELLIS_ROCM_WRAPPER,
-            default_settings=DEFAULT_SETTINGS, stages=STAGES, stage_labels=PHASE_LABELS,
+            id="trellis",
+            label="TRELLIS.2 (AMD)",
+            interpreter=TRELLIS_ROCM_PYTHON,
+            wrapper=TRELLIS_ROCM_WRAPPER,
+            default_settings=DEFAULT_SETTINGS,
+            stages=STAGES,
+            stage_labels=PHASE_LABELS,
             requires_alpha=False,
-            validate_settings=validate_settings, build_args=_trellis_cuda_build_args,
-            parse_line=_trellis_parse_line, readiness=cuda_setup_status,
+            validate_settings=validate_settings,
+            build_args=_trellis_cuda_build_args,
+            parse_line=_trellis_parse_line,
+            readiness=cuda_setup_status,
             baseline_path=BASELINE_PATH,
             hidden_fields=("generate-attention",),
         )
     return BackendSpec(
-        id="trellis", label="TRELLIS.2 (clean port)",
-        interpreter=PYTHON, wrapper=WRAPPER,
-        default_settings=DEFAULT_SETTINGS, stages=STAGES, stage_labels=PHASE_LABELS,
+        id="trellis",
+        label="TRELLIS.2 (clean port)",
+        interpreter=PYTHON,
+        wrapper=WRAPPER,
+        default_settings=DEFAULT_SETTINGS,
+        stages=STAGES,
+        stage_labels=PHASE_LABELS,
         requires_alpha=True,
-        validate_settings=validate_settings, build_args=_trellis_build_args,
-        parse_line=_trellis_parse_line, readiness=setup_status,
+        validate_settings=validate_settings,
+        build_args=_trellis_build_args,
+        parse_line=_trellis_parse_line,
+        readiness=setup_status,
         baseline_path=BASELINE_PATH,
     )
 
@@ -2191,8 +2614,10 @@ def _hunyuan_cuda_validate_settings(raw: Any) -> dict[str, Any]:
         raw = {}
     if not isinstance(raw, dict):
         raise ValueError("settings must be a JSON object")
-    settings = {**HUNYUAN_CUDA_DEFAULT_SETTINGS,
-                **{k: v for k, v in raw.items() if k in HUNYUAN_CUDA_DEFAULT_SETTINGS}}
+    settings = {
+        **HUNYUAN_CUDA_DEFAULT_SETTINGS,
+        **{k: v for k, v in raw.items() if k in HUNYUAN_CUDA_DEFAULT_SETTINGS},
+    }
     try:
         settings = {key: int(value) for key, value in settings.items()}
     except (TypeError, ValueError) as exc:
@@ -2230,8 +2655,10 @@ def _hunyuan_rocm_validate_settings(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise ValueError("settings must be a JSON object")
     known = {**HUNYUAN_ROCM_DEFAULT_SETTINGS, "max_num_view": 0, "paint_resolution": 0}
-    settings = {**HUNYUAN_ROCM_DEFAULT_SETTINGS,
-                **{k: v for k, v in raw.items() if k in known}}
+    settings = {
+        **HUNYUAN_ROCM_DEFAULT_SETTINGS,
+        **{k: v for k, v in raw.items() if k in known},
+    }
     try:
         settings = {key: int(value) for key, value in settings.items()}
     except (TypeError, ValueError) as exc:
@@ -2245,7 +2672,10 @@ def _hunyuan_rocm_validate_settings(raw: Any) -> dict[str, Any]:
     # reading them unconditionally raised KeyError('max_num_view') on every fresh job.
     if "max_num_view" in settings and not 1 <= settings["max_num_view"] <= 9:
         raise ValueError("max_num_view must be 1 to 9")
-    if "paint_resolution" in settings and settings["paint_resolution"] not in {128, 256}:
+    if "paint_resolution" in settings and settings["paint_resolution"] not in {
+        128,
+        256,
+    }:
         # 512 and 768 are what upstream offers, and this card returns an all-black texture
         # at both: the paint UNet's multiview output comes back with a maximum of 0.02
         # across the whole image. Measured on an RX 7900 XTX, 2026-10-14.
@@ -2260,9 +2690,16 @@ def _hunyuan_rocm_build_args(job: Job) -> list[str]:
     card to whatever this file guessed when it was written.
     """
     s = job.settings
-    args = [str(job.image_path), str(job.output_path),
-            "--seed", str(s["seed"]), "--steps", str(s["steps"]),
-            "--octree-resolution", str(s["octree_resolution"])]
+    args = [
+        str(job.image_path),
+        str(job.output_path),
+        "--seed",
+        str(s["seed"]),
+        "--steps",
+        str(s["steps"]),
+        "--octree-resolution",
+        str(s["octree_resolution"]),
+    ]
     if "max_num_view" in s:
         args += ["--max-num-view", str(s["max_num_view"])]
     if "paint_resolution" in s:
@@ -2273,12 +2710,18 @@ def _hunyuan_rocm_build_args(job: Job) -> list[str]:
 def _hunyuan_cuda_build_args(job: Job) -> list[str]:
     s = job.settings
     return [
-        str(job.image_path), str(job.output_path),
-        "--seed", str(s["seed"]),
-        "--steps", str(s["steps"]),
-        "--octree-resolution", str(s["octree_resolution"]),
-        "--max-num-view", str(s["max_num_view"]),
-        "--paint-resolution", str(s["paint_resolution"]),
+        str(job.image_path),
+        str(job.output_path),
+        "--seed",
+        str(s["seed"]),
+        "--steps",
+        str(s["steps"]),
+        "--octree-resolution",
+        str(s["octree_resolution"]),
+        "--max-num-view",
+        str(s["max_num_view"]),
+        "--paint-resolution",
+        str(s["paint_resolution"]),
     ]
 
 
@@ -2291,24 +2734,40 @@ def _hunyuan_cuda_readiness() -> dict[str, Any]:
     """
     import backend_catalog
 
-    built = (HUNYUAN_CUDA_MARKER.is_file() and HUNYUAN_CUDA_PYTHON.is_file()
-             and HUNYUAN_CUDA_WRAPPER.is_file())
-    weights = {w["label"]: {"label": w["label"], "present": w["present"],
-                            "human": w["human_present"]}
-               for w in backend_catalog.BY_ID["hunyuan-cuda"].describe()["weights"]}
+    built = (
+        HUNYUAN_CUDA_MARKER.is_file()
+        and HUNYUAN_CUDA_PYTHON.is_file()
+        and HUNYUAN_CUDA_WRAPPER.is_file()
+    )
+    weights = {
+        w["label"]: {
+            "label": w["label"],
+            "present": w["present"],
+            "human": w["human_present"],
+        }
+        for w in backend_catalog.BY_ID["hunyuan-cuda"].describe()["weights"]
+    }
     missing = [label for label, w in weights.items() if not w["present"]]
     ready = built and not missing
     hint = None
     if not built:
-        hint = ("Hunyuan3D-2.1 for NVIDIA is not installed. Set it up from Setup & Status, "
-                "or run python scripts/bootstrap_hunyuan_cuda.py (Linux only, ~19.5 GB).")
+        hint = (
+            "Hunyuan3D-2.1 for NVIDIA is not installed. Set it up from Setup & Status, "
+            "or run python scripts/bootstrap_hunyuan_cuda.py (Linux only, ~19.5 GB)."
+        )
     elif missing:
-        hint = ("Hunyuan3D-2.1 weights are missing: " + "; ".join(missing) + ". Run "
-                "python scripts/bootstrap_hunyuan_cuda.py --weights-only.")
+        hint = (
+            "Hunyuan3D-2.1 weights are missing: " + "; ".join(missing) + ". Run "
+            "python scripts/bootstrap_hunyuan_cuda.py --weights-only."
+        )
     return {
         "schema_version": 1,
-        "build": {"present": built, "interpreter": str(HUNYUAN_CUDA_PYTHON),
-                  "wrapper": str(HUNYUAN_CUDA_WRAPPER), "hint": hint},
+        "build": {
+            "present": built,
+            "interpreter": str(HUNYUAN_CUDA_PYTHON),
+            "wrapper": str(HUNYUAN_CUDA_WRAPPER),
+            "hint": hint,
+        },
         "weights": weights,
         "missing_weights": missing,
         "ready": ready,
@@ -2323,31 +2782,50 @@ def _hunyuan_rocm_readiness() -> dict[str, Any]:
     without them is a route that compiles and then crashes in the scheduler.
     """
     import backend_catalog
+
     sys.path.insert(0, str(REPO / "scripts"))
     from patch_hunyuan_rocm import is_patched
 
     root = HUNYUAN_ROCM_VENDOR / "Hunyuan3D-2.1"
-    built = (HUNYUAN_ROCM_MARKER.is_file() and HUNYUAN_ROCM_PYTHON.is_file()
-             and HUNYUAN_ROCM_WRAPPER.is_file())
+    built = (
+        HUNYUAN_ROCM_MARKER.is_file()
+        and HUNYUAN_ROCM_PYTHON.is_file()
+        and HUNYUAN_ROCM_WRAPPER.is_file()
+    )
     patched = is_patched(root) if built else False
-    weights = {w["label"]: {"label": w["label"], "present": w["present"],
-                            "human": w["human_present"]}
-               for w in backend_catalog.BY_ID["hunyuan-rocm"].describe()["weights"]}
+    weights = {
+        w["label"]: {
+            "label": w["label"],
+            "present": w["present"],
+            "human": w["human_present"],
+        }
+        for w in backend_catalog.BY_ID["hunyuan-rocm"].describe()["weights"]
+    }
     missing = [label for label, w in weights.items() if not w["present"]]
     hint = None
     if not built:
-        hint = ("Hunyuan3D-2.1 for AMD is not installed. Set it up from Setup & Status, or "
-                "run python scripts/bootstrap_hunyuan_rocm.py (Linux with ROCm, ~19.5 GB).")
+        hint = (
+            "Hunyuan3D-2.1 for AMD is not installed. Set it up from Setup & Status, or "
+            "run python scripts/bootstrap_hunyuan_rocm.py (Linux with ROCm, ~19.5 GB)."
+        )
     elif not patched:
-        hint = ("The Hunyuan3D-2.1 checkout is missing the AMD patches. Run "
-                "python scripts/patch_hunyuan_rocm.py first.")
+        hint = (
+            "The Hunyuan3D-2.1 checkout is missing the AMD patches. Run "
+            "python scripts/patch_hunyuan_rocm.py first."
+        )
     elif missing:
-        hint = ("Hunyuan3D-2.1 weights are missing: " + "; ".join(missing) + ". Run "
-                "python scripts/bootstrap_hunyuan_rocm.py --weights-only.")
+        hint = (
+            "Hunyuan3D-2.1 weights are missing: " + "; ".join(missing) + ". Run "
+            "python scripts/bootstrap_hunyuan_rocm.py --weights-only."
+        )
     return {
         "schema_version": 1,
-        "build": {"present": built and patched, "interpreter": str(HUNYUAN_ROCM_PYTHON),
-                  "wrapper": str(HUNYUAN_ROCM_WRAPPER), "hint": hint},
+        "build": {
+            "present": built and patched,
+            "interpreter": str(HUNYUAN_ROCM_PYTHON),
+            "wrapper": str(HUNYUAN_ROCM_WRAPPER),
+            "hint": hint,
+        },
         "weights": weights,
         "missing_weights": missing,
         "ready": built and patched and not missing,
@@ -2370,77 +2848,121 @@ def sf3d_spec(host: str | None = None) -> BackendSpec:
     """
     if (host or host_platform()) == AMD:
         return BackendSpec(
-            id="sf3d", label="Stable Fast 3D (AMD)",
-            interpreter=SF3D_ROCM_PYTHON, wrapper=REPO / "pipeline.py",
-            default_settings=SF3D_DEFAULT_SETTINGS, stages=SF3D_STAGES,
-            stage_labels=SF3D_STAGE_LABELS, requires_alpha=False,
-            validate_settings=_sf3d_validate_settings, build_args=_sf3d_build_args,
-            parse_line=_sf3d_parse_line, readiness=_sf3d_readiness, finalize=_sf3d_finalize,
+            id="sf3d",
+            label="Stable Fast 3D (AMD)",
+            interpreter=SF3D_ROCM_PYTHON,
+            wrapper=REPO / "pipeline.py",
+            default_settings=SF3D_DEFAULT_SETTINGS,
+            stages=SF3D_STAGES,
+            stage_labels=SF3D_STAGE_LABELS,
+            requires_alpha=False,
+            validate_settings=_sf3d_validate_settings,
+            build_args=_sf3d_build_args,
+            parse_line=_sf3d_parse_line,
+            readiness=_sf3d_readiness,
+            finalize=_sf3d_finalize,
         )
     return BackendSpec(
-        id="sf3d", label="Stable Fast 3D",
-        interpreter=Path(sys.executable), wrapper=REPO / "pipeline.py",
-        default_settings=SF3D_DEFAULT_SETTINGS, stages=SF3D_STAGES,
-        stage_labels=SF3D_STAGE_LABELS, requires_alpha=False,
-        validate_settings=_sf3d_validate_settings, build_args=_sf3d_build_args,
-        parse_line=_sf3d_parse_line, readiness=_sf3d_readiness, finalize=_sf3d_finalize,
+        id="sf3d",
+        label="Stable Fast 3D",
+        interpreter=Path(sys.executable),
+        wrapper=REPO / "pipeline.py",
+        default_settings=SF3D_DEFAULT_SETTINGS,
+        stages=SF3D_STAGES,
+        stage_labels=SF3D_STAGE_LABELS,
+        requires_alpha=False,
+        validate_settings=_sf3d_validate_settings,
+        build_args=_sf3d_build_args,
+        parse_line=_sf3d_parse_line,
+        readiness=_sf3d_readiness,
+        finalize=_sf3d_finalize,
     )
 
 
-BACKENDS.update({
-    "trellis": trellis_spec(),
-    "sf3d": sf3d_spec(),
-    "hunyuan-mlx": BackendSpec(
-        id="hunyuan-mlx", label="Hunyuan3D-MLX (dgrauet shape + Xiong paint)",
-        interpreter=HUNYUAN_PYTHON, wrapper=HUNYUAN_WRAPPER,
-        default_settings=HUNYUAN_DEFAULT_SETTINGS, stages=HUNYUAN_STAGES,
-        stage_labels=HUNYUAN_STAGE_LABELS, requires_alpha=True,  # its shape stage trusts alpha
-        validate_settings=_hunyuan_validate_settings, build_args=_hunyuan_build_args,
-        parse_line=_hunyuan_parse_line, readiness=_hunyuan_readiness,
-    ),
-    "hunyuan-mlx-xiong": BackendSpec(
-        id="hunyuan-mlx-xiong", label="Hunyuan3D-MLX (Xiong, full pipeline)",
-        interpreter=HUNYUAN_XIONG_SHAPE_VENV, wrapper=HUNYUAN_XIONG_WRAPPER,
-        default_settings=HUNYUAN_XIONG_DEFAULT_SETTINGS, stages=HUNYUAN_STAGES,
-        stage_labels=HUNYUAN_STAGE_LABELS, requires_alpha=True,  # its shape stage trusts alpha
-        validate_settings=_hunyuan_xiong_validate_settings, build_args=_hunyuan_xiong_build_args,
-        parse_line=_hunyuan_parse_line, readiness=_hunyuan_xiong_readiness,
-    ),
-    "pixal3d": BackendSpec(
-        id="pixal3d", label="Pixal3D (C++/GGML)",
-        interpreter=Path(sys.executable), wrapper=PIXAL3D_WRAPPER,
-        default_settings=PIXAL3D_DEFAULT_SETTINGS, stages=PIXAL3D_STAGES,
-        stage_labels=PIXAL3D_STAGE_LABELS, requires_alpha=False,
-        validate_settings=_pixal3d_validate_settings, build_args=_pixal3d_build_args,
-        parse_line=_pixal3d_parse_line, readiness=_pixal3d_readiness,
-        # The one block it could not allocate on a busy 24 GB card, rounded up: 11.1 GB at
-        # res 1024. Without this the run reaches the texture stage -- two minutes in --
-        # and aborts with a backtrace instead of a sentence.
-        gpu_memory_wanted=12 * 1024 ** 3,
-    ),
-    # Same stage names and progress lines as the MLX Hunyuan routes, so it shares their parser.
-    "hunyuan-cuda": BackendSpec(
-        id="hunyuan-cuda", label="Hunyuan3D-2.1 (NVIDIA)",
-        interpreter=HUNYUAN_CUDA_PYTHON, wrapper=HUNYUAN_CUDA_WRAPPER,
-        default_settings=HUNYUAN_CUDA_DEFAULT_SETTINGS, stages=HUNYUAN_STAGES,
-        stage_labels=HUNYUAN_STAGE_LABELS, requires_alpha=False,
-        validate_settings=_hunyuan_cuda_validate_settings,
-        build_args=_hunyuan_cuda_build_args,
-        parse_line=_hunyuan_parse_line, readiness=_hunyuan_cuda_readiness,
-    ),
-    # The AMD route fits its paint settings to the card, so views and resolution are NOT
-    # in its defaults: leaving them out is what lets fit_paint_settings decide. An explicit
-    # one still wins, which is why _hunyuan_rocm_validate_settings accepts them.
-    "hunyuan-rocm": BackendSpec(
-        id="hunyuan-rocm", label="Hunyuan3D-2.1 (AMD)",
-        interpreter=HUNYUAN_ROCM_PYTHON, wrapper=HUNYUAN_ROCM_WRAPPER,
-        default_settings=HUNYUAN_ROCM_DEFAULT_SETTINGS, stages=HUNYUAN_STAGES,
-        stage_labels=HUNYUAN_STAGE_LABELS, requires_alpha=False,
-        validate_settings=_hunyuan_rocm_validate_settings,
-        build_args=_hunyuan_rocm_build_args,
-        parse_line=_hunyuan_parse_line, readiness=_hunyuan_rocm_readiness,
-    ),
-})
+BACKENDS.update(
+    {
+        "trellis": trellis_spec(),
+        "sf3d": sf3d_spec(),
+        "hunyuan-mlx": BackendSpec(
+            id="hunyuan-mlx",
+            label="Hunyuan3D-MLX (dgrauet shape + Xiong paint)",
+            interpreter=HUNYUAN_PYTHON,
+            wrapper=HUNYUAN_WRAPPER,
+            default_settings=HUNYUAN_DEFAULT_SETTINGS,
+            stages=HUNYUAN_STAGES,
+            stage_labels=HUNYUAN_STAGE_LABELS,
+            requires_alpha=True,  # its shape stage trusts alpha
+            validate_settings=_hunyuan_validate_settings,
+            build_args=_hunyuan_build_args,
+            parse_line=_hunyuan_parse_line,
+            readiness=_hunyuan_readiness,
+        ),
+        "hunyuan-mlx-xiong": BackendSpec(
+            id="hunyuan-mlx-xiong",
+            label="Hunyuan3D-MLX (Xiong, full pipeline)",
+            interpreter=HUNYUAN_XIONG_SHAPE_VENV,
+            wrapper=HUNYUAN_XIONG_WRAPPER,
+            default_settings=HUNYUAN_XIONG_DEFAULT_SETTINGS,
+            stages=HUNYUAN_STAGES,
+            stage_labels=HUNYUAN_STAGE_LABELS,
+            requires_alpha=True,  # its shape stage trusts alpha
+            validate_settings=_hunyuan_xiong_validate_settings,
+            build_args=_hunyuan_xiong_build_args,
+            parse_line=_hunyuan_parse_line,
+            readiness=_hunyuan_xiong_readiness,
+        ),
+        "pixal3d": BackendSpec(
+            id="pixal3d",
+            label="Pixal3D (C++/GGML)",
+            interpreter=Path(sys.executable),
+            wrapper=PIXAL3D_WRAPPER,
+            default_settings=PIXAL3D_DEFAULT_SETTINGS,
+            stages=PIXAL3D_STAGES,
+            stage_labels=PIXAL3D_STAGE_LABELS,
+            requires_alpha=False,
+            validate_settings=_pixal3d_validate_settings,
+            build_args=_pixal3d_build_args,
+            parse_line=_pixal3d_parse_line,
+            readiness=_pixal3d_readiness,
+            # The one block it could not allocate on a busy 24 GB card, rounded up: 11.1 GB at
+            # res 1024. Without this the run reaches the texture stage -- two minutes in --
+            # and aborts with a backtrace instead of a sentence.
+            gpu_memory_wanted=12 * 1024**3,
+        ),
+        # Same stage names and progress lines as the MLX Hunyuan routes, so it shares their parser.
+        "hunyuan-cuda": BackendSpec(
+            id="hunyuan-cuda",
+            label="Hunyuan3D-2.1 (NVIDIA)",
+            interpreter=HUNYUAN_CUDA_PYTHON,
+            wrapper=HUNYUAN_CUDA_WRAPPER,
+            default_settings=HUNYUAN_CUDA_DEFAULT_SETTINGS,
+            stages=HUNYUAN_STAGES,
+            stage_labels=HUNYUAN_STAGE_LABELS,
+            requires_alpha=False,
+            validate_settings=_hunyuan_cuda_validate_settings,
+            build_args=_hunyuan_cuda_build_args,
+            parse_line=_hunyuan_parse_line,
+            readiness=_hunyuan_cuda_readiness,
+        ),
+        # The AMD route fits its paint settings to the card, so views and resolution are NOT
+        # in its defaults: leaving them out is what lets fit_paint_settings decide. An explicit
+        # one still wins, which is why _hunyuan_rocm_validate_settings accepts them.
+        "hunyuan-rocm": BackendSpec(
+            id="hunyuan-rocm",
+            label="Hunyuan3D-2.1 (AMD)",
+            interpreter=HUNYUAN_ROCM_PYTHON,
+            wrapper=HUNYUAN_ROCM_WRAPPER,
+            default_settings=HUNYUAN_ROCM_DEFAULT_SETTINGS,
+            stages=HUNYUAN_STAGES,
+            stage_labels=HUNYUAN_STAGE_LABELS,
+            requires_alpha=False,
+            validate_settings=_hunyuan_rocm_validate_settings,
+            build_args=_hunyuan_rocm_build_args,
+            parse_line=_hunyuan_parse_line,
+            readiness=_hunyuan_rocm_readiness,
+        ),
+    }
+)
 
 
 def _json_bytes(value: Any) -> bytes:
@@ -2457,10 +2979,18 @@ def _job_status_payload(job: Job) -> dict[str, Any]:
     the frontend can feed this straight into its existing applyGenerateProgress() renderer
     instead of a separate code path."""
     model = None
-    if job.status == "done" and OUTPUT_ROOT in job.output_path.parents and job.output_path.is_file():
+    if (
+        job.status == "done"
+        and OUTPUT_ROOT in job.output_path.parents
+        and job.output_path.is_file()
+    ):
         # where the model landed, as the studio's Library names it, so a chain can carry on
         model = job.output_path.relative_to(OUTPUT_ROOT).as_posix()
-    return {"status": job.status, "last_event": job.events[-1] if job.events else None, "model": model}
+    return {
+        "status": job.status,
+        "last_event": job.events[-1] if job.events else None,
+        "model": model,
+    }
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -2504,11 +3034,14 @@ class Handler(SimpleHTTPRequestHandler):
         if cls._chain_runner is None:
             host, port = self.server.server_address[:2]
             host = "127.0.0.1" if host in ("", "0.0.0.0") else host
-            cls._chain_runner = ChainRunner(OUTPUT_ROOT, activity_api.local_request(f"http://{host}:{port}", cls.studio_token))
+            cls._chain_runner = ChainRunner(
+                OUTPUT_ROOT,
+                activity_api.local_request(f"http://{host}:{port}", cls.studio_token),
+            )
         return cls._chain_runner
 
     def send_response(self, code, message=None) -> None:
-        self._status_code = int(code)   # what note_request counts a POST by
+        self._status_code = int(code)  # what note_request counts a POST by
         super().send_response(code, message)
 
     def _refuse(self, status: int, message: str) -> None:
@@ -2527,10 +3060,15 @@ class Handler(SimpleHTTPRequestHandler):
     def _allowed(self, *, mutation: bool) -> bool:
         """The studio page's own requests and local tools only (request_utils.check_request),
         with the studio's key when it is reachable from a network (studio_auth)."""
-        verdict = studio_auth.check(token=type(self).studio_token, path=self.path, headers=self.headers)
+        verdict = studio_auth.check(
+            token=type(self).studio_token, path=self.path, headers=self.headers
+        )
         if not verdict.ok:
-            self._refuse(401, "This studio needs its key: open the link it printed when it started "
-                              "(the one ending in ?token=...).")
+            self._refuse(
+                401,
+                "This studio needs its key: open the link it printed when it started "
+                "(the one ending in ?token=...).",
+            )
             return False
         if verdict.redirect:
             # the key came in the address: keep it in a cookie and drop it from the address bar
@@ -2561,31 +3099,58 @@ class Handler(SimpleHTTPRequestHandler):
             if self._allowed(mutation=True):
                 self._route_post()
         finally:
-            usage_api.note_request(self._path_parts(), self.headers.get(usage_api.CLIENT_HEADER),
-                                   "POST", self._status_code)
+            usage_api.note_request(
+                self._path_parts(),
+                self.headers.get(usage_api.CLIENT_HEADER),
+                "POST",
+                self._status_code,
+            )
 
     def _route_post(self) -> None:
         parts = self._path_parts()
         if parts == ["api", "skins"]:
             self._skins_post([])
             return
-        if len(parts) == 4 and parts[:2] == ["api", "skins"] and parts[3] in {"try", "approve", "build", "discard"}:
+        if (
+            len(parts) == 4
+            and parts[:2] == ["api", "skins"]
+            and parts[3] in {"try", "approve", "build", "discard"}
+        ):
             self._skins_post(parts[2:])
             return
-        if len(parts) == 5 and parts[:3] == ["api", "skins", "build"] and parts[4] == "cancel":
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "skins", "build"]
+            and parts[4] == "cancel"
+        ):
             self._skins_post(parts[2:])
             return
         if parts == ["api", "chains"]:
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                chain = chain_from_form(parse_multipart(self.headers.get("Content-Type", ""), self.rfile.read(length)))
+                chain = chain_from_form(
+                    parse_multipart(
+                        self.headers.get("Content-Type", ""), self.rfile.read(length)
+                    )
+                )
                 # Before the picture and the 3D model, not ten minutes later at Finish
-                if set(chain.steps) & activity_api.NEEDS_BLENDER and find_blender() is None:
-                    self._send_json(409, {"error": blender_missing_help() + " Or make it without Finish for now: "
-                                          "stop after the 3D model, and Finish it once Blender is in.",
-                                          "needs_blender": True})
+                if (
+                    set(chain.steps) & activity_api.NEEDS_BLENDER
+                    and find_blender() is None
+                ):
+                    self._send_json(
+                        409,
+                        {
+                            "error": blender_missing_help()
+                            + " Or make it without Finish for now: "
+                            "stop after the 3D model, and Finish it once Blender is in.",
+                            "needs_blender": True,
+                        },
+                    )
                     return
-                chain.client = usage_api.source_of(self.headers.get(usage_api.CLIENT_HEADER))
+                chain.client = usage_api.source_of(
+                    self.headers.get(usage_api.CLIENT_HEADER)
+                )
                 self._chains().submit(chain)
             except RuntimeError as exc:
                 self._send_json(409, {"error": str(exc)})
@@ -2599,14 +3164,23 @@ class Handler(SimpleHTTPRequestHandler):
             ok = self._chains().cancel(parts[2])
             self._send_json(200 if ok else 404, {"cancelled": ok})
             return
-        if len(parts) == 3 and parts[:2] == ["api", "fix-spot"] and parts[2] in {"preview", "keep", "discard"}:
+        if (
+            len(parts) == 3
+            and parts[:2] == ["api", "fix-spot"]
+            and parts[2] in {"preview", "keep", "discard"}
+        ):
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                payload = json.loads(self.rfile.read(length)) if 0 < length <= 65536 else None
+                payload = (
+                    json.loads(self.rfile.read(length)) if 0 < length <= 65536 else None
+                )
             except (ValueError, json.JSONDecodeError):
                 payload = None
-            handler = {"preview": fixspot_api.preview_response, "keep": fixspot_api.keep_response,
-                       "discard": fixspot_api.discard_response}[parts[2]]
+            handler = {
+                "preview": fixspot_api.preview_response,
+                "keep": fixspot_api.keep_response,
+                "discard": fixspot_api.discard_response,
+            }[parts[2]]
             self._send_json(*fixspot_api.answer(handler, OUTPUT_ROOT, payload))
             return
         if parts == ["api", "blender", "install"]:
@@ -2618,7 +3192,9 @@ class Handler(SimpleHTTPRequestHandler):
         if parts == ["api", "hf", "sign-in"]:
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                payload = json.loads(self.rfile.read(length)) if 0 < length <= 4096 else None
+                payload = (
+                    json.loads(self.rfile.read(length)) if 0 < length <= 4096 else None
+                )
             except (ValueError, json.JSONDecodeError):
                 payload = None
             self._send_json(*hf_sign_in_response(payload))
@@ -2626,7 +3202,11 @@ class Handler(SimpleHTTPRequestHandler):
         if parts == ["api", "setup", "run"]:
             self._start_setup()
             return
-        if len(parts) == 4 and parts[:2] == ["api", "setup"] and parts[3] in {"download", "rebuild", "cancel", "remove"}:
+        if (
+            len(parts) == 4
+            and parts[:2] == ["api", "setup"]
+            and parts[3] in {"download", "rebuild", "cancel", "remove"}
+        ):
             self._backend_download(parts[2], parts[3])
             return
         if parts == ["api", "generate"]:
@@ -2638,10 +3218,18 @@ class Handler(SimpleHTTPRequestHandler):
         if parts == ["api", "rig", "rebind"]:
             self._create_rig_job()
             return
-        if len(parts) == 4 and parts[:2] == ["api", "generate"] and parts[3] == "cancel":
+        if (
+            len(parts) == 4
+            and parts[:2] == ["api", "generate"]
+            and parts[3] == "cancel"
+        ):
             self._cancel_job(parts[2])
             return
-        if len(parts) == 5 and parts[:3] == ["api", "rig", "rebind"] and parts[4] == "cancel":
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "rig", "rebind"]
+            and parts[4] == "cancel"
+        ):
             self._cancel_rig_job(parts[3])
             return
         if parts == ["api", "finish"]:
@@ -2650,7 +3238,11 @@ class Handler(SimpleHTTPRequestHandler):
         if len(parts) == 4 and parts[:2] == ["api", "finish"] and parts[3] == "cancel":
             self._cancel_finish_job(parts[2])
             return
-        if len(parts) == 5 and parts[:3] == ["api", "finish", "runs"] and parts[4] == "resume":
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "finish", "runs"]
+            and parts[4] == "resume"
+        ):
             self._resume_finish_job(parts[3])
             return
         if parts == ["api", "props"]:
@@ -2677,7 +3269,11 @@ class Handler(SimpleHTTPRequestHandler):
         if len(parts) == 4 and parts[:2] == ["api", "props"] and parts[3] == "cancel":
             self._cancel_props_job(parts[2])
             return
-        if len(parts) == 5 and parts[:3] == ["api", "props", "runs"] and parts[4] == "turn":
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "props", "runs"]
+            and parts[4] == "turn"
+        ):
             self._turn_prop(parts[3])
             return
         if parts == ["api", "image"]:
@@ -2704,7 +3300,9 @@ class Handler(SimpleHTTPRequestHandler):
             except (ValueError, json.JSONDecodeError) as exc:
                 self._send_json(422, {"error": str(exc)})
                 return
-            self._send_json(200, {"id": parts[2], "hidden": bool(body.get("hidden", True))})
+            self._send_json(
+                200, {"id": parts[2], "hidden": bool(body.get("hidden", True))}
+            )
             return
         if len(parts) == 4 and parts[:2] == ["api", "assets"] and parts[3] == "delete":
             # a deletion cannot be undone, so the page must say so: a bare POST does nothing
@@ -2717,7 +3315,14 @@ class Handler(SimpleHTTPRequestHandler):
             except (ValueError, json.JSONDecodeError) as exc:
                 self._send_json(422, {"error": str(exc)})
                 return
-            self._send_json(200, {"id": parts[2], "deleted": [f["path"] for f in plan["folders"]], "bytes": plan["bytes"]})
+            self._send_json(
+                200,
+                {
+                    "id": parts[2],
+                    "deleted": [f["path"] for f in plan["folders"]],
+                    "bytes": plan["bytes"],
+                },
+            )
             return
         if len(parts) == 4 and parts[:2] == ["api", "assets"] and parts[3] == "main":
             try:
@@ -2757,6 +3362,7 @@ class Handler(SimpleHTTPRequestHandler):
     def _notices(self) -> dict:
         """The bell's notices: ours from the site, plus a newer release (notices_api)."""
         import image_to_3dlab
+
         try:
             update = update_check()
         except Exception:
@@ -2774,7 +3380,13 @@ class Handler(SimpleHTTPRequestHandler):
             self._send_json(422, {"error": str(exc)})
             return
         if not image_api.BINARY.exists():
-            self._send_json(503, {"error": "stable-diffusion.cpp is not installed.", "needs_setup": True})
+            self._send_json(
+                503,
+                {
+                    "error": "stable-diffusion.cpp is not installed.",
+                    "needs_setup": True,
+                },
+            )
             return
         waiting = busy_reason("image")
         if waiting:
@@ -2785,16 +3397,24 @@ class Handler(SimpleHTTPRequestHandler):
             if image_api.resolve_vision() is None:
                 raise image_api.MissingWeights([image_api.VISION_FILE[1]])
         except image_api.MissingWeights as exc:
-            self._send_json(503, {"error": str(exc), "needs_setup": True, "missing": exc.missing})
+            self._send_json(
+                503, {"error": str(exc), "needs_setup": True, "missing": exc.missing}
+            )
             return
         try:
             job = image_api.start_back(front, seed)
         except RuntimeError as exc:
             self._send_json(409, {"error": str(exc)})
             return
-        self._send_json(202, {"job_id": job.id, "settings": job.settings,
-                              "events_url": f"/api/image/{job.id}/events",
-                              "status_url": f"/api/image/{job.id}/status"})
+        self._send_json(
+            202,
+            {
+                "job_id": job.id,
+                "settings": job.settings,
+                "events_url": f"/api/image/{job.id}/events",
+                "status_url": f"/api/image/{job.id}/status",
+            },
+        )
 
     def _create_image_job(self) -> None:
         """Start one text-to-image run. The prompt is the only required field."""
@@ -2812,15 +3432,19 @@ class Handler(SimpleHTTPRequestHandler):
             self._send_json(422, {"error": "a prompt is required"})
             return
         if len(prompt) > image_api.MAX_PROMPT:
-            self._send_json(422, {
-                "error": f"prompt is longer than {image_api.MAX_PROMPT} characters"
-            })
+            self._send_json(
+                422,
+                {"error": f"prompt is longer than {image_api.MAX_PROMPT} characters"},
+            )
             return
         if not image_api.BINARY.exists():
-            self._send_json(503, {
-                "error": "stable-diffusion.cpp is not installed (vendor/sdcpp/sd-cli).",
-                "needs_setup": True,
-            })
+            self._send_json(
+                503,
+                {
+                    "error": "stable-diffusion.cpp is not installed (vendor/sdcpp/sd-cli).",
+                    "needs_setup": True,
+                },
+            )
             return
         waiting = busy_reason("image")
         if waiting:
@@ -2829,20 +3453,24 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             image_api.resolve_weights()
         except image_api.MissingWeights as exc:
-            self._send_json(503, {"error": str(exc), "needs_setup": True,
-                                  "missing": exc.missing})
+            self._send_json(
+                503, {"error": str(exc), "needs_setup": True, "missing": exc.missing}
+            )
             return
         try:
             job = image_api.start(prompt, payload.get("settings") or {})
         except RuntimeError as exc:
             self._send_json(409, {"error": str(exc)})
             return
-        self._send_json(202, {
-            "job_id": job.id,
-            "settings": job.settings,
-            "events_url": f"/api/image/{job.id}/events",
-            "status_url": f"/api/image/{job.id}/status",
-        })
+        self._send_json(
+            202,
+            {
+                "job_id": job.id,
+                "settings": job.settings,
+                "events_url": f"/api/image/{job.id}/events",
+                "status_url": f"/api/image/{job.id}/status",
+            },
+        )
 
     # ------------------------------------------------------------------ skins
     def _small_json(self, limit: int = 8192) -> dict[str, Any]:
@@ -2856,41 +3484,69 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _skin_state(self, skin: skins_api.Skin) -> dict[str, Any]:
         """The skin, plus the job working on it now: its newest picture try or its build."""
-        build = next((b for b in skins_api.BUILDS.jobs.values()
-                      if b.skin_id == skin.id and b.status not in skins_api.TERMINAL), None)
+        build = next(
+            (
+                b
+                for b in skins_api.BUILDS.jobs.values()
+                if b.skin_id == skin.id and b.status not in skins_api.TERMINAL
+            ),
+            None,
+        )
         state = skins_api.STORE.state(skin, build_running=build is not None)
-        tries = [t for side in skins_api.SIDES for t in skin.tries[side] if t.get("job_id")]
+        tries = [
+            t for side in skins_api.SIDES for t in skin.tries[side] if t.get("job_id")
+        ]
         newest = max(tries, key=lambda t: t.get("started", 0), default=None)
         job = image_api.MANAGER.jobs.get(newest["job_id"]) if newest else None
         state["picture_job"] = job.describe() if job else None
         state["build_job"] = build.describe() if build else None
         return state
 
-    def _start_skin_try(self, skin: skins_api.Skin, side: str, instruction: str | None) -> dict[str, Any] | None:
+    def _start_skin_try(
+        self, skin: skins_api.Skin, side: str, instruction: str | None
+    ) -> dict[str, Any] | None:
         """Start one picture try, or answer why not (and return None)."""
         # Checked before the try is recorded: a refused start must not leave a try with no picture.
-        waiting = busy_reason("image") or ("a picture is being made; wait for it to finish"
-                                           if _running(image_api.MANAGER) else None)
+        waiting = busy_reason("image") or (
+            "a picture is being made; wait for it to finish"
+            if _running(image_api.MANAGER)
+            else None
+        )
         if waiting or skins_api.BUILDS.running():
-            self._send_json(409, {"error": waiting or "a skin is being made; wait for it to finish",
-                                  "skin": self._skin_state(skin)})
+            self._send_json(
+                409,
+                {
+                    "error": waiting or "a skin is being made; wait for it to finish",
+                    "skin": self._skin_state(skin),
+                },
+            )
             return None
         if not image_api.BINARY.exists():
-            self._send_json(503, {"error": "The picture engine is not installed.", "needs_setup": True})
+            self._send_json(
+                503,
+                {"error": "The picture engine is not installed.", "needs_setup": True},
+            )
             return None
         try:
             image_api.resolve_weights()
             if image_api.resolve_vision() is None:
                 raise image_api.MissingWeights([image_api.VISION_FILE[1]])
         except image_api.MissingWeights as exc:
-            self._send_json(503, {"error": str(exc), "needs_setup": True, "missing": exc.missing})
+            self._send_json(
+                503, {"error": str(exc), "needs_setup": True, "missing": exc.missing}
+            )
             return None
-        reference, target, prompt, seed = skins_api.STORE.picture_try(skin, side, instruction)
+        reference, target, prompt, seed = skins_api.STORE.picture_try(
+            skin, side, instruction
+        )
         job = image_api.start_edit(reference, target, prompt, seed)
         skin.tries[side][-1].update(job_id=job.id, started=time.time())
         skins_api.STORE.save(skin)
-        return {"job_id": job.id, "status_url": f"/api/image/{job.id}/status",
-                "events_url": f"/api/image/{job.id}/events"}
+        return {
+            "job_id": job.id,
+            "status_url": f"/api/image/{job.id}/status",
+            "events_url": f"/api/image/{job.id}/events",
+        }
 
     def _skins_get(self, rest: list[str]) -> None:
         """GET /api/skins?finished=<path> (a model's finished skins), /api/skins/<id>,
@@ -2902,25 +3558,51 @@ class Handler(SimpleHTTPRequestHandler):
                 if finished:
                     self._send_json(200, {"skins": skins_api.STORE.skins_for(finished)})
                 else:
-                    self._send_json(200, {"skins": [s.to_dict() for s in skins_api.STORE.all()]})
+                    self._send_json(
+                        200, {"skins": [s.to_dict() for s in skins_api.STORE.all()]}
+                    )
                 return
             query = parse_qs(urlparse(self.path).query)
             if rest == ["all"]:
                 # one GLB of a model (`file`: its finished or rigged model) carrying every finished skin
                 file = (query.get("file") or [""])[0]
-                asset = next((a for a in list_assets(OUTPUT_ROOT) if a["id"] == (query.get("asset") or [""])[0]), None)
-                if asset is None or file not in {asset.get("finished"), asset.get("rigged")}:
-                    raise skins_api.SkinError("pick a model and its finished or rigged file")
+                asset = next(
+                    (
+                        a
+                        for a in list_assets(OUTPUT_ROOT)
+                        if a["id"] == (query.get("asset") or [""])[0]
+                    ),
+                    None,
+                )
+                if asset is None or file not in {
+                    asset.get("finished"),
+                    asset.get("rigged"),
+                }:
+                    raise skins_api.SkinError(
+                        "pick a model and its finished or rigged file"
+                    )
                 skins = [skins_api.STORE.get(k["id"]) for k in asset.get("skins", [])]
-                self._send_json(200, {"file": skins_api.all_skins(OUTPUT_ROOT, file, skins)})
+                self._send_json(
+                    200, {"file": skins_api.all_skins(OUTPUT_ROOT, file, skins)}
+                )
                 return
             if len(rest) == 2 and rest[1] == "dressed":
                 skin = skins_api.STORE.get(rest[0])
-                self._send_json(200, {"file": skins_api.dressed(OUTPUT_ROOT, skin, (query.get("file") or [""])[0])})
+                self._send_json(
+                    200,
+                    {
+                        "file": skins_api.dressed(
+                            OUTPUT_ROOT, skin, (query.get("file") or [""])[0]
+                        )
+                    },
+                )
                 return
             if len(rest) == 3 and rest[0] == "build" and rest[2] == "status":
                 job = skins_api.BUILDS.jobs.get(rest[1])
-                self._send_json(200 if job else 404, job.describe() if job else {"error": "no such build"})
+                self._send_json(
+                    200 if job else 404,
+                    job.describe() if job else {"error": "no such build"},
+                )
                 return
             if len(rest) == 1:
                 self._send_json(200, self._skin_state(skins_api.STORE.get(rest[0])))
@@ -2928,7 +3610,7 @@ class Handler(SimpleHTTPRequestHandler):
         except skins_api.SkinError as exc:
             self._send_json(404, {"error": str(exc)})
             return
-        except ValueError as exc:   # a model the skin's paint can't be put on
+        except ValueError as exc:  # a model the skin's paint can't be put on
             self._send_json(422, {"error": str(exc)})
             return
         self.send_error(HTTPStatus.NOT_FOUND)
@@ -2944,13 +3626,24 @@ class Handler(SimpleHTTPRequestHandler):
             return
         try:
             if not rest:
-                asset = next((a for a in list_assets(OUTPUT_ROOT) if a["id"] == str(body.get("asset", ""))), None)
+                asset = next(
+                    (
+                        a
+                        for a in list_assets(OUTPUT_ROOT)
+                        if a["id"] == str(body.get("asset", ""))
+                    ),
+                    None,
+                )
                 if asset is None:
                     raise skins_api.SkinError("no such model in the Library")
-                skin = skins_api.STORE.create(asset, str(body.get("instruction", "")), body.get("name"))
+                skin = skins_api.STORE.create(
+                    asset, str(body.get("instruction", "")), body.get("name")
+                )
                 started = self._start_skin_try(skin, "front", None)
                 if started is not None:
-                    self._send_json(202, {"skin": self._skin_state(skin), "picture_job": started})
+                    self._send_json(
+                        202, {"skin": self._skin_state(skin), "picture_job": started}
+                    )
                 return
             if len(rest) == 3 and rest[0] == "build" and rest[2] == "cancel":
                 ok = skins_api.BUILDS.cancel(rest[1])
@@ -2962,33 +3655,55 @@ class Handler(SimpleHTTPRequestHandler):
             skin = skins_api.STORE.get(rest[0])
             action = rest[1]
             if action == "try":
-                started = self._start_skin_try(skin, str(body.get("side", "front")), body.get("instruction"))
+                started = self._start_skin_try(
+                    skin, str(body.get("side", "front")), body.get("instruction")
+                )
                 if started is not None:
-                    self._send_json(202, {"skin": self._skin_state(skin), "picture_job": started})
+                    self._send_json(
+                        202, {"skin": self._skin_state(skin), "picture_job": started}
+                    )
                 return
             if action == "approve":
                 if skins_api.BUILDS.running():
-                    self._send_json(409, {"error": "a skin is being made; wait for it to finish"})
+                    self._send_json(
+                        409, {"error": "a skin is being made; wait for it to finish"}
+                    )
                     return
                 number = body.get("number")
-                skin = skins_api.STORE.approve(skin, str(body.get("side", "front")),
-                                               int(number) if number is not None else None)
+                skin = skins_api.STORE.approve(
+                    skin,
+                    str(body.get("side", "front")),
+                    int(number) if number is not None else None,
+                )
                 started = None
                 # The back follows the front at once, with the same change asked for.
                 if skin.next_side() == "back" and not skin.tries["back"]:
                     started = self._start_skin_try(skin, "back", None)
                     if started is None:
                         return
-                self._send_json(200, {"skin": self._skin_state(skin), "picture_job": started})
+                self._send_json(
+                    200, {"skin": self._skin_state(skin), "picture_job": started}
+                )
                 return
             if action == "discard":
-                drawing = any(image_api.MANAGER.jobs.get(t.get("job_id")) is not None
-                              and image_api.MANAGER.jobs[t["job_id"]].status in {"queued", "running"}
-                              for side in skins_api.SIDES for t in skin.tries[side])
-                building = any(b.skin_id == skin.id and b.status not in skins_api.TERMINAL
-                               for b in skins_api.BUILDS.jobs.values())
+                drawing = any(
+                    image_api.MANAGER.jobs.get(t.get("job_id")) is not None
+                    and image_api.MANAGER.jobs[t["job_id"]].status
+                    in {"queued", "running"}
+                    for side in skins_api.SIDES
+                    for t in skin.tries[side]
+                )
+                building = any(
+                    b.skin_id == skin.id and b.status not in skins_api.TERMINAL
+                    for b in skins_api.BUILDS.jobs.values()
+                )
                 if drawing or building:
-                    self._send_json(409, {"error": "This skin is being drawn or painted; wait for it to finish."})
+                    self._send_json(
+                        409,
+                        {
+                            "error": "This skin is being drawn or painted; wait for it to finish."
+                        },
+                    )
                     return
                 skins_api.STORE.discard(skin)
                 self._send_json(200, {"discarded": skin.id})
@@ -2999,8 +3714,14 @@ class Handler(SimpleHTTPRequestHandler):
                     self._send_json(409, {"error": waiting})
                     return
                 job = skins_api.BUILDS.start(skin)
-                self._send_json(202, {"job_id": job.id, "skin": skin.to_dict(),
-                                      "status_url": f"/api/skins/build/{job.id}/status"})
+                self._send_json(
+                    202,
+                    {
+                        "job_id": job.id,
+                        "skin": skin.to_dict(),
+                        "status_url": f"/api/skins/build/{job.id}/status",
+                    },
+                )
                 return
         except skins_api.SkinError as exc:
             self._send_json(422, {"error": str(exc)})
@@ -3033,8 +3754,9 @@ class Handler(SimpleHTTPRequestHandler):
                         job.condition.wait(timeout=15)
                     pending = job.events[index:]
                     index = len(job.events)
-                    terminal = (job.status in {"done", "error", "cancelled"}
-                                and not pending)
+                    terminal = (
+                        job.status in {"done", "error", "cancelled"} and not pending
+                    )
                 for event in pending:
                     body = json.dumps(event, separators=(",", ":"))
                     self.wfile.write(f"data: {body}\n\n".encode())
@@ -3051,7 +3773,9 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             length = int(self.headers.get("Content-Length", "0"))
             if length <= 0 or length > 50 * 1024 * 1024:
-                self._send_json(400, {"error": "image upload is missing or larger than 50 MiB"})
+                self._send_json(
+                    400, {"error": "image upload is missing or larger than 50 MiB"}
+                )
                 return
             form = parse_multipart(
                 self.headers.get("Content-Type", ""), self.rfile.read(length)
@@ -3059,10 +3783,17 @@ class Handler(SimpleHTTPRequestHandler):
             image_field = form.get("image")
             filename = str(image_field.get("filename")) if image_field else ""
             suffix = Path(filename).suffix.lower()
-            if not image_field or suffix not in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
-                self._send_json(422, {
-                    "error": "multipart field 'image' must be PNG, JPG, WebP, or BMP"
-                })
+            if not image_field or suffix not in {
+                ".png",
+                ".jpg",
+                ".jpeg",
+                ".webp",
+                ".bmp",
+            }:
+                self._send_json(
+                    422,
+                    {"error": "multipart field 'image' must be PNG, JPG, WebP, or BMP"},
+                )
                 return
             with tempfile.TemporaryDirectory(prefix="i2l-tinyclip-") as directory:
                 image_path = Path(directory) / f"input{suffix}"
@@ -3082,7 +3813,12 @@ class Handler(SimpleHTTPRequestHandler):
         if not self._allowed(mutation=False):
             return
         if self.headers.get(usage_api.CLIENT_HEADER):
-            usage_api.note_request(self._path_parts(), self.headers.get(usage_api.CLIENT_HEADER), "GET", None)
+            usage_api.note_request(
+                self._path_parts(),
+                self.headers.get(usage_api.CLIENT_HEADER),
+                "GET",
+                None,
+            )
         if urlparse(self.path).path in ("", "/", "/viewer", "/viewer/"):
             self.send_response(HTTPStatus.FOUND)  # the front door is the studio
             self.send_header("Location", "/viewer/studio.html")
@@ -3101,19 +3837,34 @@ class Handler(SimpleHTTPRequestHandler):
         if parts == ["api", "recipes"]:
             # what we know about prompting each goal; the CLI and MCP read the same file
             try:
-                self._send_json(200, json.loads((REPO / "image_to_3dlab" / "prompt_recipes.json").read_text(encoding="utf-8")))
+                self._send_json(
+                    200,
+                    json.loads(
+                        (REPO / "image_to_3dlab" / "prompt_recipes.json").read_text(
+                            encoding="utf-8"
+                        )
+                    ),
+                )
             except (OSError, ValueError) as exc:
                 self._send_json(500, {"error": f"prompt recipes unreadable: {exc}"})
             return
         if parts == ["api", "chains"]:
             # the plan running now, else the newest few (so a reopened tab can pick its run back up)
             runner = self._chains()
-            self._send_json(200, {"running": (c.to_dict() if (c := runner.running()) else None),
-                                  "recent": [c.to_dict() for c in runner.recent(5)]})
+            self._send_json(
+                200,
+                {
+                    "running": (c.to_dict() if (c := runner.running()) else None),
+                    "recent": [c.to_dict() for c in runner.recent(5)],
+                },
+            )
             return
         if len(parts) == 3 and parts[:2] == ["api", "chains"]:
             chain = self._chains().chains.get(parts[2])
-            self._send_json(200 if chain else 404, chain.to_dict() if chain else {"error": "no such run"})
+            self._send_json(
+                200 if chain else 404,
+                chain.to_dict() if chain else {"error": "no such run"},
+            )
             return
         if parts == ["api", "thumb"]:
             relative = parse_qs(urlparse(self.path).query).get("path", [""])[0]
@@ -3141,12 +3892,24 @@ class Handler(SimpleHTTPRequestHandler):
             query = parse_qs(urlparse(self.path).query)
             pick = {k: query.get(k, [""])[0] or None for k in ("chain", "step")}
             failure = bug_report_api.find_failure(OUTPUT_ROOT, **pick)
-            self._send_json(200, {
-                "details": bug_report_api.details(OUTPUT_ROOT, include_prompt=query.get("prompt", [""])[0] == "1", **pick),
-                "failure": bool(failure), "has_prompt": bool(failure and failure.get("prompt")),
-            })
+            self._send_json(
+                200,
+                {
+                    "details": bug_report_api.details(
+                        OUTPUT_ROOT,
+                        include_prompt=query.get("prompt", [""])[0] == "1",
+                        **pick,
+                    ),
+                    "failure": bool(failure),
+                    "has_prompt": bool(failure and failure.get("prompt")),
+                },
+            )
             return
-        if len(parts) == 4 and parts[:2] == ["api", "assets"] and parts[3] == "delete-plan":
+        if (
+            len(parts) == 4
+            and parts[:2] == ["api", "assets"]
+            and parts[3] == "delete-plan"
+        ):
             try:
                 self._send_json(200, plan_asset_delete(OUTPUT_ROOT, parts[2]))
             except ValueError as exc:
@@ -3155,7 +3918,9 @@ class Handler(SimpleHTTPRequestHandler):
         if parts == ["api", "assets"]:
             try:
                 self._send_json(200, assets_payload(OUTPUT_ROOT))
-            except Exception as exc:  # a broken run folder must not take the whole Library down
+            except (
+                Exception
+            ) as exc:  # a broken run folder must not take the whole Library down
                 self._send_json(500, {"error": str(exc)})
             return
         if parts == ["api", "update-check"]:
@@ -3165,7 +3930,7 @@ class Handler(SimpleHTTPRequestHandler):
             self._send_json(200, self._notices())
             return
         if parts == ["api", "usage"]:
-            usage_api.send_soon()   # asked once per page load; at most one message a day goes out
+            usage_api.send_soon()  # asked once per page load; at most one message a day goes out
             self._send_json(200, usage_api.status())
             return
         if parts == ["api", "welcome"]:
@@ -3222,18 +3987,28 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_error(HTTPStatus.NOT_FOUND)
             return
         if parts == ["api", "image", "defaults"]:
-            self._send_json(200, {
-                "defaults": image_api.DEFAULTS,
-                "samplers": list(image_api.SAMPLERS),
-                "installed": image_api.is_installed(),
-                "license": {"name": image_api.LICENSE_NAME, "url": image_api.LICENSE_URL,
-                            "attribution": image_api.ATTRIBUTION},
-            })
+            self._send_json(
+                200,
+                {
+                    "defaults": image_api.DEFAULTS,
+                    "samplers": list(image_api.SAMPLERS),
+                    "installed": image_api.is_installed(),
+                    "license": {
+                        "name": image_api.LICENSE_NAME,
+                        "url": image_api.LICENSE_URL,
+                        "attribution": image_api.ATTRIBUTION,
+                    },
+                },
+            )
             return
         if parts == ["api", "backends"]:
             self._send_json(200, backends_payload())
             return
-        if len(parts) == 4 and parts[:2] == ["api", "setup"] and parts[3] in {"events", "status"}:
+        if (
+            len(parts) == 4
+            and parts[:2] == ["api", "setup"]
+            and parts[3] in {"events", "status"}
+        ):
             run = DOWNLOADS.get(parts[2])
             if run is not None:
                 if parts[3] == "events":
@@ -3243,7 +4018,11 @@ class Handler(SimpleHTTPRequestHandler):
                 return
         # /api/setup/run/<id>/events: five parts, as _start_setup and the Blender
         # install hand it out.
-        if len(parts) == 5 and parts[:3] == ["api", "setup", "run"] and parts[4] == "events":
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "setup", "run"]
+            and parts[4] == "events"
+        ):
             run = SETUP_RUNS.get(parts[3]) if _safe_id(parts[3]) else None
             if run is None:
                 self.send_error(HTTPStatus.NOT_FOUND)
@@ -3280,9 +4059,14 @@ class Handler(SimpleHTTPRequestHandler):
                 return
         if parts == ["api", "animate", "models"]:
             try:
-                self._send_json(200, {"models": animate_models(OUTPUT_ROOT),
-                                      "presets": animate_presets(),
-                                      "installed": autorig_installed()})
+                self._send_json(
+                    200,
+                    {
+                        "models": animate_models(OUTPUT_ROOT),
+                        "presets": animate_presets(),
+                        "installed": autorig_installed(),
+                    },
+                )
             except Exception as exc:
                 self._send_json(500, {"error": str(exc)})
             return
@@ -3340,7 +4124,9 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             length = int(self.headers.get("Content-Length", "0"))
             if length <= 0 or length > 50 * 1024 * 1024:
-                self._send_json(400, {"error": "image upload is missing or larger than 50 MiB"})
+                self._send_json(
+                    400, {"error": "image upload is missing or larger than 50 MiB"}
+                )
                 return
             body = self.rfile.read(length)
             form = parse_multipart(self.headers.get("Content-Type", ""), body)
@@ -3391,17 +4177,28 @@ class Handler(SimpleHTTPRequestHandler):
                 # setting name printed as just `'max_num_view'`, with nothing on the server's
                 # terminal: the run looked like it had simply stopped. Name the exception and
                 # the route, and say where to look.
-                print(f"[generate] {backend_id} validate_settings raised "
-                      f"{type(exc).__name__}: {exc}", flush=True)
-                self._send_json(500, {"error": (
-                    f"{spec.label} could not read the settings for this run "
-                    f"({type(exc).__name__}: {exc}). This is a bug in the route's settings "
-                    f"check, not in your picture. The server's terminal has the traceback.")})
+                print(
+                    f"[generate] {backend_id} validate_settings raised "
+                    f"{type(exc).__name__}: {exc}",
+                    flush=True,
+                )
+                self._send_json(
+                    500,
+                    {
+                        "error": (
+                            f"{spec.label} could not read the settings for this run "
+                            f"({type(exc).__name__}: {exc}). This is a bug in the route's settings "
+                            f"check, not in your picture. The server's terminal has the traceback."
+                        )
+                    },
+                )
                 return
             back_field = form.get("back")
             if back_field is not None and back_field.get("filename"):
                 if backend_id != "pixal3d":
-                    self._send_json(422, {"error": "a back picture works with Pixal3D only"})
+                    self._send_json(
+                        422, {"error": "a back picture works with Pixal3D only"}
+                    )
                     return
                 ready, hint = pixal3d_front_back_ready()
                 if not ready:
@@ -3409,14 +4206,18 @@ class Handler(SimpleHTTPRequestHandler):
                     return
                 back_suffix = Path(str(back_field["filename"])).suffix.lower()
                 if back_suffix not in {".png", ".jpg", ".jpeg", ".webp"}:
-                    self._send_json(422, {"error": "unsupported back picture; use PNG, JPG or WebP"})
+                    self._send_json(
+                        422, {"error": "unsupported back picture; use PNG, JPG or WebP"}
+                    )
                     return
                 settings["back_name"] = f"back{back_suffix}"
             else:
                 back_field = None
             suffix = Path(str(image_field["filename"])).suffix.lower()
             if suffix not in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
-                self._send_json(422, {"error": "unsupported image type; use PNG, JPG, WebP, or BMP"})
+                self._send_json(
+                    422, {"error": "unsupported image type; use PNG, JPG, WebP, or BMP"}
+                )
                 return
             image_stem = _slugify(Path(str(image_field["filename"])).stem)
             # Reserve a provisional directory only after validation, then persist the upload.
@@ -3442,17 +4243,27 @@ class Handler(SimpleHTTPRequestHandler):
                     for child in provisional.iterdir():
                         child.unlink()
                     provisional.rmdir()
-                    self._send_json(422, {
-                        "error": "This picture needs its background removed and the remover "
-                                 f"failed ({exc}). Upload a PNG with a transparent background."
-                    })
+                    self._send_json(
+                        422,
+                        {
+                            "error": "This picture needs its background removed and the remover "
+                            f"failed ({exc}). Upload a PNG with a transparent background."
+                        },
+                    )
                     return
             # JobManager builds the real, human-readable job directory. Move the upload into it
             # so the id and artifact URLs are stable, without ever accepting a client-provided path.
             provisional_image = image_path
             try:
-                job = JOBS.create(provisional_image, settings, backend_id, image_stem,
-                                  output_name, output_base, debug)
+                job = JOBS.create(
+                    provisional_image,
+                    settings,
+                    backend_id,
+                    image_stem,
+                    output_name,
+                    output_base,
+                    debug,
+                )
             except RuntimeError as exc:
                 for child in provisional.iterdir():
                     child.unlink()
@@ -3460,7 +4271,9 @@ class Handler(SimpleHTTPRequestHandler):
                 self._send_json(409, {"error": str(exc)})
                 return
             final_image = job.directory / image_path.name
-            for child in provisional.iterdir():  # the upload, plus the original if we cut it out
+            for child in (
+                provisional.iterdir()
+            ):  # the upload, plus the original if we cut it out
                 child.replace(job.directory / child.name)
             provisional.rmdir()
             job.image_path = final_image
@@ -3468,9 +4281,15 @@ class Handler(SimpleHTTPRequestHandler):
             if warning:
                 job.append_log(warning)
             threading.Thread(target=_run_job, args=(job,), daemon=True).start()
-            self._send_json(202, {"job_id": job.id, "events_url": f"/api/generate/{job.id}/events",
-                                  "output_dir": str(job.directory.relative_to(REPO)),
-                                  "warning": warning})
+            self._send_json(
+                202,
+                {
+                    "job_id": job.id,
+                    "events_url": f"/api/generate/{job.id}/events",
+                    "output_dir": str(job.directory.relative_to(REPO)),
+                    "warning": warning,
+                },
+            )
         except Exception as exc:
             self._send_json(500, {"error": str(exc)})
 
@@ -3482,7 +4301,9 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             length = int(self.headers.get("Content-Length", "0"))
             if length <= 0 or length > 768 * 1024 * 1024:
-                self._send_json(400, {"error": "rebind bundle is missing or larger than 768 MiB"})
+                self._send_json(
+                    400, {"error": "rebind bundle is missing or larger than 768 MiB"}
+                )
                 return
             form = parse_multipart(
                 self.headers.get("Content-Type", ""), self.rfile.read(length)
@@ -3492,26 +4313,34 @@ class Handler(SimpleHTTPRequestHandler):
                 value = form.get(field)
                 filename = str(value.get("filename")) if value else ""
                 if not value or not filename.lower().endswith(suffix):
-                    self._send_json(422, {
-                        "error": f"multipart field {field!r} must be a {suffix} file"
-                    })
+                    self._send_json(
+                        422,
+                        {"error": f"multipart field {field!r} must be a {suffix} file"},
+                    )
                     return
             try:
                 job = RIG_JOBS.create(
-                    str(form["asset"]["filename"]), form["asset"]["data"],
-                    form["scene"]["data"], form["sidecar"]["data"],
+                    str(form["asset"]["filename"]),
+                    form["asset"]["data"],
+                    form["scene"]["data"],
+                    form["sidecar"]["data"],
                 )
             except (ValueError, RuntimeError) as exc:
-                self._send_json(422 if isinstance(exc, ValueError) else 409, {"error": str(exc)})
+                self._send_json(
+                    422 if isinstance(exc, ValueError) else 409, {"error": str(exc)}
+                )
                 return
             threading.Thread(
                 target=run_rig_job, args=(job,), daemon=True, name=f"rig-{job.id[:8]}"
             ).start()
-            self._send_json(202, {
-                "job_id": job.id,
-                "events_url": f"/api/rig/rebind/{job.id}/events",
-                "status_url": f"/api/rig/rebind/{job.id}/status",
-            })
+            self._send_json(
+                202,
+                {
+                    "job_id": job.id,
+                    "events_url": f"/api/rig/rebind/{job.id}/events",
+                    "status_url": f"/api/rig/rebind/{job.id}/status",
+                },
+            )
         except Exception as exc:
             self._send_json(500, {"error": str(exc)})
 
@@ -3526,11 +4355,21 @@ class Handler(SimpleHTTPRequestHandler):
         return None
 
     def _start_animate(self, job) -> None:
-        threading.Thread(target=run_animate_job, args=(job,), daemon=True,
-                         name=f"animate-{job.id[:8]}").start()
-        self._send_json(202, {"job_id": job.id, "kind": job.kind,
-                              "events_url": f"/api/animate/{job.id}/events",
-                              "status_url": f"/api/animate/{job.id}/status"})
+        threading.Thread(
+            target=run_animate_job,
+            args=(job,),
+            daemon=True,
+            name=f"animate-{job.id[:8]}",
+        ).start()
+        self._send_json(
+            202,
+            {
+                "job_id": job.id,
+                "kind": job.kind,
+                "events_url": f"/api/animate/{job.id}/events",
+                "status_url": f"/api/animate/{job.id}/status",
+            },
+        )
 
     def _create_animate_rig(self) -> None:
         """Rig a model: a GLB uploaded in field 'asset', or one the lab made, named in
@@ -3542,13 +4381,22 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             length = int(self.headers.get("Content-Length", "0"))
             if length <= 0 or length > 512 * 1024 * 1024:
-                self._send_json(400, {"error": "request is missing or larger than 512 MiB"})
+                self._send_json(
+                    400, {"error": "request is missing or larger than 512 MiB"}
+                )
                 return
-            form = parse_multipart(self.headers.get("Content-Type", ""), self.rfile.read(length))
+            form = parse_multipart(
+                self.headers.get("Content-Type", ""), self.rfile.read(length)
+            )
             asset = form.get("asset")
             chosen = str((form.get("model") or {}).get("value", "")).strip()
             if asset and str(asset.get("filename", "")).lower().endswith(".glb"):
-                name, data, record, origin = str(asset["filename"]), asset["data"], None, "uploaded"
+                name, data, record, origin = (
+                    str(asset["filename"]),
+                    asset["data"],
+                    None,
+                    "uploaded",
+                )
             elif chosen:
                 try:
                     path = resolve_animate_model(chosen, OUTPUT_ROOT)
@@ -3558,7 +4406,9 @@ class Handler(SimpleHTTPRequestHandler):
                 name, data = path.name, path.read_bytes()
                 record, origin = animate_source_record(path), "generated"
             else:
-                self._send_json(422, {"error": "send a .glb in 'asset' or a listed 'model'"})
+                self._send_json(
+                    422, {"error": "send a .glb in 'asset' or a listed 'model'"}
+                )
                 return
             try:
                 job = ANIMATE_JOBS.create_rig(name, data, record, origin)
@@ -3578,7 +4428,9 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             length = int(self.headers.get("Content-Length", "0"))
             try:
-                body = json.loads(self.rfile.read(length)) if 0 < length <= 4096 else None
+                body = (
+                    json.loads(self.rfile.read(length)) if 0 < length <= 4096 else None
+                )
             except json.JSONDecodeError:
                 body = None
             if not isinstance(body, dict):
@@ -3586,8 +4438,12 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             try:
                 rigged = resolve_animate_model(str(body.get("model", "")), OUTPUT_ROOT)
-                job = ANIMATE_JOBS.create_animation(rigged, str(body.get("preset", "")),
-                                                    body.get("arm_spread", 0), body.get("speed"))
+                job = ANIMATE_JOBS.create_animation(
+                    rigged,
+                    str(body.get("preset", "")),
+                    body.get("arm_spread", 0),
+                    body.get("speed"),
+                )
             except ValueError as exc:
                 self._send_json(422, {"error": str(exc)})
                 return
@@ -3607,21 +4463,38 @@ class Handler(SimpleHTTPRequestHandler):
         """
         try:
             active = JOBS.get(JOBS.active) if JOBS.active else None
-            if active is not None and active.status in {"queued", "running", "cancelling"}:
-                self._send_json(409, {"error": "a generation is running; wait for it to finish"})
+            if active is not None and active.status in {
+                "queued",
+                "running",
+                "cancelling",
+            }:
+                self._send_json(
+                    409, {"error": "a generation is running; wait for it to finish"}
+                )
                 return
             if SETUP_ACTIVE is not None:
-                self._send_json(409, {"error": "setup is running; wait for it to finish"})
+                self._send_json(
+                    409, {"error": "setup is running; wait for it to finish"}
+                )
                 return
             if _props_baking():
-                self._send_json(409, {"error": "a prop sheet is baking; wait for it to finish"})
+                self._send_json(
+                    409, {"error": "a prop sheet is baking; wait for it to finish"}
+                )
                 return
             if _animate_running():
-                self._send_json(409, {"error": "an auto-rig or animation is running; wait for it to finish"})
+                self._send_json(
+                    409,
+                    {
+                        "error": "an auto-rig or animation is running; wait for it to finish"
+                    },
+                )
                 return
             length = int(self.headers.get("Content-Length", "0"))
             if length <= 0 or length > 768 * 1024 * 1024:
-                self._send_json(400, {"error": "finish bundle is missing or larger than 768 MiB"})
+                self._send_json(
+                    400, {"error": "finish bundle is missing or larger than 768 MiB"}
+                )
                 return
             form = parse_multipart(
                 self.headers.get("Content-Type", ""), self.rfile.read(length)
@@ -3629,16 +4502,26 @@ class Handler(SimpleHTTPRequestHandler):
             asset = form.get("asset")
             asset_name = str(asset.get("filename")) if asset else ""
             if not asset or not asset_name.lower().endswith(".glb"):
-                self._send_json(422, {"error": "multipart field 'asset' must be a .glb file"})
+                self._send_json(
+                    422, {"error": "multipart field 'asset' must be a .glb file"}
+                )
                 return
             # The picture is optional: without one, Finish cleans up and re-bakes the mesh
             # alone (no Pixel Match), so a model uploaded with no picture can still finish.
             image = form.get("image")
             image_name = str(image.get("filename")) if image else ""
-            if image and Path(image_name).suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
-                self._send_json(422, {
-                    "error": "multipart field 'image' must be the source art (PNG/JPG/WebP)"
-                })
+            if image and Path(image_name).suffix.lower() not in {
+                ".png",
+                ".jpg",
+                ".jpeg",
+                ".webp",
+            }:
+                self._send_json(
+                    422,
+                    {
+                        "error": "multipart field 'image' must be the source art (PNG/JPG/WebP)"
+                    },
+                )
                 return
             try:
                 raw_settings = json.loads(form.get("settings", {}).get("value", "{}"))
@@ -3655,7 +4538,10 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             try:
                 job = FINISH_JOBS.create(
-                    asset_name, asset["data"], image["data"] if image else None, raw_settings,
+                    asset_name,
+                    asset["data"],
+                    image["data"] if image else None,
+                    raw_settings,
                 )
             except ValueError as exc:
                 self._send_json(422, {"error": str(exc)})
@@ -3664,14 +4550,20 @@ class Handler(SimpleHTTPRequestHandler):
                 self._send_json(409, {"error": str(exc)})
                 return
             threading.Thread(
-                target=run_finish_job, args=(job,), daemon=True, name=f"finish-{job.id[:8]}"
+                target=run_finish_job,
+                args=(job,),
+                daemon=True,
+                name=f"finish-{job.id[:8]}",
             ).start()
-            self._send_json(202, {
-                "job_id": job.id,
-                "settings": job.settings,
-                "events_url": f"/api/finish/{job.id}/events",
-                "status_url": f"/api/finish/{job.id}/status",
-            })
+            self._send_json(
+                202,
+                {
+                    "job_id": job.id,
+                    "settings": job.settings,
+                    "events_url": f"/api/finish/{job.id}/events",
+                    "status_url": f"/api/finish/{job.id}/status",
+                },
+            )
         except Exception as exc:
             self._send_json(500, {"error": str(exc)})
 
@@ -3704,7 +4596,9 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Content-Disposition", f'{disposition}; filename="{path.name}"')
+        self.send_header(
+            "Content-Disposition", f'{disposition}; filename="{path.name}"'
+        )
         self.end_headers()
         self.wfile.write(data)
 
@@ -3730,13 +4624,16 @@ class Handler(SimpleHTTPRequestHandler):
         threading.Thread(
             target=run_finish_job, args=(job,), daemon=True, name=f"finish-{job.id[:8]}"
         ).start()
-        self._send_json(202, {
-            "job_id": job.id,
-            "directory": job.directory.name,
-            "settings": job.settings,
-            "events_url": f"/api/finish/{job.id}/events",
-            "status_url": f"/api/finish/{job.id}/status",
-        })
+        self._send_json(
+            202,
+            {
+                "job_id": job.id,
+                "directory": job.directory.name,
+                "settings": job.settings,
+                "events_url": f"/api/finish/{job.id}/events",
+                "status_url": f"/api/finish/{job.id}/status",
+            },
+        )
 
     def _cancel_finish_job(self, job_id: str) -> None:
         job = FINISH_JOBS.get(job_id)
@@ -3763,13 +4660,16 @@ class Handler(SimpleHTTPRequestHandler):
         threading.Thread(
             target=run_props_job, args=(job,), daemon=True, name=f"props-{job.id[:8]}"
         ).start()
-        self._send_json(202, {
-            "job_id": job.id,
-            "directory": job.directory.name,
-            "settings": job.settings,
-            "events_url": f"/api/props/{job.id}/events",
-            "status_url": f"/api/props/{job.id}/status",
-        })
+        self._send_json(
+            202,
+            {
+                "job_id": job.id,
+                "directory": job.directory.name,
+                "settings": job.settings,
+                "events_url": f"/api/props/{job.id}/events",
+                "status_url": f"/api/props/{job.id}/status",
+            },
+        )
 
     def _create_props_job(self) -> None:
         """Split a prop-sheet GLB into props and bake each one's LODs.
@@ -3784,7 +4684,9 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             length = int(self.headers.get("Content-Length", "0"))
             if length <= 0 or length > 768 * 1024 * 1024:
-                self._send_json(400, {"error": "prop sheet is missing or larger than 768 MiB"})
+                self._send_json(
+                    400, {"error": "prop sheet is missing or larger than 768 MiB"}
+                )
                 return
             form = parse_multipart(
                 self.headers.get("Content-Type", ""), self.rfile.read(length)
@@ -3803,9 +4705,12 @@ class Handler(SimpleHTTPRequestHandler):
                 asset_name, data = path.name, path.read_bytes()
                 source_record, from_generated = source_record_for(path), True
             else:
-                self._send_json(422, {
-                    "error": "send a .glb as 'asset', or a generated model as 'generated'"
-                })
+                self._send_json(
+                    422,
+                    {
+                        "error": "send a .glb as 'asset', or a generated model as 'generated'"
+                    },
+                )
                 return
             try:
                 raw_settings = json.loads(form.get("settings", {}).get("value", "{}"))
@@ -3816,8 +4721,13 @@ class Handler(SimpleHTTPRequestHandler):
                 self._send_json(422, {"error": "settings must be a JSON object"})
                 return
             try:
-                job = PROPS_JOBS.create(asset_name, data, raw_settings, source_record,
-                                        generated=from_generated)
+                job = PROPS_JOBS.create(
+                    asset_name,
+                    data,
+                    raw_settings,
+                    source_record,
+                    generated=from_generated,
+                )
             except ValueError as exc:
                 self._send_json(422, {"error": str(exc)})
                 return
@@ -3846,7 +4756,9 @@ class Handler(SimpleHTTPRequestHandler):
             self._send_json(400, {"error": f"could not read the request: {exc}"})
             return
         try:
-            job = PROPS_JOBS.turn(name, str(payload.get("prop", "")), payload.get("degrees", 90))
+            job = PROPS_JOBS.turn(
+                name, str(payload.get("prop", "")), payload.get("degrees", 90)
+            )
         except ValueError as exc:
             self._send_json(422, {"error": str(exc)})
             return
@@ -3906,7 +4818,9 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Content-Disposition", f'{disposition}; filename="{path.name}"')
+        self.send_header(
+            "Content-Disposition", f'{disposition}; filename="{path.name}"'
+        )
         self.end_headers()
         self.wfile.write(data)
 
@@ -3944,7 +4858,9 @@ class Handler(SimpleHTTPRequestHandler):
                         run.condition.wait(timeout=15)
                     pending = run.events[index:]
                     index = len(run.events)
-                    terminal = run.status in {"done", "error", "cancelled"} and not pending
+                    terminal = (
+                        run.status in {"done", "error", "cancelled"} and not pending
+                    )
                 for event in pending:
                     payload = json.dumps(event, separators=(",", ":"))
                     self.wfile.write(f"data: {payload}\n\n".encode())
@@ -3964,7 +4880,9 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             if not relative:
                 asset_id = query.get("asset", [""])[0]
-                asset = next((a for a in list_assets(OUTPUT_ROOT) if a["id"] == asset_id), None)
+                asset = next(
+                    (a for a in list_assets(OUTPUT_ROOT) if a["id"] == asset_id), None
+                )
                 if asset is None:
                     raise ValueError(f"no such asset: {asset_id}")
                 found = preview_api.stage_file(asset, query.get("stage", ["latest"])[0])
@@ -3983,7 +4901,10 @@ class Handler(SimpleHTTPRequestHandler):
         except (ValueError, json.JSONDecodeError) as exc:
             self._send_json(422, {"error": str(exc)})
             return
-        message, details = str(body.get("message", "")).strip(), str(body.get("details", ""))
+        message, details = (
+            str(body.get("message", "")).strip(),
+            str(body.get("details", "")),
+        )
         if not message:
             self._send_json(422, {"error": "Say what went wrong first."})
             return
@@ -3991,7 +4912,10 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _usage_choice(self) -> None:
         """The About page's usage box, `{share: true|false}`, or the first-start notice's `{noticed: true}`."""
-        if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
+        if (
+            self.headers.get("Content-Type", "").split(";")[0].strip()
+            != "application/json"
+        ):
             # A web page elsewhere can send a plain-text form here, but not JSON without asking first
             self._send_json(415, {"error": "send JSON"})
             return
@@ -4004,9 +4928,17 @@ class Handler(SimpleHTTPRequestHandler):
         if body.get("noticed") is True:
             self._send_json(200, usage_api.set_noticed())
             return
-        if usage_api.source_of(self.headers.get(usage_api.CLIENT_HEADER)) == usage_api.AGENT:
+        if (
+            usage_api.source_of(self.headers.get(usage_api.CLIENT_HEADER))
+            == usage_api.AGENT
+        ):
             # An agent may pass on the person's yes (above), never flip the box itself
-            self._send_json(403, {"error": "Only the user can turn usage counts on or off, on the About page."})
+            self._send_json(
+                403,
+                {
+                    "error": "Only the user can turn usage counts on or off, on the About page."
+                },
+            )
             return
         if not isinstance(body.get("share"), bool):
             self._send_json(422, {"error": "share must be true or false"})
@@ -4016,8 +4948,13 @@ class Handler(SimpleHTTPRequestHandler):
     def _reveal(self) -> None:
         """Show one output file in Finder / Explorer / the file manager, on this machine."""
         if not model_info_api.is_local(self.client_address[0]):
-            self._send_json(403, {"error": "Show in folder only works on the computer running the studio. "
-                                           "Use Download instead."})
+            self._send_json(
+                403,
+                {
+                    "error": "Show in folder only works on the computer running the studio. "
+                    "Use Download instead."
+                },
+            )
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -4041,10 +4978,15 @@ class Handler(SimpleHTTPRequestHandler):
             self._send_json(404, {"error": f"no such asset: {asset_id}"})
             return
         try:
-            path, shown = preview_api.preview(OUTPUT_ROOT, asset, query.get("stage", ["latest"])[0],
-                                              query.get("look", ["paint"])[0], blender=find_blender(),
-                                              move=query.get("move", [""])[0] or None,
-                                              skin=query.get("skin", [""])[0] or None)
+            path, shown = preview_api.preview(
+                OUTPUT_ROOT,
+                asset,
+                query.get("stage", ["latest"])[0],
+                query.get("look", ["paint"])[0],
+                blender=find_blender(),
+                move=query.get("move", [""])[0] or None,
+                skin=query.get("skin", [""])[0] or None,
+            )
             data = path.read_bytes()
         except ValueError as exc:
             self._send_json(422, {"error": str(exc)})
@@ -4083,11 +5025,14 @@ class Handler(SimpleHTTPRequestHandler):
         except RuntimeError as exc:
             self._send_json(409, {"error": str(exc)})
             return
-        self._send_json(202, {
-            "backend": backend_id,
-            "events_url": f"/api/setup/{backend_id}/events",
-            "status_url": f"/api/setup/{backend_id}/status",
-        })
+        self._send_json(
+            202,
+            {
+                "backend": backend_id,
+                "events_url": f"/api/setup/{backend_id}/events",
+                "status_url": f"/api/setup/{backend_id}/status",
+            },
+        )
 
     def _start_blender_install(self) -> None:
         global SETUP_ACTIVE
@@ -4097,15 +5042,21 @@ class Handler(SimpleHTTPRequestHandler):
                 finish_capabilities(),
                 generating=active is not None
                 and active.status in {"queued", "running", "cancelling"},
-                setting_up=SETUP_ACTIVE is not None or download_active() is not None)
+                setting_up=SETUP_ACTIVE is not None or download_active() is not None,
+            )
             if refusal:
                 self._send_json(refusal[0], {"error": refusal[1]})
                 return
             setup_id = uuid.uuid4().hex
             SETUP_ACTIVE = setup_id
             SETUP_RUNS[setup_id] = _start_setup_run(setup_id, blender_install_command())
-        self._send_json(202, {"setup_run_id": setup_id,
-                              "events_url": f"/api/setup/run/{setup_id}/events"})
+        self._send_json(
+            202,
+            {
+                "setup_run_id": setup_id,
+                "events_url": f"/api/setup/run/{setup_id}/events",
+            },
+        )
 
     def _start_gltfpack_install(self) -> None:
         global SETUP_ACTIVE
@@ -4115,28 +5066,47 @@ class Handler(SimpleHTTPRequestHandler):
                 props_tools_payload(),
                 generating=active is not None
                 and active.status in {"queued", "running", "cancelling"},
-                setting_up=SETUP_ACTIVE is not None or download_active() is not None)
+                setting_up=SETUP_ACTIVE is not None or download_active() is not None,
+            )
             if refusal:
                 self._send_json(refusal[0], {"error": refusal[1]})
                 return
             setup_id = uuid.uuid4().hex
             SETUP_ACTIVE = setup_id
-            SETUP_RUNS[setup_id] = _start_setup_run(setup_id, gltfpack_install_command())
-        self._send_json(202, {"setup_run_id": setup_id,
-                              "events_url": f"/api/setup/run/{setup_id}/events"})
+            SETUP_RUNS[setup_id] = _start_setup_run(
+                setup_id, gltfpack_install_command()
+            )
+        self._send_json(
+            202,
+            {
+                "setup_run_id": setup_id,
+                "events_url": f"/api/setup/run/{setup_id}/events",
+            },
+        )
 
     def _start_setup(self) -> None:
         global SETUP_ACTIVE
         with SETUP_LOCK:
             active = JOBS.get(JOBS.active)
-            if active is not None and active.status in {"queued", "running", "cancelling"}:
-                self._send_json(409, {"error": "a generation is running; wait for it to finish"})
+            if active is not None and active.status in {
+                "queued",
+                "running",
+                "cancelling",
+            }:
+                self._send_json(
+                    409, {"error": "a generation is running; wait for it to finish"}
+                )
                 return
             if SETUP_ACTIVE is not None:
                 self._send_json(409, {"error": "setup is already running"})
                 return
             if clean_port_build_present():
-                self._send_json(409, {"error": "the clean-port build is already installed — nothing to set up"})
+                self._send_json(
+                    409,
+                    {
+                        "error": "the clean-port build is already installed — nothing to set up"
+                    },
+                )
                 return
             ok, reason = setup_available()
             if not ok:
@@ -4145,10 +5115,13 @@ class Handler(SimpleHTTPRequestHandler):
             setup_id = uuid.uuid4().hex
             SETUP_ACTIVE = setup_id
             SETUP_RUNS[setup_id] = _start_setup_run(setup_id)
-        self._send_json(202, {
-            "setup_run_id": setup_id,
-            "events_url": f"/api/setup/run/{setup_id}/events",
-        })
+        self._send_json(
+            202,
+            {
+                "setup_run_id": setup_id,
+                "events_url": f"/api/setup/run/{setup_id}/events",
+            },
+        )
 
     def _status(self, job_id: str) -> None:
         job = self._find_job(job_id)
@@ -4174,7 +5147,9 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_error(HTTPStatus.NOT_FOUND)
             return
         data = path.read_bytes()
-        content_type = "model/gltf-binary" if action == "result.glb" else "application/json"
+        content_type = (
+            "model/gltf-binary" if action == "result.glb" else "application/json"
+        )
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))

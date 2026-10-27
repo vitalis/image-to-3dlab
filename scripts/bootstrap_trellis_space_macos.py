@@ -45,8 +45,12 @@ ELSEWHERE = {
 MIN_MACOS = host.METAL4_MACOS
 
 
-def wrong_machine(build_target: str | None = None, card: str | None = None,
-                   family: str | None = None, macos: int | None = None) -> str | None:
+def wrong_machine(
+    build_target: str | None = None,
+    card: str | None = None,
+    family: str | None = None,
+    macos: int | None = None,
+) -> str | None:
     """Why this script cannot run here, or None when it can.
 
     Everything below `install()` builds Metal operators through `xcrun`, which exists only
@@ -58,14 +62,18 @@ def wrong_machine(build_target: str | None = None, card: str | None = None,
     if target == "macos-arm64":
         version = host.macos_major() if macos is None else macos
         if version is not None and version < MIN_MACOS:
-            return (f"TRELLIS.2 on a Mac needs macOS {MIN_MACOS} or newer; this Mac has macOS "
-                    f"{version}. Its GPU code is built for Metal 4, which older macOS cannot "
-                    f"load. Update macOS, or use Pixal3D, which runs here. Nothing downloaded.")
+            return (
+                f"TRELLIS.2 on a Mac needs macOS {MIN_MACOS} or newer; this Mac has macOS "
+                f"{version}. Its GPU code is built for Metal 4, which older macOS cannot "
+                f"load. Update macOS, or use Pixal3D, which runs here. Nothing downloaded."
+            )
         return None
     card = host.host_platform() if card is None else card
     family = host.os_family() if family is None else family
-    reason = ("This is the Apple Silicon port: it builds Metal operators with xcrun, which "
-              "exists only on macOS.")
+    reason = (
+        "This is the Apple Silicon port: it builds Metal operators with xcrun, which "
+        "exists only on macOS."
+    )
     script = ELSEWHERE.get(card)
     if script:
         return f"{reason} On this {'AMD' if card == host.AMD else 'NVIDIA'} card use:\n    python {script}"
@@ -79,7 +87,9 @@ def run(*args: str | Path, cwd: Path | None = None, env: dict | None = None) -> 
 
 
 def output(*args: str | Path, cwd: Path | None = None) -> str:
-    return subprocess.check_output([str(arg) for arg in args], cwd=cwd, text=True).strip()
+    return subprocess.check_output(
+        [str(arg) for arg in args], cwd=cwd, text=True
+    ).strip()
 
 
 def clone_at(url: str, commit: str, target: Path) -> None:
@@ -167,7 +177,51 @@ def bootstrap(root: Path, *, skip_install: bool, python: str) -> None:
         install(root, python)
 
 
-def main() -> int:
+def weight_announcement() -> str:
+    """Backend, route, and size. The numbers come from the CUDA weight list."""
+    scripts = Path(__file__).resolve().parent
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    import bootstrap_trellis_cuda as cuda
+    from image_to_3dlab import matte
+
+    return "\n".join(
+        [
+            "backend: TRELLIS.2",
+            "route:   Apple Silicon (Mac)",
+            f"weights: {cuda.total_gb():.1f} GB from Hugging Face,",
+            f"         plus BiRefNet-lite ({matte.LITE_BYTES / 1e6:.0f} MB).",
+        ]
+    )
+
+
+def fetch_weights(yes: bool) -> int:
+    """Download the Mac route's weights. Nothing moves until ``yes`` is true."""
+    print(weight_announcement(), flush=True)
+    if not yes:
+        if not sys.stdin or not sys.stdin.isatty():
+            print("Refusing to download without --yes when there is nobody to ask.")
+            print("Nothing downloaded.")
+            return 1
+        if input("Continue? [y/N] ").strip().lower() not in {"y", "yes"}:
+            print("Nothing downloaded.")
+            return 1
+    scripts = Path(__file__).resolve().parent
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    import bootstrap_trellis_cuda as cuda
+
+    try:
+        cuda.check_access()
+        cuda.install_weights()
+        cuda.install_background_remover()
+    except cuda.GatedAccess as exc:
+        print(cuda.gated_help(exc.args[0]))
+        return 1
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
     problem = wrong_machine()
     if problem:
         print(problem)
@@ -177,7 +231,19 @@ def main() -> int:
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
     parser.add_argument("--python", default="python3.11")
     parser.add_argument("--skip-install", action="store_true")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--weights-only",
+        action="store_true",
+        help="Fetch the weights only. The port must already be built.",
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip the confirmation. For the viewer, after it has asked.",
+    )
+    args = parser.parse_args(argv)
+    if args.weights_only:
+        return fetch_weights(args.yes)
     bootstrap(args.root.resolve(), skip_install=args.skip_install, python=args.python)
     return 0
 

@@ -242,6 +242,15 @@ def test_missing_anchor_raises():
         patch.state("def main():\n    pass\n")
 
 
+def test_check_on_an_unpatched_file_fails(tmp_path):
+    path = tmp_path / "generate.py"
+    path.write_text(GENERATE)
+    assert patch.state(GENERATE) == "absent"
+    assert patch.main(["--check", "--path", str(path)]) == 1
+    path.write_text(patch.apply(GENERATE))
+    assert patch.main(["--check", "--path", str(path)]) == 0
+
+
 def test_check_without_the_quality_patch_does_not_traceback(
     tmp_path, monkeypatch, capsys
 ):
