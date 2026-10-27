@@ -34,6 +34,10 @@ from __future__ import annotations
 
 import math
 import sys
+from pathlib import Path
+
+# Blender runs this file by path and does not search the scripts folder.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
 def quadriflow_reduced(before: int, after: int, target_faces: int) -> bool:
@@ -176,7 +180,11 @@ def overlap_selection(bm) -> tuple[int, int]:
     picked only there is selected on the mesh too, since the next operators work on that. A
     fallback: this was not run on 5.0."""
     uv_selection = bool(getattr(bm, "uv_select_sync_valid", False))
-    picked = [face for face in bm.faces if face.select or (uv_selection and getattr(face, "uv_select", False))]
+    picked = [
+        face
+        for face in bm.faces
+        if face.select or (uv_selection and getattr(face, "uv_select", False))
+    ]
     added = 0
     for face in picked:
         if not face.select:
@@ -185,7 +193,9 @@ def overlap_selection(bm) -> tuple[int, int]:
     return len(picked), added
 
 
-def unwrap_islands(bpy, mesh, angle_limit: float, rounds: int = UV_ROUNDS, margin: float = 0.002) -> int:
+def unwrap_islands(
+    bpy, mesh, angle_limit: float, rounds: int = UV_ROUNDS, margin: float = 0.002
+) -> int:
     """UVs with no island folded onto itself or another; returns the faces still overlapping.
 
     Smart UV Project at a wide angle gives large islands but projects each onto one plane, so
@@ -202,8 +212,12 @@ def unwrap_islands(bpy, mesh, angle_limit: float, rounds: int = UV_ROUNDS, margi
 
     settings = bpy.context.scene.tool_settings
     synced, mode = settings.use_uv_select_sync, tuple(settings.mesh_select_mode)
-    settings.use_uv_select_sync = True   # UV operators then select mesh faces
-    settings.mesh_select_mode = (False, False, True)   # whole faces: a vertex mode would grow the selection
+    settings.use_uv_select_sync = True  # UV operators then select mesh faces
+    settings.mesh_select_mode = (
+        False,
+        False,
+        True,
+    )  # whole faces: a vertex mode would grow the selection
     try:
         bpy.ops.uv.smart_project(angle_limit=angle_limit, island_margin=0.0002)
         bpy.ops.mesh.select_all(action="SELECT")
@@ -396,8 +410,10 @@ def main() -> int:
     bpy.ops.mesh.select_all(action="SELECT")
     left = unwrap_finish(bpy, retopo.data, angle_limit)
     if left is None:
-        print(f"RETOPO:: Blender {bpy.app.version_string} crashes checking UV overlap; "
-              "Smart UV Project only (update to 5.2.1 or later)")
+        print(
+            f"RETOPO:: Blender {bpy.app.version_string} crashes checking UV overlap; "
+            "Smart UV Project only (update to 5.2.1 or later)"
+        )
     else:
         print(f"RETOPO:: uv faces still overlapping={left:,}")
     bpy.ops.object.mode_set(mode="OBJECT")

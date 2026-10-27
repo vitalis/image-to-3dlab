@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
+import sys
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,23 @@ def test_more_than_one_mesh_is_joined_and_none_is_refused():
     assert bake.meshes_to_bake(3) == "join"
     with pytest.raises(ValueError):
         bake.meshes_to_bake(0)
+
+
+def test_the_retopo_script_can_import_the_bake_helper(monkeypatch):
+    scripts = ROOT.resolve()
+
+    def elsewhere(entry: str) -> bool:
+        try:
+            return Path(entry).resolve() != scripts
+        except OSError:
+            return True
+
+    monkeypatch.setattr(sys, "path", [entry for entry in sys.path if elsewhere(entry)])
+    sys.modules.pop("blender_bake_normals", None)
+    _load("blender_retopo_bake")
+    import blender_bake_normals
+
+    assert blender_bake_normals.meshes_to_bake(1) == "single"
 
 
 def test_the_bake_programs_call_those_decisions():

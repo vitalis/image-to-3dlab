@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A prop's first detail level can start.** The retopo step can import its bake helper. It used to stop at once with "No module named blender_bake_normals".
+
 ## [0.5.3] - 2026-10-26
 
 ### Added
