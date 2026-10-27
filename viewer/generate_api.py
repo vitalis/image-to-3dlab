@@ -738,7 +738,7 @@ def run_trellis_input_advisor(image_path: Path) -> dict[str, Any]:
         raise RuntimeError(f"TinyCLIP advisor is missing: {TINYCLIP_ADVISOR}")
     try:
         result = subprocess.run(
-            [str(python), str(TINYCLIP_ADVISOR), str(image_path)],
+            [str(python), str(TINYCLIP_ADVISOR), "--local-files-only", str(image_path)],
             cwd=REPO,
             env=_job_env(),
             check=True,
