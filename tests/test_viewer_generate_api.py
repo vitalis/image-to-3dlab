@@ -2225,6 +2225,28 @@ def test_blender_install_runs_the_bootstrap_with_yes():
     assert command[-2].endswith("bootstrap_blender.py") and command[-1] == "--yes"
 
 
+def test_a_missing_setup_says_the_run_is_gone():
+    import http.server
+    import threading
+    import urllib.error
+    import urllib.request
+
+    api.DOWNLOADS.pop("qwen-image", None)
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), api.Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/api/setup/qwen-image/status"
+        with pytest.raises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(url, timeout=5)
+        body = json.loads(caught.value.read())
+        assert caught.value.code == 404
+        assert body["status"] == "error"
+        assert "no longer running" in body["error"]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_a_setup_run_streams_its_progress_at_the_address_it_hands_out():
     # Found on a pod 2026-10-02: Install Blender (and the Mac Run setup button) hand out
     # /api/setup/run/<id>/events, but the route only matched four path parts, so the

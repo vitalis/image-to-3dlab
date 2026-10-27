@@ -129,6 +129,15 @@ export function openSetupWatch(payload, hooks = {}) {
     try {
       const response = await fetchImpl(statusUrl);
       if (stopped) return;
+      if (response.status === 404) {
+        let message = 'This setup is no longer running.';
+        try {
+          const body = await response.json();
+          if (body?.error) message = body.error;
+        } catch { /* an old server answers with a file page, not JSON */ }
+        note({ phase: 'error', message }, 'error', message, true);
+        return;
+      }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const body = await response.json();
       if (stopped) return;

@@ -4010,12 +4010,19 @@ class Handler(SimpleHTTPRequestHandler):
             and parts[3] in {"events", "status"}
         ):
             run = DOWNLOADS.get(parts[2])
-            if run is not None:
-                if parts[3] == "events":
-                    self._stream_events(run)
-                else:
-                    self._send_json(200, download_status_payload(run))
+            if run is None:
+                # A restart forgets the run. Say so, instead of a file-not-found page
+                # the Setup tab treats as a dropped connection and keeps asking about.
+                self._send_json(
+                    404,
+                    {"error": "This setup is no longer running.", "status": "error"},
+                )
                 return
+            if parts[3] == "events":
+                self._stream_events(run)
+            else:
+                self._send_json(200, download_status_payload(run))
+            return
         # /api/setup/run/<id>/events: five parts, as _start_setup and the Blender
         # install hand it out.
         if (

@@ -717,6 +717,38 @@ def test_indexed_obj_skips_a_bad_face_and_does_not_keep_spare_room():
 @pytest.mark.skipif(
     NODE is None, reason="Node is required to execute browser ES modules"
 )
+@pytest.mark.skipif(
+    NODE is None, reason="Node is required to execute browser ES modules"
+)
+def test_a_missing_setup_stops_the_poll():
+    module_url = (REPO / "viewer" / "components" / "setup-progress.js").as_uri()
+    program = f"""
+      import {{ openSetupWatch }} from {json.dumps(module_url)};
+      const phases = [];
+      const urls = [];
+      let timers = 0;
+      openSetupWatch({{ status_url: '/api/setup/qwen-image/status', events_url: '/api/setup/qwen-image/events' }}, {{
+        fetchImpl: async (url) => {{
+          urls.push(url);
+          return {{ status: 404, ok: false, json: async () => ({{
+            error: 'This setup is no longer running.', status: 'error',
+          }}) }};
+        }},
+        EventSourceImpl: class {{ constructor() {{}} close() {{}} }},
+        onEvent: (event) => phases.push(event.phase),
+        setTimer: () => {{ timers += 1; return 1; }},
+        clearTimer() {{}},
+        interval: 5,
+      }});
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      console.log(JSON.stringify({{ phases, urls, timers }}));
+    """
+    out = _node(program)
+    assert out["urls"] == ["/api/setup/qwen-image/status"]
+    assert out["phases"] == ["error"]
+    assert out["timers"] == 0
+
+
 def test_setup_polls_after_the_stream_drops_and_does_not_repeat_the_log():
     module_url = (REPO / "viewer" / "components" / "setup-progress.js").as_uri()
     program = f"""

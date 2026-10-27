@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **A setup the server has forgotten stops asking.** After a restart the page is told the run is no longer going, and it stops. It used to keep asking and hear that a file was missing.
 - **A prop's first detail level can start.** The retopo step can import its bake helper. It used to stop at once with "No module named blender_bake_normals".
 
 ## [0.5.3] - 2026-10-26
