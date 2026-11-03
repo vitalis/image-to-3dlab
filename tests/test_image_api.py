@@ -523,6 +523,68 @@ def test_a_flux_picture_records_its_apache_licence(tmp_path):
     assert record["model"]["weights"]["llm"]["file"] == "Qwen3-4B-Q8_0.gguf"
 
 
+def _linked(root, directory, revision, relative, digest, body):
+    path = root / directory / "snapshots" / revision / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    blob = root / directory / "blobs" / digest
+    blob.parent.mkdir(parents=True, exist_ok=True)
+    blob.write_bytes(body)
+    path.symlink_to(blob)
+    return path
+
+
+_VAE_DIR = "models--Comfy-Org--Flux-2-Klein-4B"
+_VAE_REV = "533c4cbc3d3b89af1743d9466c434e89810391c0"
+_VAE_SHA = "868fe7b343cc8f3a19dbcfcafbc3d5f888802be3f89bd81b65b3621a066ce8f3"
+_VAE_REL = "split_files/vae/flux2-vae.safetensors"
+_VAE_PINS = {("Comfy-Org/Flux-2-Klein-4B", "flux2-vae.safetensors"): (_VAE_REV, _VAE_SHA, _VAE_REL)}
+
+
+def test_find_weight_uses_the_pinned_snapshot_not_an_earlier_one(monkeypatch, tmp_path):
+    monkeypatch.setattr(api, "HF_HUB", tmp_path)
+    earlier = tmp_path / _VAE_DIR / "snapshots" / ("0" * 40) / _VAE_REL
+    earlier.parent.mkdir(parents=True)
+    earlier.write_bytes(b"older copy that sorts first")
+    pinned = _linked(tmp_path, _VAE_DIR, _VAE_REV, _VAE_REL, _VAE_SHA, b"vae")
+    assert api.find_weight(_VAE_DIR, "flux2-vae.safetensors", pins=_VAE_PINS) == pinned
+    assert earlier.read_bytes() == b"older copy that sorts first"
+
+
+def test_a_file_that_fails_its_hash_is_not_drawn_and_stays_on_disk(monkeypatch, tmp_path):
+    monkeypatch.setattr(api, "HF_HUB", tmp_path)
+    planted = tmp_path / _VAE_DIR / "snapshots" / _VAE_REV / _VAE_REL
+    planted.parent.mkdir(parents=True)
+    planted.write_bytes(b"wrong")
+    assert api.find_weight(_VAE_DIR, "flux2-vae.safetensors", pins=_VAE_PINS) is None
+    assert planted.read_bytes() == b"wrong"
+
+    blob = tmp_path / _VAE_DIR / "blobs" / ("ab" * 32)
+    blob.parent.mkdir(parents=True, exist_ok=True)
+    blob.write_bytes(b"also wrong")
+    planted.unlink()
+    planted.symlink_to(blob)
+    assert api.find_weight(_VAE_DIR, "flux2-vae.safetensors", pins=_VAE_PINS) is None
+    assert planted.is_symlink() and blob.exists()
+
+
+def test_only_the_pinned_snapshot_is_drawn_when_an_earlier_one_holds_the_right_name(monkeypatch, tmp_path):
+    monkeypatch.setattr(api, "HF_HUB", tmp_path)
+    _linked(tmp_path, _VAE_DIR, "0" * 40, _VAE_REL, _VAE_SHA, b"same bytes, other snapshot")
+    assert api.find_weight(_VAE_DIR, "flux2-vae.safetensors", pins=_VAE_PINS) is None
+
+
+def test_every_picture_file_the_engines_draw_is_pinned():
+    pins = api.picture_pins()
+    for engine in api.ENGINES.values():
+        files = list(engine.weight_files.values())
+        if engine.vision_file:
+            files.append(engine.vision_file)
+        for directory, filename in files:
+            revision, digest, relative = pins[(api._repo_id(directory), filename)]
+            assert Path(relative).name == filename
+            assert len(revision) == 40 and len(digest) == 64
+
+
 def test_a_missing_flux_install_says_flux_not_qwen(monkeypatch, tmp_path):
     monkeypatch.setattr(api, "HF_HUB", tmp_path)
     with pytest.raises(api.MissingWeights, match="FLUX.2"):

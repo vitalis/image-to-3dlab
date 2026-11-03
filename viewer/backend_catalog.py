@@ -21,6 +21,7 @@ silently downloading those weights in a restricted region is a harm we would be 
 
 from __future__ import annotations
 
+import hashlib
 import os
 import platform
 import sys
@@ -137,6 +138,24 @@ def runs_on_phrase(backend: Backend) -> str:
     return " or ".join(PLATFORM_LABELS.get(p, p) for p in backend.runs_on)
 
 
+def _matches_pin(path: Path, blob: str) -> bool:
+    """True when `path` is the tested file.
+
+    A hub link's target is named with the SHA-256, so the page does not re-read a
+    multi-gigabyte weight. A plain file is hashed.
+    """
+    try:
+        if path.is_symlink() and path.resolve(strict=True).name == blob:
+            return True
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(block)
+        return digest.hexdigest() == blob
+    except OSError:
+        return False
+
+
 @dataclass(frozen=True)
 class WeightSet:
     """One downloadable unit, and where it lands."""
@@ -192,6 +211,8 @@ class WeightSet:
         total = 0
         files = self.files()
         for item in files:
+            if self.blob and not _matches_pin(item, self.blob):
+                continue
             try:
                 total += item.stat().st_size  # follows the snapshot link to its blob
             except OSError:
@@ -833,7 +854,9 @@ CATALOG: tuple[Backend, ...] = (
                       blob="eed555233267a33c7e8ee31682762cc7751b3f6d224039086e0e846f05fffa5d"),
             WeightSet("FLUX.2 VAE", "Comfy-Org/Flux-2-Klein-4B", 336_211_292,
                       HF_HUB_DIR / "models--Comfy-Org--Flux-2-Klein-4B",
-                      note="Turns the generated latent back into pixels."),
+                      note="Turns the generated latent back into pixels.",
+                      pattern="snapshots/**/flux2-vae.safetensors",
+                      blob="868fe7b343cc8f3a19dbcfcafbc3d5f888802be3f89bd81b65b3621a066ce8f3"),
         ),
     ),
     Backend(
@@ -864,7 +887,9 @@ CATALOG: tuple[Backend, ...] = (
                       blob="f6f851777709861056efcdad3af01da38b31223a3ba26e61a4f8bf3a2195813a"),
             WeightSet("FLUX.2 VAE", "Comfy-Org/Flux-2-Klein-4B", 336_211_292,
                       HF_HUB_DIR / "models--Comfy-Org--Flux-2-Klein-4B",
-                      note="Shared with the standard Flux card."),
+                      note="Shared with the standard Flux card.",
+                      pattern="snapshots/**/flux2-vae.safetensors",
+                      blob="868fe7b343cc8f3a19dbcfcafbc3d5f888802be3f89bd81b65b3621a066ce8f3"),
         ),
     ),
     Backend(
@@ -884,20 +909,27 @@ CATALOG: tuple[Backend, ...] = (
         weights=(
             WeightSet("Qwen-Image 2.1 diffusion model (Q8_0)",
                       "leejet/Qwen-Image-2.1-GGUF", int(7.69 * GB),
-                      HF_HUB_DIR / "models--leejet--Qwen-Image-2.1-GGUF"),
+                      HF_HUB_DIR / "models--leejet--Qwen-Image-2.1-GGUF",
+                      pattern="snapshots/**/qwen_image_2.1-Q8_0.gguf",
+                      blob="f8b244b00937f0e444a40dbf7866460871b89b30142594973b6012d1b471dc0a"),
             WeightSet("Qwen3-VL-8B text encoder (Q4_K_M)",
                       "Qwen/Qwen3-VL-8B-Instruct-GGUF", int(5.03 * GB),
                       HF_HUB_DIR / "models--Qwen--Qwen3-VL-8B-Instruct-GGUF",
                       note="Qwen-Image reads your prompt with a vision-language model, "
-                           "which is why the text encoder is this large."),
+                           "which is why the text encoder is this large.",
+                      pattern="snapshots/**/Qwen3VL-8B-Instruct-Q4_K_M.gguf",
+                      blob="67d1659bfe71b89d50b45a4ad1a9e5b997e5bb16ce5da66a6a6167abd569e9e2"),
             WeightSet("Qwen-Image 2.1 VAE", "Comfy-Org/Qwen-Image-2.1", int(0.68 * GB),
                       HF_HUB_DIR / "models--Comfy-Org--Qwen-Image-2.1",
-                      note="Turns the generated latent back into pixels."),
+                      note="Turns the generated latent back into pixels.",
+                      pattern="snapshots/**/qwen_image_2.1_vae_bf16.safetensors",
+                      blob="bb21f7473051e1ac368515dd3f2e15cd44d7a11748ee8823e1ddca3e4876b7c9"),
             WeightSet("Qwen3-VL vision projector (Q8_0)", "Qwen/Qwen3-VL-8B-Instruct-GGUF",
                       752_289_728, HF_HUB_DIR / "models--Qwen--Qwen3-VL-8B-Instruct-GGUF",
                       note="Lets Qwen-Image read a picture: skins, and back views when Qwen "
                            "draws them.",
-                      pattern="snapshots/*/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf"),
+                      pattern="snapshots/**/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf",
+                      blob="c6ba85508d82f42590e6eb77d5340369ab6fecf107a7561d809523d8aa5f3bfd"),
         ),
     ),
     Backend(

@@ -6,6 +6,7 @@ A suggestion, never a block: every engine stays choosable, and nothing downloads
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import backend_catalog as bc
 import bootstrap_flux_image as boot
@@ -194,8 +195,29 @@ def test_each_card_counts_only_its_own_files_in_a_shared_cache(tmp_path, monkeyp
     cards = _cards_in(tmp_path, monkeypatch)
     for w in cards["flux-image-light"].weights:
         _cache_file(w, 1000)
-    standard_big = [w for w in cards["flux-image"].weights if w.pattern]
-    assert all(w.state()[1] == 0 for w in standard_big)
+    standard_own = [w for w in cards["flux-image"].weights if "VAE" not in w.label]
+    assert all(w.state()[1] == 0 for w in standard_own)
+    shared = next(w for w in cards["flux-image"].weights if "VAE" in w.label)
+    assert shared.state()[1] == 1000
+
+
+def test_a_picture_file_that_fails_its_fingerprint_does_not_count(tmp_path, monkeypatch):
+    cards = _cards_in(tmp_path, monkeypatch)
+    weight = next(w for w in cards["flux-image"].weights if w.pattern and "VAE" not in w.label)
+    name = weight.pattern.split("/")[-1]
+    planted = weight.path / "snapshots" / REV / name
+    planted.parent.mkdir(parents=True)
+    planted.write_bytes(b"not the tested file")
+    assert weight.state()[:2] == (False, 0)
+    assert planted.read_bytes() == b"not the tested file"
+
+    blob = weight.path / "blobs" / ("ab" * 32)
+    blob.parent.mkdir(parents=True, exist_ok=True)
+    blob.write_bytes(b"\0" * 1000)
+    planted.unlink()
+    planted.symlink_to(blob)
+    assert weight.state()[:2] == (False, 0)
+    assert planted.is_symlink() and blob.exists()
 
 
 @pytest.mark.parametrize("suffix", [".incomplete", ".1a2b3c4d.incomplete"])  # 1.x, and 2.x's per-process name
@@ -219,16 +241,16 @@ def test_remove_on_one_flux_card_leaves_the_other_and_the_shared_vae(tmp_path, m
         for w in card.weights:
             _cache_file(w, 1000)
     download_api.remove("flux-image-light")
-    light_big = [w for w in cards["flux-image-light"].weights if w.pattern]
+    light_own = [w for w in cards["flux-image-light"].weights if "VAE" not in w.label]
     standard = cards["flux-image"].weights
-    assert all(w.state()[1] == 0 for w in light_big)                 # Light's own files went
-    assert all(w.state()[1] == 1000 for w in standard if w.pattern)  # standard Flux untouched
+    assert all(w.state()[1] == 0 for w in light_own)                 # Light's own files went
+    assert all(w.state()[1] == 1000 for w in standard if "VAE" not in w.label)
     assert any((w.path / "snapshots" / REV / "flux2-vae.safetensors").exists()
-               for w in standard if not w.pattern)                   # the shared VAE stayed
+               for w in standard)                                    # the shared VAE stayed
 
 
 def test_the_cards_know_the_same_file_fingerprints_the_installer_pins():
-    pins = {f: sha for (_, f), (_, sha) in boot.PINS.items()}
+    pins = {Path(f).name: sha for (_, f), (_, sha) in boot.PINS.items()}
     for card in ("flux-image", "flux-image-light"):
         for w in bc.BY_ID[card].weights:
             if w.pattern:

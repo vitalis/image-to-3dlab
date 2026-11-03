@@ -31,6 +31,7 @@ a PNG in a folder six months from now remembers nothing on its own.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -211,13 +212,66 @@ class MissingWeights(RuntimeError):
         )
 
 
-def find_weight(directory: str, filename: str) -> Path | None:
-    """Locate one cached file, whatever snapshot hash it landed under."""
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _fingerprint_ok(path: Path, expected: str) -> bool:
+    """True when the file is the one we tested.
+
+    A hub snapshot link points at ``blobs/<sha256>``. That name is the fingerprint, so a
+    multi-gigabyte file is not read again. A real file, not a link, is hashed.
+    """
+    try:
+        if path.is_symlink() and path.resolve(strict=True).name == expected:
+            return True
+        return _sha256(path) == expected
+    except OSError:
+        return False
+
+
+def picture_pins() -> dict[tuple[str, str], tuple[str, str, str]]:
+    """(repo, filename) -> (snapshot revision, sha256, path inside the snapshot).
+
+    The same table setup checks after a download. Drawing uses it too, so a file that
+    failed that check, or an older snapshot of the same name, is not the one we run.
+    """
+    scripts = str(REPO / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import bootstrap_flux_image as flux
+    import bootstrap_qwen_image as qwen
+
+    pins = {}
+    for (repo, name), (revision, digest) in {**qwen.PINS, **flux.PINS}.items():
+        pins[(repo, Path(name).name)] = (revision, digest, name)
+    return pins
+
+
+def _repo_id(directory: str) -> str:
+    """``models--Comfy-Org--Flux-2-Klein-4B`` -> ``Comfy-Org/Flux-2-Klein-4B``."""
+    org, name = directory.removeprefix("models--").split("--", 1)
+    return f"{org}/{name}"
+
+
+def find_weight(directory: str, filename: str,
+                pins: dict[tuple[str, str], tuple[str, str, str]] | None = None) -> Path | None:
+    """The pinned snapshot of one cached file, or None when it is missing or not the tested bytes."""
     root = HF_HUB / directory
-    if not root.exists():
+    if not root.is_dir():
         return None
-    matches = sorted(root.glob(f"snapshots/*/**/{filename}"))
-    return matches[0] if matches else None
+    pin = (picture_pins() if pins is None else pins).get((_repo_id(directory), filename))
+    if pin is None:
+        return None
+    revision, expected, relative = pin
+    path = root / "snapshots" / revision / relative
+    if not path.is_file() or not _fingerprint_ok(path, expected):
+        return None
+    return path
 
 
 def resolve_weights(engine: PictureEngine = QWEN) -> dict[str, Path]:

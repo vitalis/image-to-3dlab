@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Finish at a low triangle count (5k and below) no longer stops at the detail bake on slim characters.
+- A picture-model file is drawn, and counts as installed, only when it is the tested copy in its pinned snapshot. A file that does not match is left in the cache and is not used.
 
 ## [0.5.7] - 2026-11-03
 
