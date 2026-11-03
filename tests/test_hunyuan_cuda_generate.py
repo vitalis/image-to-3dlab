@@ -80,6 +80,91 @@ def test_check_needs_realesrgan(tmp_path, capsys):
     assert "RealESRGAN" in capsys.readouterr().out
 
 
+def _sparse(path, size: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as handle:
+        handle.truncate(size)
+
+
+def _plant_shape(shape) -> None:
+    from image_to_3dlab.weight_gate import HUNYUAN_DIT_CKPT_MIN, HUNYUAN_VAE_CKPT_MIN
+
+    dit = shape / "hunyuan3d-dit-v2-1"
+    vae = shape / "hunyuan3d-vae-v2-1"
+    _sparse(dit / "config.yaml", 32)
+    _sparse(dit / "model.fp16.ckpt", HUNYUAN_DIT_CKPT_MIN)
+    _sparse(vae / "config.yaml", 32)
+    _sparse(vae / "model.fp16.ckpt", HUNYUAN_VAE_CKPT_MIN)
+
+
+def test_an_empty_shape_folder_is_not_enough(tmp_path):
+    vendor = tmp_path / "custom"
+    shape = vendor / "models" / boot.HUNYUAN_REPO
+    (shape / "hunyuan3d-dit-v2-1").mkdir(parents=True)
+    (shape / "hunyuan3d-vae-v2-1").mkdir()
+    missing = "\n".join(gen.missing_weights(vendor, shape_only=True))
+    assert "shape model" in missing and "shape VAE" in missing
+
+
+def test_a_stub_checkpoint_is_not_enough(tmp_path):
+    vendor = tmp_path / "custom"
+    shape = vendor / "models" / boot.HUNYUAN_REPO
+    dit = shape / "hunyuan3d-dit-v2-1"
+    dit.mkdir(parents=True)
+    (dit / "config.yaml").write_text("model: {}\n")
+    (dit / "model.fp16.ckpt").write_bytes(b"\0" * 4096)
+    missing = "\n".join(gen.missing_weights(vendor, shape_only=True))
+    assert "shape model" in missing
+
+
+def test_a_custom_root_is_not_satisfied_by_another_folder(tmp_path, monkeypatch):
+    """The loader reads this checkout's models folder. A full folder elsewhere must not
+    let that checkout call the hub for the files it does not have."""
+    installed = tmp_path / "installed"
+    monkeypatch.setattr(boot, "MODELS", installed)
+    _plant_shape(installed / boot.HUNYUAN_REPO)
+    missing = "\n".join(gen.missing_weights(tmp_path / "custom", shape_only=True))
+    assert "shape model" in missing
+
+
+def test_the_installed_route_reads_the_models_folder(tmp_path, monkeypatch):
+    installed = tmp_path / "installed"
+    monkeypatch.setattr(boot, "MODELS", installed)
+    monkeypatch.setattr(boot, "VENDOR", tmp_path / "the-vendor")
+    _plant_shape(installed / boot.HUNYUAN_REPO)
+    assert gen.missing_weights(boot.VENDOR, shape_only=True) == []
+
+
+def test_generate_pins_offline_before_upstream_is_imported(tmp_path, monkeypatch):
+    from image_to_3dlab.weight_gate import HUNYUAN_DINO_MIN, HUNYUAN_PAINT_UNET_MIN
+
+    vendor = _vendor(tmp_path)
+    _plant_shape(vendor / "models" / boot.HUNYUAN_REPO)
+    hub = tmp_path / "hub"
+    paint = (hub / "models--tencent--Hunyuan3D-2.1" / "snapshots" / "abc"
+             / "hunyuan3d-paintpbr-v2-1")
+    _sparse(paint / "model_index.json", 32)
+    _sparse(paint / "unet" / "diffusion_pytorch_model.bin", HUNYUAN_PAINT_UNET_MIN)
+    dino = hub / "models--facebook--dinov2-giant" / "snapshots" / "abc"
+    _sparse(dino / "config.json", 32)
+    _sparse(dino / "preprocessor_config.json", 32)
+    _sparse(dino / "model.safetensors", HUNYUAN_DINO_MIN)
+    _sparse(gen.realesrgan_path(vendor), 32)
+    monkeypatch.setenv("HF_HUB_CACHE", str(hub))
+    monkeypatch.setenv("HF_HUB_OFFLINE", "0")
+    seen = {}
+
+    def enter(_vendor_root):
+        seen["offline"] = gen.os.environ.get("HF_HUB_OFFLINE")
+        raise SystemExit("stop")
+
+    monkeypatch.setattr(gen, "prepare_image", lambda *_a, **_k: (tmp_path / "in.png", None))
+    monkeypatch.setattr(gen, "_enter_upstream", enter)
+    with pytest.raises(SystemExit, match="stop"):
+        gen.generate(tmp_path / "in.png", tmp_path / "out.glb", vendor, {})
+    assert seen["offline"] == "1"
+
+
 def test_generate_refuses_missing_weights_before_the_hub(tmp_path, monkeypatch):
     vendor = _vendor(tmp_path)
     monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "empty-hub"))
@@ -195,7 +280,11 @@ def test_the_model_load_is_announced_before_it_starts(monkeypatch, capsys, tmp_p
     class Loaded(Exception):
         pass
 
-    def from_pretrained(*_args, **_kwargs):
+    seen = {}
+
+    def from_pretrained(path, *_args, **_kwargs):
+        seen["path"] = path
+        seen["offline"] = gen.os.environ.get("HF_HUB_OFFLINE")
         raise Loaded
 
     pipelines = types.SimpleNamespace(
@@ -203,7 +292,11 @@ def test_the_model_load_is_announced_before_it_starts(monkeypatch, capsys, tmp_p
     monkeypatch.setitem(sys.modules, "hy3dshape", types.ModuleType("hy3dshape"))
     monkeypatch.setitem(sys.modules, "hy3dshape.pipelines", pipelines)
     monkeypatch.setitem(sys.modules, "torch", types.ModuleType("torch"))
+    monkeypatch.setenv("HF_HUB_OFFLINE", "0")
+    local = tmp_path / "tencent" / "Hunyuan3D-2.1"
     with pytest.raises(Loaded):
-        gen.generate_shape(tmp_path / "in.png", tmp_path / "m.glb", {})
+        gen.generate_shape(tmp_path / "in.png", tmp_path / "m.glb", {}, local)
+    assert seen["path"] == str(local.resolve())
+    assert seen["offline"] == "1"
     assert gen.LOADING_SHAPE in capsys.readouterr().out
     assert "minute" in gen.LOADING_SHAPE and "minute" in gen.LOADING_PAINT

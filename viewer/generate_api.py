@@ -327,7 +327,9 @@ def _job_env() -> dict[str, str]:
 # Routes whose generator calls from_pretrained on a hub id when the files are absent.
 # The child is pinned offline so a missed readiness check cannot fetch. Setup's download
 # is the fetch, and it does not use this env.
-HUB_OFFLINE_ROUTES = frozenset({"trellis", "sf3d", "hunyuan-mlx"})
+HUB_OFFLINE_ROUTES = frozenset({
+    "trellis", "sf3d", "hunyuan-mlx", "hunyuan-cuda", "hunyuan-rocm",
+})
 
 
 def generate_child_env(backend_id: str) -> dict[str, str]:

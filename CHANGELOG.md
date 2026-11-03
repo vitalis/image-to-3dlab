@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Finish at a low triangle count (5k and below) no longer stops at the detail bake on slim characters.
+- NVIDIA and AMD Hunyuan no longer fetch weights during a run. An empty or unfinished model folder is refused, the shape loader is given the local folder, and the process is pinned offline so a gap cannot be filled from the hub.
+- The Hunyuan 2.1 downloader keeps the original checkpoint unless the converted file actually holds its tensors. A header, or any other non-empty stub, no longer counts as a finished conversion.
 
 ## [0.5.7] - 2026-11-03
 

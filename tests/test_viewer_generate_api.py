@@ -191,7 +191,7 @@ def test_a_built_mac_trellis_with_no_weights_is_not_ready(monkeypatch):
 def test_generate_child_cannot_fetch_hub_weights(monkeypatch):
     """A missed readiness check must not fall through to a hub download."""
     monkeypatch.setenv("HF_HUB_OFFLINE", "0")
-    for backend_id in ("trellis", "sf3d", "hunyuan-mlx"):
+    for backend_id in ("trellis", "sf3d", "hunyuan-mlx", "hunyuan-cuda", "hunyuan-rocm"):
         assert api.generate_child_env(backend_id)["HF_HUB_OFFLINE"] == "1"
     assert api.generate_child_env("pixal3d").get("HF_HUB_OFFLINE") == "0"
 

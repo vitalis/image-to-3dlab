@@ -326,17 +326,36 @@ def test_a_black_texture_at_the_top_size_suggests_a_smaller_one(tmp_path):
     assert "--paint-resolution 128" in str(raised.value)
 
 
+def _sparse(path: Path, size: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as handle:
+        handle.truncate(size)
+
+
+def _shape_files(shape: Path) -> None:
+    from image_to_3dlab.weight_gate import HUNYUAN_DIT_CKPT_MIN, HUNYUAN_VAE_CKPT_MIN
+
+    dit = shape / "hunyuan3d-dit-v2-1"
+    vae = shape / "hunyuan3d-vae-v2-1"
+    _sparse(dit / "config.yaml", 32)
+    _sparse(dit / "model.fp16.ckpt", HUNYUAN_DIT_CKPT_MIN)
+    _sparse(vae / "config.yaml", 32)
+    _sparse(vae / "model.fp16.ckpt", HUNYUAN_VAE_CKPT_MIN)
+
+
 def _all_weights(vendor: Path, hub: Path) -> None:
-    shape = vendor / "models" / "tencent" / "Hunyuan3D-2.1"
-    (shape / "hunyuan3d-dit-v2-1").mkdir(parents=True)
-    (shape / "hunyuan3d-vae-v2-1").mkdir(parents=True)
-    paint = hub / "models--tencent--Hunyuan3D-2.1" / "snapshots" / "abc"
-    (paint / "hunyuan3d-paintpbr-v2-1").mkdir(parents=True)
+    from image_to_3dlab.weight_gate import HUNYUAN_DINO_MIN, HUNYUAN_PAINT_UNET_MIN
+
+    _shape_files(vendor / "models" / "tencent" / "Hunyuan3D-2.1")
+    paint = (hub / "models--tencent--Hunyuan3D-2.1" / "snapshots" / "abc"
+             / "hunyuan3d-paintpbr-v2-1")
+    _sparse(paint / "model_index.json", 32)
+    _sparse(paint / "unet" / "diffusion_pytorch_model.bin", HUNYUAN_PAINT_UNET_MIN)
     dino = hub / "models--facebook--dinov2-giant" / "snapshots" / "abc"
-    dino.mkdir(parents=True)
-    (dino / "model.safetensors").write_bytes(b"x")
-    gen.realesrgan_path(vendor).parent.mkdir(parents=True)
-    gen.realesrgan_path(vendor).write_bytes(b"x")
+    _sparse(dino / "config.json", 32)
+    _sparse(dino / "preprocessor_config.json", 32)
+    _sparse(dino / "model.safetensors", HUNYUAN_DINO_MIN)
+    _sparse(gen.realesrgan_path(vendor), 32)
 
 
 def test_shape_weights_follow_the_chosen_models_folder(tmp_path, monkeypatch):
@@ -346,14 +365,12 @@ def test_shape_weights_follow_the_chosen_models_folder(tmp_path, monkeypatch):
     monkeypatch.setattr(gen.bootstrap, "VENDOR", vendor)
 
     wrong = vendor / "hunyuan-rocm" / "tencent" / "Hunyuan3D-2.1"
-    (wrong / "hunyuan3d-dit-v2-1").mkdir(parents=True)
-    (wrong / "hunyuan3d-vae-v2-1").mkdir()
+    _shape_files(wrong)
     missing = gen.missing_weights(vendor, tmp_path / "hub", shape_only=True)
     assert any("shape" in line for line in missing)
 
     right = chosen / "hunyuan-rocm" / "tencent" / "Hunyuan3D-2.1"
-    (right / "hunyuan3d-dit-v2-1").mkdir(parents=True)
-    (right / "hunyuan3d-vae-v2-1").mkdir()
+    _shape_files(right)
     assert gen.missing_weights(vendor, tmp_path / "hub", shape_only=True) == []
 
 

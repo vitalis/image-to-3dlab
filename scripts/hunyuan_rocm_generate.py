@@ -277,34 +277,29 @@ def hf_hub_dir(environ: dict[str, str] | None = None) -> Path:
     return Path(home) / "hub"
 
 
-def _cached(hub: Path, repo: str, inside: str) -> bool:
-    """Whether `inside` (a file or folder) is in any snapshot of `repo` in the cache."""
-    snapshots = hub / f"models--{repo.replace('/', '--')}" / "snapshots"
-    return any(snapshots.glob(f"*/{inside}"))
+def shape_weights_dir(vendor_root: Path) -> Path:
+    """The folder handed to the shape loader. The same one ``configure_environment`` points at."""
+    return models_dir(vendor_root) / bootstrap.HUNYUAN_REPO
 
 
 def missing_weights(vendor_root: Path, hub: Path | None = None,
                     shape_only: bool = False) -> list[str]:
-    """Weights the run would otherwise fetch on its own, 8-15 GB of them, unannounced.
+    """Weights the run would otherwise fetch on its own, unannounced.
 
-    Upstream downloads whatever it cannot find. That is the one thing this repo never lets
-    happen without a choice (CLAUDE.md), so a gap is a refusal that names the bootstrap.
+    Upstream's shape loader downloads the subfolder when it is absent, and the paint
+    stage's ``snapshot_download`` fills any gap it finds. A directory is not enough.
     """
-    hub = hf_hub_dir() if hub is None else hub
-    shape = models_dir(vendor_root) / bootstrap.HUNYUAN_REPO
-    checks = {
-        "Hunyuan3D-2.1 shape model": (shape / "hunyuan3d-dit-v2-1").is_dir(),
-        "Hunyuan3D-2.1 shape VAE": (shape / "hunyuan3d-vae-v2-1").is_dir(),
-    }
-    if not shape_only:
-        checks.update({
-            "Hunyuan3D-2.1 PBR paint": _cached(hub, bootstrap.HUNYUAN_REPO,
-                                                "hunyuan3d-paintpbr-v2-1"),
-            "DINOv2-giant image encoder": _cached(hub, bootstrap.DINO_REPO,
-                                                  "model.safetensors"),
-            "RealESRGAN upscaler": realesrgan_path(vendor_root).is_file(),
-        })
-    return [f"missing weights: {name}" for name, present in checks.items() if not present]
+    from image_to_3dlab.weight_gate import hunyuan_files_ready, snapshot_dir
+
+    present = hunyuan_files_ready(
+        shape_weights_dir(vendor_root),
+        None if shape_only else snapshot_dir(bootstrap.HUNYUAN_REPO, hub),
+        None if shape_only else snapshot_dir(bootstrap.DINO_REPO, hub),
+        Path() if shape_only else realesrgan_path(vendor_root),
+    )
+    if shape_only:
+        present = {name: ready for name, ready in present.items() if "shape" in name}
+    return [f"missing weights: {name}" for name, ready in present.items() if not ready]
 
 
 WEIGHTS_HINT = ("Fetch them on purpose (about 19.5 GB, Tencent Hunyuan Community License, "
@@ -498,14 +493,16 @@ LOADING_PAINT = "loading the paint models (about 2 minutes)..."
 
 
 def generate_shape(image: Path, mesh_path: Path, settings: dict[str, Any],
-                   flash_vdm: bool = False) -> float:
+                   model_dir: Path, flash_vdm: bool = False) -> float:
     import torch
     from hy3dshape.pipelines import Hunyuan3DDiTFlowMatchingPipeline
     from PIL import Image
 
+    # Same pin as the NVIDIA route: a missing file fails the run instead of being fetched.
+    os.environ["HF_HUB_OFFLINE"] = "1"
     started = time.time()
     print(LOADING_SHAPE, flush=True)
-    pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(bootstrap.HUNYUAN_REPO)
+    pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(str(model_dir.resolve()))
     if flash_vdm:
         # Pure PyTorch despite the name: it asks the decoder for only the promising
         # points instead of every point of the grid, which is the difference between a
@@ -590,6 +587,7 @@ def generate(image_path: Path, output: Path, vendor_root: Path, settings: dict[s
     if absent:
         raise SystemExit("Refusing to let upstream download weights unannounced:\n  " +
                          "\n  ".join(absent) + "\n" + WEIGHTS_HINT)
+    os.environ["HF_HUB_OFFLINE"] = "1"
     print(describe_fit(fitted, free_bytes), flush=True)
     prepared, matte_model = prepare_image(image_path, output, force_matte=force_matte)
     _enter_upstream(vendor_root, fitted["sdpa_query_chunk"])
@@ -600,7 +598,8 @@ def generate(image_path: Path, output: Path, vendor_root: Path, settings: dict[s
 
     started = time.time()
     mesh_path = output if shape_only else work_dir(output) / "shape.glb"
-    timings = {"shape": generate_shape(prepared, mesh_path, settings, flash_vdm=flash_vdm)}
+    timings = {"shape": generate_shape(prepared, mesh_path, settings,
+                                       shape_weights_dir(vendor_root), flash_vdm=flash_vdm)}
     if not shape_only:
         timings["paint"] = generate_paint(prepared, mesh_path, output, settings, vendor_root)
     timings["total"] = time.time() - started

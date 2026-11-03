@@ -28,15 +28,44 @@ def _load():
 dw = _load()
 
 
-def test_the_checkpoint_goes_once_the_conversion_exists(tmp_path):
+def _valid_safetensors(path: Path) -> None:
+    """One float32 tensor, the same bytes a real save would start with."""
+    header = b'{"t":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}'
+    path.write_bytes(len(header).to_bytes(8, "little") + header + b"\x00\x00\x00\x00")
+
+
+def test_the_checkpoint_goes_once_the_conversion_is_proven(tmp_path):
     ckpt = tmp_path / "model.fp16.ckpt"
     converted = tmp_path / "model.fp16.safetensors"
     ckpt.write_bytes(b"\0" * 4096)
-    converted.write_bytes(b"\0" * 4096)
+    _valid_safetensors(converted)
 
     assert dw.discard_converted_checkpoint(ckpt, converted) is True
     assert not ckpt.exists()
     assert converted.is_file()
+
+
+def test_a_non_empty_stub_keeps_the_checkpoint(tmp_path):
+    """The old check was 'the file is non-empty'. A header, or 4 KB of zeros, passed it
+    and the only complete copy of the 2.1 weights was deleted."""
+    ckpt = tmp_path / "model.fp16.ckpt"
+    converted = tmp_path / "model.fp16.safetensors"
+    ckpt.write_bytes(b"checkpoint")
+    converted.write_bytes(b"\0" * 4096)
+
+    assert dw.discard_converted_checkpoint(ckpt, converted) is False
+    assert ckpt.is_file()
+
+
+def test_a_header_that_overruns_the_file_keeps_the_checkpoint(tmp_path):
+    ckpt = tmp_path / "model.fp16.ckpt"
+    converted = tmp_path / "model.fp16.safetensors"
+    ckpt.write_bytes(b"checkpoint")
+    header = b'{"t":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}'
+    converted.write_bytes(len(header).to_bytes(8, "little") + header)
+
+    assert dw.discard_converted_checkpoint(ckpt, converted) is False
+    assert ckpt.is_file()
 
 
 def test_an_unfinished_conversion_keeps_the_checkpoint(tmp_path):

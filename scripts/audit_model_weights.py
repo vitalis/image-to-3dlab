@@ -32,7 +32,6 @@ Three rules, in descending order of how sure they are:
 from __future__ import annotations
 
 import argparse
-import json
 import shutil
 import subprocess
 import sys
@@ -40,9 +39,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "viewer"))
 
 from backend_catalog import GB, HF_HUB_DIR, human_bytes
+
+from image_to_3dlab.weight_gate import conversion_proven
 
 # Where real-file copies of weights live in this repo. A cache entry duplicated by one of
 # these is the `cached` rule's target.
@@ -87,59 +89,6 @@ def directory_size(path: Path) -> int:
         except OSError:
             continue
     return total
-
-
-MAX_SAFETENSORS_HEADER = 100 * 1024 * 1024
-
-
-def conversion_proven(converted: Path) -> bool:
-    """True when `converted` exists and its header describes tensors that fit in the file.
-
-    We read the 8-byte little-endian header length, then the JSON header. Every tensor's
-    end offset must lie inside the bytes after the header. `__metadata__` is not a tensor.
-    The tensor bytes themselves are never deserialized.
-    """
-    try:
-        size = converted.stat().st_size
-    except OSError:
-        return False
-    if size < 8:
-        return False
-    try:
-        with converted.open("rb") as handle:
-            raw_len = handle.read(8)
-            if len(raw_len) != 8:
-                return False
-            header_len = int.from_bytes(raw_len, "little")
-            if header_len <= 0 or header_len > size - 8 or header_len > MAX_SAFETENSORS_HEADER:
-                return False
-            header = handle.read(header_len)
-            if len(header) != header_len:
-                return False
-    except OSError:
-        return False
-    try:
-        parsed = json.loads(header)
-    except json.JSONDecodeError:
-        return False
-    if not isinstance(parsed, dict) or not parsed:
-        return False
-    data_end = size - 8 - header_len
-    tensors = 0
-    for key, entry in parsed.items():
-        if key == "__metadata__":
-            continue
-        offsets = entry.get("data_offsets") if isinstance(entry, dict) else None
-        if (
-            not isinstance(offsets, list)
-            or len(offsets) != 2
-            or not all(isinstance(v, int) for v in offsets)
-            or offsets[0] > offsets[1]
-            or offsets[1] > data_end
-        ):
-            return False
-        tensors += 1
-    return tensors > 0
 
 
 def find_superseded_checkpoints(roots=LOCAL_WEIGHT_ROOTS) -> list[Candidate]:

@@ -29,6 +29,12 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent
+LAB = REPO.parent
+if str(LAB) not in sys.path:
+    sys.path.insert(0, str(LAB))
+
+from image_to_3dlab.weight_gate import conversion_proven
+
 SHAPE_WEIGHTS = REPO / "shape" / "weights"
 PAINT_WEIGHTS = REPO / "paint" / "weights"
 
@@ -100,8 +106,8 @@ def download_shape(model: str) -> None:
             )
         # The checkpoint is the download; the safetensors is what the loader opens. Keeping
         # both stored the same 6.9 GB model twice, which nobody noticed until a disk audit
-        # on 2026-09-21. Removed only once the conversion is on disk and non-empty, so an
-        # interrupted convert still leaves something to retry from.
+        # on 2026-09-21. Removed only once the safetensors header proves its tensors fit
+        # in the file, so a stub or an interrupted convert still leaves something to retry from.
         discard_converted_checkpoint(Path(ckpt), target)
     else:
         hf_hub_download(hf_repo, f"{hf_dir}/model.fp16.safetensors", local_dir=local_root)
@@ -110,12 +116,14 @@ def download_shape(model: str) -> None:
 
 
 def discard_converted_checkpoint(ckpt: Path, converted: Path) -> bool:
-    """Delete `ckpt` once `converted` exists and is plausibly complete.
+    """Delete `ckpt` once `converted` is a safetensors file whose tensors fit in it.
 
     Returns whether anything was removed, so a caller (and a test) can tell the difference
     between "cleaned up" and "left alone because the conversion looks unfinished".
+    A non-empty stub is not finished: the next run would skip conversion and the only
+    complete copy would already be gone.
     """
-    if not converted.is_file() or converted.stat().st_size <= 0:
+    if not conversion_proven(converted):
         return False
     if not ckpt.is_file() or ckpt.resolve() == converted.resolve():
         return False
