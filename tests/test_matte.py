@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 from PIL import Image
@@ -258,6 +260,56 @@ def test_the_older_file_stays_when_the_lighter_one_will_not_load(tmp_path, monke
     assert older.exists()
     assert mt.retire_older_copy(loads=lambda path: object()) == older
     assert not older.exists()
+
+
+def test_the_older_file_stays_when_another_engine_cannot_load_the_lighter_one(tmp_path, monkeypatch):
+    monkeypatch.setenv("U2NET_HOME", str(tmp_path))
+    older = mt.model_file(mt.LITE_MODEL)
+    older.write_bytes(b"x")
+    lean = mt.model_file(mt.LEAN_MODEL)
+    lean.write_bytes(b"lean")
+    other = Path("/vendor/hunyuan-cuda/.venv/bin/python")
+
+    def cannot(python, path):
+        assert python == other and path == lean
+        return False
+
+    assert mt.retire_older_copy(loads=lambda path: object(), others=(other,), confirm=cannot) is None
+    assert older.exists()
+    assert mt.retire_older_copy(
+        loads=lambda path: object(), others=(other,), confirm=lambda python, path: True,
+    ) == older
+    assert not older.exists()
+
+
+def test_consumer_pythons_lists_only_other_installed_interpreters(tmp_path, monkeypatch):
+    from image_to_3dlab.host import venv_python
+
+    root = tmp_path / "repo"
+    mine = venv_python(root / "vendor" / "trellis-cuda")
+    other = venv_python(root / "vendor" / "hunyuan-cuda")
+    mine.parent.mkdir(parents=True)
+    other.parent.mkdir(parents=True)
+    mine.write_bytes(b"")
+    other.write_bytes(b"")
+    monkeypatch.setattr(mt.sys, "executable", str(mine))
+    assert mt.consumer_pythons(root) == [other.resolve()]
+
+
+def test_lean_loads_in_asks_that_interpreter_and_trusts_its_exit_code(tmp_path):
+    lean = tmp_path / "birefnet-lite-lean.onnx"
+    asked = tmp_path / "python"
+    asked.write_text('#!/bin/sh\nprintf %s "$2" > "$0.args"\nexit 0\n', encoding="utf-8")
+    asked.chmod(0o755)
+    assert mt.lean_loads_in(asked, lean) is True
+    sent = (tmp_path / "python.args").read_text(encoding="utf-8")
+    assert "LeanSession" in sent and str(lean) in sent
+
+    refuses = tmp_path / "refuses"
+    refuses.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    refuses.chmod(0o755)
+    assert mt.lean_loads_in(refuses, lean) is False
+    assert mt.lean_loads_in(tmp_path / "missing", lean) is False
 
 
 def test_nothing_is_removed_without_the_lighter_file(tmp_path, monkeypatch):

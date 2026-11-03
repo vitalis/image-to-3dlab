@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Finish at a low triangle count (5k and below) no longer stops at the detail bake on slim characters.
+- The older background remover stays until every installed engine can open the lighter file. An NVIDIA Hunyuan install that cannot open it keeps the older file.
 
 ## [0.5.7] - 2026-11-03
 

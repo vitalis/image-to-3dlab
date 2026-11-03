@@ -89,6 +89,7 @@ def test_the_announcement_says_the_older_copy_goes(home):
     (home / "birefnet-general-lite.onnx").write_bytes(b"x")
     text = bm.announcement()
     assert "removes the older copy" in text and "224 MB" in text
+    assert "every installed engine" in text
     assert str(home / "birefnet-general-lite.onnx") in text
 
 
@@ -97,6 +98,7 @@ def test_installing_the_lighter_file_removes_the_older_one(home, monkeypatch):
     older.write_bytes(b"x")
     monkeypatch.setattr(bm, "download", _fake_download)
     monkeypatch.setattr(matte, "LeanSession", lambda path: object())
+    monkeypatch.setattr(matte, "consumer_pythons", list)
     assert bm.main(["--yes"]) == 0
     assert matte.model_file(matte.LEAN_MODEL).is_file()
     assert not older.exists()
@@ -106,6 +108,7 @@ def test_an_engine_setup_also_removes_the_older_one(home, monkeypatch):
     older = home / "birefnet-general-lite.onnx"
     older.write_bytes(b"x")
     monkeypatch.setattr(matte, "LeanSession", lambda path: object())
+    monkeypatch.setattr(matte, "consumer_pythons", list)
     bm.install_if_missing(download=_fake_download)
     assert not older.exists()
 
@@ -117,5 +120,20 @@ def test_a_leftover_older_copy_goes_when_setup_runs_again(home, monkeypatch):
     matte.model_file(matte.LEAN_MODEL).write_bytes(b"lean")
     monkeypatch.setattr(bm, "download", lambda *a, **k: pytest.fail("downloaded"))
     monkeypatch.setattr(matte, "LeanSession", lambda path: object())
+    monkeypatch.setattr(matte, "consumer_pythons", list)
     assert bm.main(["--check"]) == 0 and older.exists()  # --check only reports
     assert bm.main([]) == 0 and not older.exists()
+
+
+def test_setup_keeps_the_older_file_when_another_engine_cannot_load_it(home, monkeypatch):
+    """Hunyuan's NVIDIA install cannot open the lean file. Deleting the older one
+    would leave that engine with u2net."""
+    older = home / "birefnet-general-lite.onnx"
+    older.write_bytes(b"x")
+    matte.model_file(matte.LEAN_MODEL).write_bytes(b"lean")
+    monkeypatch.setattr(bm, "download", lambda *a, **k: pytest.fail("downloaded"))
+    monkeypatch.setattr(matte, "LeanSession", lambda path: object())
+    monkeypatch.setattr(matte, "consumer_pythons", lambda: [Path("/vendor/hunyuan-cuda/python")])
+    monkeypatch.setattr(matte, "lean_loads_in", lambda python, lean: False)
+    assert bm.main([]) == 0
+    assert older.exists()

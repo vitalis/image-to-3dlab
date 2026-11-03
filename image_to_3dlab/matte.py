@@ -9,6 +9,9 @@ head in Pixal3D (2026-09-22), a grey slab around every SF3D model (2026-09-24).
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
+from pathlib import Path
 
 # A real cutout leaves a lot of the frame empty -- a centred subject is typically 30-60%
 # transparent. This floor only has to separate that from an alpha channel that cuts nothing.
@@ -101,12 +104,58 @@ def fallback_note(model: str) -> str | None:
             "scripts/bootstrap_matte.py")
 
 
-def retire_older_copy(loads=None):
-    """Delete rembg's older BiRefNet-lite file once the lean one is here and loads.
+# Interpreters other than this one that cut a picture out with the same file. The studio
+# can load the lean file and still must not delete the older copy out from under one of
+# these: Hunyuan's NVIDIA lock is onnxruntime 1.16.3, which cannot run the lean file's
+# DeformConv, and the older file is what that run falls back to.
+_OTHER_RUNTIMES = (
+    "hunyuan-cuda",
+    "hunyuan-rocm",
+    "trellis-cuda",
+    "trellis-rocm",
+    "stable-fast-3d",
+)
+
+
+def consumer_pythons(root: Path | None = None) -> list[Path]:
+    """Installed venvs, other than this process, that call ``cut_out`` themselves."""
+    from image_to_3dlab.host import venv_python
+
+    root = root or Path(__file__).resolve().parents[1]
+    mine = Path(sys.executable).resolve()
+    found = []
+    for name in _OTHER_RUNTIMES:
+        python = venv_python(root / "vendor" / name)
+        if python.is_file() and python.resolve() != mine:
+            found.append(python)
+    return found
+
+
+def lean_loads_in(python: Path, lean: Path) -> bool:
+    """True when `python` can open the lean file. A failure keeps the older copy."""
+    root = str(Path(__file__).resolve().parents[1])
+    program = (
+        "import sys\n"
+        f"sys.path.insert(0, {root!r})\n"
+        "from image_to_3dlab.matte import LeanSession\n"
+        f"LeanSession({str(lean)!r})\n"
+    )
+    try:
+        result = subprocess.run(
+            [str(python), "-c", program],
+            capture_output=True, text=True, timeout=120, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def retire_older_copy(loads=None, others=(), confirm=None):
+    """Delete rembg's older BiRefNet-lite file once the lean one loads everywhere it is used.
 
     Returns the removed path, or None. The older file is the fallback when the lean one
-    will not load (an onnxruntime too old for DeformConv), so it goes only after the lean
-    file has opened in this environment.
+    will not load (an onnxruntime too old for DeformConv), so it goes only after it has
+    opened in this process and in every other interpreter in `others`.
     """
     older, lean = model_file(LITE_MODEL), model_file(LEAN_MODEL)
     if not (older.is_file() and lean.is_file()):
@@ -115,6 +164,13 @@ def retire_older_copy(loads=None):
         (loads or LeanSession)(lean)
     except Exception as error:
         print(f"[matte] kept the older remover file: the lighter one would not load ({error})",
+              flush=True)
+        return None
+    check = confirm or lean_loads_in
+    for python in others:
+        if check(python, lean):
+            continue
+        print(f"[matte] kept the older remover file: {python} could not load the lighter one",
               flush=True)
         return None
     older.unlink()

@@ -14,7 +14,9 @@ cut-out where rembg's copy of the same model needed 9.5 GB. Saved where rembg lo
 
 A machine that already has rembg's copy (224 MB) keeps working with it; `--check` reports it
 as not installed, so Setup & Status offers the lighter file. Installing the lighter file
-removes the older copy once the new one loads, and running this again removes a leftover one.
+removes the older copy once the new one loads here and in every other installed engine
+that cuts pictures out. An engine that cannot load it keeps the older file. Running
+this again removes a leftover once that is true.
 
 Nothing is fetched without an explicit yes: AGENTS.md forbids weight downloads the user
 has not chosen.
@@ -41,12 +43,13 @@ def announcement() -> str:
     older = matte.model_file(matte.LITE_MODEL)
     if older.is_file():
         text += (f"\n  then removes the older copy it replaces ({matte.LITE_BYTES / 1e6:.0f} MB)"
+                 f" once every installed engine can load the lighter file"
                  f"\n         {older}")
     return text
 
 
 def retire_older_copy() -> None:
-    removed = matte.retire_older_copy()
+    removed = matte.retire_older_copy(others=matte.consumer_pythons())
     if removed:
         print(f"  removed the older remover file {removed} ({matte.LITE_BYTES / 1e6:.0f} MB)")
 
